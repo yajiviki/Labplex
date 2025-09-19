@@ -1,5 +1,12 @@
 import Link from 'next/link';
-export default function Home() {
+import { auth } from '../lib/auth';
+import { redirect } from 'next/navigation';
+
+export default async function Home() {
+	const session = await auth();
+	if (session) {
+		redirect('/dashboard');
+	}
 	return (
 		<div className="max-w-xl space-y-4">
 			<h1 className="text-2xl font-bold">Welcome to LabPlex</h1>

@@ -1,30 +1,58 @@
+// apps/web/lib/auth.ts
 import NextAuth, { type NextAuthConfig } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
-import { prisma } from './db';
 import bcrypt from 'bcryptjs';
+import { prisma } from './db';
 
-
+/**
+ * Env:
+ * NEXTAUTH_SECRET, NEXTAUTH_URL, DATABASE_URL
+ */
 export const authConfig: NextAuthConfig = {
 	providers: [
 		Credentials({
-			name: 'Email & Password',
+			name: 'Email + Password',
 			credentials: {
 				email: { label: 'Email', type: 'email' },
 				password: { label: 'Password', type: 'password' },
-				labCode: { label: 'Lab Code', type: 'text' }
+				labCode: { label: 'Lab Code', type: 'text' },
 			},
 			authorize: async (creds) => {
-				if (!creds?.email || !creds?.password || !creds?.labCode) return null;
-				const lab = await prisma.lab.findUnique({ where: { code: creds.labCode } });
-				if (!lab) return null;
-				const user = await prisma.user.findUnique({ where: { email: creds.email } });
-				if (!user || user.labId !== lab.id) return null;
-				const ok = await bcrypt.compare(creds.password, user.password);
-				if (!ok) return null;
-				return { id: user.id, email: user.email, name: user.name, role: user.role, labId: user.labId, labCode: lab.code } as any;
-			}
-		})
+				try {
+					const email = (creds?.email ?? '').toString().trim();
+					const password = (creds?.password ?? '').toString();
+					const labCode = (creds?.labCode ?? '').toString().trim();
+					if (!email || !password || !labCode) return null;
+
+					const lab = await prisma.lab.findUnique({ where: { code: labCode } });
+					if (!lab) return null;
+
+					const user = await prisma.user.findFirst({
+						where: { email, labId: lab.id },
+						select: { id: true, email: true, name: true, role: true, labId: true, password: true },
+					});
+					if (!user || !user.password) return null;
+
+					const ok = await bcrypt.compare(password, user.password);
+					if (!ok) return null;
+
+					return {
+						id: user.id,
+						email: user.email ?? '',
+						name: user.name,
+						role: user.role,
+						labId: user.labId,
+						labCode,
+					} as any;
+				} catch {
+					return null;
+				}
+			},
+		}),
 	],
+
+	session: { strategy: 'jwt' },
+
 	callbacks: {
 		async jwt({ token, user }) {
 			if (user) {
@@ -39,10 +67,8 @@ export const authConfig: NextAuthConfig = {
 			(session as any).labId = token.labId;
 			(session as any).labCode = token.labCode;
 			return session;
-		}
+		},
 	},
-	session: { strategy: 'jwt' }
 };
-
 
 export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);

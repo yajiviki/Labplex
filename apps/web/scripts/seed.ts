@@ -12,7 +12,7 @@ async function main() {
 	await prisma.user.upsert({
 		where: { email: 'admin@demo.lab' },
 		update: {},
-		create: { email: 'admin@demo.lab', name: 'Lab Admin', password: pw, role: 'LAB_ADMIN', labId: lab.id }
+		create: { email: 'admin@demo.lab', employeeId: '1001', name: 'Lab Admin', password: pw, role: 'LAB_ADMIN', labId: lab.id }
 	});
 	console.log('Seeded demo lab and admin. Login: admin@demo.lab / demo123 (lab code: demo)');
 }

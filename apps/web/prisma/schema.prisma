@@ -1,7 +1,7 @@
 // prisma/schema.prisma
 datasource db {
-  provider = "sqlite" // keep as-is for local dev
-  url      = env("DATABASE_URL") // file:./prisma/dev.db
+  provider = "sqlite"  
+  url      = "file:./dev.db"
 }
 
 generator client {
@@ -11,7 +11,7 @@ generator client {
 model Lab {
   id           String        @id @default(cuid())
   code         String        @unique
-  name         String
+  name         String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   users        User[]
@@ -19,18 +19,18 @@ model Lab {
   appointments Appointment[]
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  password  String
-  // Was: enum Role
-  role      String   @default("STAFF") // PATIENT | STAFF | LAB_ADMIN | ORG_ADMIN | SUPER_ADMIN
-  labId     String
-  lab       Lab      @relation(fields: [labId], references: [id])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
+ model User {
+   id        String   @id @default(cuid())
+   email     String   @unique   
+   employeeId String? @unique
+   name      String?
+   password  String
+   role      String   @default("STAFF")
+   labId     String
+   lab       Lab      @relation(fields: [labId], references: [id])
+   createdAt DateTime @default(now())
+   updatedAt DateTime @updatedAt
+ }
 
 model Patient {
   id           String        @id @default(cuid())
