@@ -1,0 +1,71 @@
+// prisma/schema.prisma
+datasource db {
+  provider = "sqlite" // keep as-is for local dev
+  url      = env("DATABASE_URL") // file:./prisma/dev.db
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Lab {
+  id           String        @id @default(cuid())
+  code         String        @unique
+  name         String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  users        User[]
+  patients     Patient[]
+  appointments Appointment[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  // Was: enum Role
+  role      String   @default("STAFF") // PATIENT | STAFF | LAB_ADMIN | ORG_ADMIN | SUPER_ADMIN
+  labId     String
+  lab       Lab      @relation(fields: [labId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Patient {
+  id           String        @id @default(cuid())
+  labId        String
+  lab          Lab           @relation(fields: [labId], references: [id])
+  name         String
+  phone        String
+  email        String?
+  createdAt    DateTime      @default(now())
+  appointments Appointment[]
+}
+
+model Appointment {
+  id        String  @id @default(cuid())
+  labId     String
+  lab       Lab     @relation(fields: [labId], references: [id])
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id])
+
+  // Was: ApptSource enum
+  // Allowed: DOCTOR | INSURANCE | DIRECT | OUTER_LAB
+  source String @default("DIRECT")
+
+  // Was: VisitType enum
+  // Allowed: CENTER | HOME
+  visitType String @default("CENTER")
+
+  // Was: ApptStatus enum
+  // Allowed: BOOKED | CHECKED_IN | SAMPLING | PROCESSING | REPORT_READY | CLOSED | CANCELED
+  status String @default("BOOKED")
+
+  startAt   DateTime
+  endAt     DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([labId, startAt])
+  @@index([labId, status])
+}
