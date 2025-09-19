@@ -288,9 +288,9 @@ export default function UserManagementPage() {
 			</div>
 
 			{/* Table */}
-			<div className="rounded-xl border bg-white p-4 shadow-sm">
+			<div className="rounded-xl border bg-white p-4 shadow-sm w-auto">
 				<div className="flex items-center justify-between mb-3">
-					<h2 className="text-base font-semibold">Users</h2>
+					<h2 className="text-base font-semibold">Users Management</h2>
 					<div className="relative">
 						<Search className="h-4 w-4 absolute left-2 top-2.5 text-gray-400" />
 						<input
