@@ -1,6 +1,6 @@
 // prisma/schema.prisma
 datasource db {
-  provider = "sqlite"  
+  provider = "sqlite"
   url      = "file:./dev.db"
 }
 
@@ -19,18 +19,25 @@ model Lab {
   appointments Appointment[]
 }
 
- model User {
-   id        String   @id @default(cuid())
-   email     String   @unique   
-   employeeId String? @unique
-   name      String?
-   password  String
-   role      String   @default("STAFF")
-   labId     String
-   lab       Lab      @relation(fields: [labId], references: [id])
-   createdAt DateTime @default(now())
-   updatedAt DateTime @updatedAt
- }
+model User {
+  id         String  @id @default(cuid())
+  email      String  @unique
+  employeeId String? @unique
+  name       String?
+  password   String
+  role       String  @default("STAFF") // ADMIN | STAFF | USER
+  labId      String
+  lab        Lab     @relation(fields: [labId], references: [id])
+
+  // ✅ New fields for User Management
+  phone    String?
+  dob      DateTime?
+  address  String?
+  userType String? // PATIENT | STAFF | OTHER
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
 
 model Patient {
   id           String        @id @default(cuid())

@@ -1,5 +1,5 @@
-import { auth } from '../../lib/auth';
-import { prisma } from '../../lib/db';
+import { auth } from '../../../lib/auth';
+import { prisma } from '../../../lib/db';
 
 const TILE_CLASSES = 'rounded-lg border bg-white p-4 shadow-sm';
 

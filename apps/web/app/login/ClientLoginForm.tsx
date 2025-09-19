@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { signIn } from 'next-auth/react';
 
 export default function ClientLoginForm() {
-	const [email, setEmail] = useState('');
+	const [employeeId, setEmployeeId] = useState('');
 	const [password, setPassword] = useState('');
 	const [labCode, setLabCode] = useState('demo'); // default for dev
 	const [captcha, setCaptcha] = useState('');
@@ -11,9 +11,9 @@ export default function ClientLoginForm() {
 	const [loading, setLoading] = useState(false);
 	const [err, setErr] = useState<string | null>(null);
 
-	// 5-digit captcha
+	// Generate captcha
 	const generateCaptcha = () => {
-		const newCode = Math.floor(10000 + Math.random() * 90000).toString();
+		const newCode = Math.floor(10000 + Math.random() * 90000).toString(); // 5-digit
 		setGeneratedCaptcha(newCode);
 		setCaptcha('');
 	};
@@ -25,8 +25,8 @@ export default function ClientLoginForm() {
 		setLoading(true);
 		setErr(null);
 
-		if (!email.trim() || !password) {
-			setErr('Email and password are required.');
+		if (!employeeId.trim() || !password) {
+			setErr('User ID and password are required.');
 			setLoading(false);
 			return;
 		}
@@ -36,10 +36,9 @@ export default function ClientLoginForm() {
 			return;
 		}
 
-		// Do not auto-redirect so we can handle errors cleanly
 		const res = await signIn('credentials', {
 			redirect: false,
-			email: email.trim(),
+			employeeId: employeeId.trim(),
 			password,
 			labCode: labCode.trim(),
 		});
@@ -63,14 +62,14 @@ export default function ClientLoginForm() {
 					<h2 className="text-2xl font-bold mb-6">Log In</h2>
 
 					<form onSubmit={onSubmit} className="space-y-4">
-						{/* Email */}
+						{/* User ID */}
 						<div>
-							<label className="block text-sm font-medium mb-1">Email</label>
+							<label className="block text-sm font-medium mb-1">User ID</label>
 							<input
-								type="email"
-								placeholder="Enter Email"
-								value={email}
-								onChange={(e) => setEmail(e.target.value)}
+								type="text"
+								placeholder="Enter User ID"
+								value={employeeId}
+								onChange={(e) => setEmployeeId(e.target.value)}
 								className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-green-400 outline-none"
 							/>
 						</div>
@@ -115,8 +114,6 @@ export default function ClientLoginForm() {
 								type="button"
 								onClick={generateCaptcha}
 								className="p-2 border rounded-lg hover:bg-gray-100"
-								aria-label="Regenerate captcha"
-								title="Regenerate captcha"
 							>
 								⟳
 							</button>
@@ -139,25 +136,21 @@ export default function ClientLoginForm() {
 					</form>
 				</div>
 
-				{/* Right side illustration */}
-
-
+				{/* Right side illustration with logo overlay */}
 				<div className="flex-1 bg-sky-50 flex items-center justify-center relative">
 					{/* Background image pushed down */}
 					<img
 						src="/images/productLogo.png"
 						alt="login illustration"
-						className="max-h-90 mt-32"   // ⬅️ smaller & moved down with margin-top
+						className="max-h-72 mt-32"
 					/>
-
-					{/* Bigger logo on top */}
+					{/* Bigger logo */}
 					<img
 						src="/images/Logo.png"
 						alt="Company Logo"
-						className="absolute top-8 left-1/2 -translate-x-1/2 h-28 w-auto"
+						className="absolute top-16 left-1/2 -translate-x-1/2 h-24 w-auto"
 					/>
 				</div>
-
 			</div>
 		</div>
 	);
