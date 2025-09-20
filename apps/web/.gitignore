@@ -15,7 +15,9 @@ node_modules/
 .next/
 
 
+
 # misc
+.env
 .env.local
 .env.development.local
 .env.test.local

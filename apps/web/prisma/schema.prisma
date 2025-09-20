@@ -9,34 +9,52 @@ generator client {
 }
 
 model Lab {
-  id           String        @id @default(cuid())
-  code         String        @unique
-  name         String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id        String   @id @default(cuid())
+  labCode   String?  @unique // temporarily optional
+  name      String
+  address   String?
+  phone     String? // temporarily optional
+  email     String?  @unique
+  isActive  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   users        User[]
-  patients     Patient[]
   appointments Appointment[]
+  patients     Patient[]
 }
 
 model User {
-  id         String  @id @default(cuid())
-  email      String  @unique
-  employeeId String? @unique
-  name       String?
+  id    String  @id @default(cuid())
+  labId String?
+  lab   Lab?    @relation(fields: [labId], references: [id])
+
+  employeeId String?   @unique
+  userType   String? // 'PATIENT' | 'STAFF'
+  name       String
+  phone      String
+  role       String // 'USER' | 'ADMIN' | 'SUPER_ADMIN'
+  email      String?   @unique
   password   String
-  role       String  @default("STAFF") // ADMIN | STAFF | USER
-  labId      String
-  lab        Lab     @relation(fields: [labId], references: [id])
+  isActive   Int       @default(1)
+  dob        DateTime?
+  address    String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
-  // ✅ New fields for User Management
-  phone    String?
-  dob      DateTime?
-  address  String?
-  userType String? // PATIENT | STAFF | OTHER
+  passwordSetupTokens PasswordSetupToken[]
+}
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model PasswordSetupToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, token])
 }
 
 model Patient {
@@ -50,29 +68,26 @@ model Patient {
   appointments Appointment[]
 }
 
+// ----- Appointment -----
 model Appointment {
-  id        String  @id @default(cuid())
-  labId     String
-  lab       Lab     @relation(fields: [labId], references: [id])
-  patientId String
-  patient   Patient @relation(fields: [patientId], references: [id])
+  id    String @id @default(cuid())
+  labId String
+  lab   Lab    @relation(fields: [labId], references: [id])
 
-  // Was: ApptSource enum
-  // Allowed: DOCTOR | INSURANCE | DIRECT | OUTER_LAB
-  source String @default("DIRECT")
+  patientId String?
+  patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
 
-  // Was: VisitType enum
-  // Allowed: CENTER | HOME
-  visitType String @default("CENTER")
+  source            String
+  visitType         String
+  doctorName        String?
+  insuranceVendorId String?
+  notes             String?
+  apptAt            DateTime
+  status            String   @default("BOOKED")
+  tatHours          Int?
+  isActive          Int      @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  // Was: ApptStatus enum
-  // Allowed: BOOKED | CHECKED_IN | SAMPLING | PROCESSING | REPORT_READY | CLOSED | CANCELED
-  status String @default("BOOKED")
-
-  startAt   DateTime
-  endAt     DateTime?
-  createdAt DateTime  @default(now())
-
-  @@index([labId, startAt])
-  @@index([labId, status])
+  @@index([patientId])
 }

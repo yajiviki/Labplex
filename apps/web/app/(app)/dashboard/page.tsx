@@ -8,15 +8,24 @@ export default async function DashboardPage() {
 	const role = (session as any)?.role as string;
 	const labId = (session as any)?.labId as string;
 
-	// Minimal fake KPIs; replace with analytics later.
+	// "Today" window (server-local midnight → next midnight)
 	const today = new Date();
 	today.setHours(0, 0, 0, 0);
-	const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+	const tomorrow = new Date(today);
+	tomorrow.setDate(today.getDate() + 1);
+
+	const whereBase = { labId, isActive: 1 as const };
 
 	const [todays, upcoming, totalClosed] = await Promise.all([
-		prisma.appointment.count({ where: { labId, startAt: { gte: today, lt: tomorrow } } }),
-		prisma.appointment.count({ where: { labId, startAt: { gt: tomorrow } } }),
-		prisma.appointment.count({ where: { labId, status: 'CLOSED' } })
+		prisma.appointment.count({
+			where: { ...whereBase, apptAt: { gte: today, lt: tomorrow } },
+		}),
+		prisma.appointment.count({
+			where: { ...whereBase, apptAt: { gt: tomorrow } },
+		}),
+		prisma.appointment.count({
+			where: { ...whereBase, status: 'CLOSED' },
+		}),
 	]);
 
 	const outOfTat = 0; // placeholder until TAT logic
@@ -47,22 +56,26 @@ function Tile({ title, value }: { title: string; value: number | string }) {
 }
 
 function RolePanel({ role }: { role: string }) {
-	if (role === 'LAB_ADMIN') return (
-		<div className="rounded-lg border bg-white p-4 shadow-sm">
-			<h3 className="font-semibold">Lab Admin Panel</h3>
-			<ul className="list-disc list-inside text-sm text-gray-700 mt-2">
-				<li>Manage staff & roles</li>
-				<li>Configure TAT & instruments</li>
-				<li>View lab-wide KPIs</li>
-			</ul>
-		</div>
-	);
-	if (role === 'ORG_ADMIN' || role === 'SUPER_ADMIN') return (
-		<div className="rounded-lg border bg-white p-4 shadow-sm">
-			<h3 className="font-semibold">Org/Super Admin Panel</h3>
-			<p className="text-sm text-gray-700 mt-2">Cross-lab metrics and controls.</p>
-		</div>
-	);
+	if (role === 'LAB_ADMIN') {
+		return (
+			<div className="rounded-lg border bg-white p-4 shadow-sm">
+				<h3 className="font-semibold">Lab Admin Panel</h3>
+				<ul className="list-disc list-inside text-sm text-gray-700 mt-2">
+					<li>Manage staff & roles</li>
+					<li>Configure TAT & instruments</li>
+					<li>View lab-wide KPIs</li>
+				</ul>
+			</div>
+		);
+	}
+	if (role === 'ORG_ADMIN' || role === 'SUPER_ADMIN') {
+		return (
+			<div className="rounded-lg border bg-white p-4 shadow-sm">
+				<h3 className="font-semibold">Org/Super Admin Panel</h3>
+				<p className="text-sm text-gray-700 mt-2">Cross-lab metrics and controls.</p>
+			</div>
+		);
+	}
 	return (
 		<div className="rounded-lg border bg-white p-4 shadow-sm">
 			<h3 className="font-semibold">Staff Panel</h3>

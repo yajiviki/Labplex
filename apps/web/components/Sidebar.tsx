@@ -6,19 +6,10 @@ import {
 	LayoutDashboard, CalendarDays, UserRound, FileText,
 	Receipt, Activity, Settings, Users, FlaskConical,
 	SlidersHorizontal, ChevronDown, ChevronRight,
-	PanelLeftClose, PanelRightClose, Building2, Stethoscope, UserCheck,
+	PanelLeftClose, PanelRightClose, Building2, Stethoscope, UserCheck
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useState } from 'react';
-
-const items = [
-	{ href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-	{ href: '/patients', icon: UserRound, label: 'Patients' },
-	{ href: '/reports', icon: FileText, label: 'Reports' },
-	{ href: '/billing', icon: Receipt, label: 'Billing' },
-	{ href: '/analytics', icon: Activity, label: 'Analytics' },
-	// Appointments & Settings handled separately for submenus
-];
 
 const appointmentChildren = [
 	{ href: '/appointments/insurance', icon: Building2, label: 'Insurance Vendor' },
@@ -27,8 +18,9 @@ const appointmentChildren = [
 ];
 
 const settingsChildren = [
-	{ href: '/settings/staff', icon: Users, label: 'Manage Staff' },
+	{ href: '/settings/user', icon: Users, label: 'Manage User' },
 	{ href: '/settings/labs', icon: FlaskConical, label: 'Manage Labs' },
+	{ href: '/settings/vendors', icon: Building2, label: 'Manage Vendor' }, // 👈 NEW
 	{ href: '/settings/app', icon: SlidersHorizontal, label: 'App Configurations' },
 ];
 
@@ -40,6 +32,7 @@ export default function Sidebar({
 	onToggle: () => void;
 }) {
 	const pathname = usePathname();
+
 	const [appointmentsOpen, setAppointmentsOpen] = useState<boolean>(() =>
 		pathname.startsWith('/appointments')
 	);
@@ -59,38 +52,29 @@ export default function Sidebar({
 				aria-label="Toggle sidebar"
 				title="Toggle sidebar"
 			>
-				{open ? (
-					<PanelLeftClose className="h-4 w-4" />
-				) : (
-					<PanelRightClose className="h-4 w-4" />
-				)}
+				{open ? <PanelLeftClose className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
 			</button>
 
 			<nav className="h-full overflow-y-auto pt-10">
 				<ul className="p-2 space-y-1">
-					{/* Primary items */}
-					{items.map(({ href, icon: Icon, label }) => {
-						const active = isActive(href);
-						return (
-							<li key={href}>
-								<Link
-									href={href}
-									className={clsx(
-										'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-										active
-											? 'bg-brand/10 text-brand-600 border border-brand/20'
-											: 'hover:bg-gray-50'
-									)}
-									title={!open ? label : undefined}
-								>
-									<Icon className="h-4 w-4 shrink-0" />
-									{open && <span className="truncate">{label}</span>}
-								</Link>
-							</li>
-						);
-					})}
+					{/* Dashboard */}
+					<li>
+						<Link
+							href="/dashboard"
+							className={clsx(
+								'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+								isActive('/dashboard')
+									? 'bg-brand/10 text-brand-600 border border-brand/20'
+									: 'hover:bg-gray-50'
+							)}
+							title={!open ? 'Dashboard' : undefined}
+						>
+							<LayoutDashboard className="h-4 w-4 shrink-0" />
+							{open && <span className="truncate">Dashboard</span>}
+						</Link>
+					</li>
 
-					{/* Appointments with submenu */}
+					{/* Appointments submenu (now directly under Dashboard) */}
 					<li>
 						<button
 							type="button"
@@ -145,7 +129,34 @@ export default function Sidebar({
 						)}
 					</li>
 
-					{/* Settings with submenu */}
+					{/* Other primary items */}
+					{[
+						{ href: '/patients', icon: UserRound, label: 'Patients' },
+						{ href: '/reports', icon: FileText, label: 'Reports' },
+						{ href: '/billing', icon: Receipt, label: 'Billing' },
+						{ href: '/analytics', icon: Activity, label: 'Analytics' },
+					].map(({ href, icon: Icon, label }) => {
+						const active = isActive(href);
+						return (
+							<li key={href}>
+								<Link
+									href={href}
+									className={clsx(
+										'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+										active
+											? 'bg-brand/10 text-brand-600 border border-brand/20'
+											: 'hover:bg-gray-50'
+									)}
+									title={!open ? label : undefined}
+								>
+									<Icon className="h-4 w-4 shrink-0" />
+									{open && <span className="truncate">{label}</span>}
+								</Link>
+							</li>
+						);
+					})}
+
+					{/* Settings submenu (with new Manage Vendor) */}
 					<li>
 						<button
 							type="button"
