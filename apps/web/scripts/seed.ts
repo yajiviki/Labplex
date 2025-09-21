@@ -1,63 +1,65 @@
 // apps/web/scripts/seed.ts
-import { prisma } from '../lib/db';
+import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+
+const prisma = new PrismaClient();
 
 async function main() {
 	const pw = await bcrypt.hash('demo123', 10);
 
-	// Create demo lab
+	// 1) Upsert demo lab (uses labCode, not code)
 	const lab = await prisma.lab.upsert({
-		where: { code: 'demo' },
-		update: {},
-		create: {
-			code: 'demo',
+		where: { labCode: 'LB01' },
+		update: {
 			name: 'Demo Lab',
-		},
-	});
-
-	// Create admin user with employeeId
-	await prisma.user.upsert({
-		where: { employeeId: '1001' },
-		update: {},
-		create: {
-			employeeId: '1001',        // 👈 login with this
-			email: 'admin@demo.lab',   // optional: still keep email
-			name: 'Lab Admin',
-			password: pw,
-			role: 'LAB_ADMIN',
-			labId: lab.id,
-			phone: '9876543210',
-			dob: new Date('1990-01-01'),
 			address: '123 Demo Street',
-			userType: 'STAFF', // or 'ADMIN' users keep role as you already set
-
+			phone: '0000000000',
+			email: null,
+			isActive: 1,
 		},
-	});
-
-	// Create staff user with employeeId
-	await prisma.user.upsert({
-		where: { employeeId: '2001' },
-		update: {},
 		create: {
-			employeeId: '2001',        // 👈 login with this
-			email: 'staff@demo.lab',
-			name: 'Lab Staff',
-			password: pw,
-			role: 'STAFF',
-			labId: lab.id,
-			phone: '9876543210',
-			dob: new Date('1990-01-01'),
+			labCode: 'LB01',
+			name: 'Demo Lab',
 			address: '123 Demo Street',
-			userType: 'STAFF', // or 'ADMIN' users keep role as you already set
-
+			phone: '0000000000', // required in your schema
+			email: null,
+			isActive: 1,
 		},
 	});
 
-	console.log('✅ Seed complete. Login with one of:');
-	console.log('- Admin → User ID: 1001 | Password: demo123 | Lab Code: demo');
-	console.log('- Staff → User ID: 2001 | Password: demo123 | Lab Code: demo');
+	// 2) Upsert a super admin user mapped to this lab
+	await prisma.user.upsert({
+		where: { employeeId: 'Emp0001' },
+		update: {
+			name: 'Super Admin',
+			phone: '9999999999',
+			role: 'SUPER_ADMIN',
+			userType: 'STAFF',
+			labId: lab.id,
+			password: pw,
+			isActive: 1,
+		},
+		create: {
+			employeeId: 'Emp0001',
+			userType: 'STAFF',
+			name: 'Super Admin',
+			phone: '9999999999',
+			role: 'SUPER_ADMIN',
+			email: 'admin@example.com',
+			password: pw,
+			labId: lab.id,
+			isActive: 1,
+		},
+	});
+
+	console.log('✅ Seed completed.');
 }
 
-main().finally(async () => {
-	await prisma.$disconnect();
-});
+main()
+	.catch((e) => {
+		console.error('Seed failed:', e);
+		process.exit(1);
+	})
+	.finally(async () => {
+		await prisma.$disconnect();
+	});

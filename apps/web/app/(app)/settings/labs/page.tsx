@@ -16,6 +16,19 @@ type LabRow = {
 type SortKey = keyof Pick<LabRow, 'labCode' | 'name' | 'phone' | 'createdAt'>;
 type SortDir = 'asc' | 'desc';
 
+/** Compute the next available Lab Code (LB01, LB02, ...) from current rows */
+function getNextLabCode(rows: { labCode: string }[]): string {
+	const prefix = 'LB';
+	let max = 0;
+	for (const r of rows) {
+		if (r.labCode?.startsWith(prefix)) {
+			const n = parseInt(r.labCode.slice(prefix.length), 10);
+			if (!isNaN(n) && n > max) max = n;
+		}
+	}
+	return `${prefix}${String(max + 1).padStart(2, '0')}`;
+}
+
 export default function ManageLabsPage() {
 	const [rows, setRows] = useState<LabRow[]>([]);
 	const [loading, setLoading] = useState(false);
@@ -61,6 +74,7 @@ export default function ManageLabsPage() {
 			setLoading(false);
 		}
 	}
+
 	useEffect(() => { load(); }, []);
 
 	function resetForm() {
@@ -185,6 +199,9 @@ export default function ManageLabsPage() {
 		);
 	};
 
+	// precompute next code for "create" mode (when not editing)
+	const nextLabCode = useMemo(() => getNextLabCode(rows), [rows]);
+
 	return (
 		<div className="space-y-4">
 			<div className="rounded-xl border bg-white px-5 py-4 shadow-sm flex items-center gap-3">
@@ -208,7 +225,12 @@ export default function ManageLabsPage() {
 					<form onSubmit={onSubmit} className="grid grid-cols-1 gap-3">
 						<div>
 							<label className="block text-sm mb-1">Lab Code</label>
-							<input className="w-full border rounded px-3 py-2 bg-gray-50" value={editingId ? (rows.find(r => r.id === editingId)?.labCode || '') : 'Auto-generated (LB##)'} readOnly />
+							<input
+								className="w-full border rounded px-3 py-2 bg-gray-50"
+								// 👇 show real code when editing; else preview next available code
+								value={editingId ? (rows.find(r => r.id === editingId)?.labCode || '') : nextLabCode}
+								readOnly
+							/>
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Name *</label>
@@ -278,7 +300,6 @@ export default function ManageLabsPage() {
 									<Col k="name" label="Name" />
 									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Address</th>
 									<Col k="phone" label="Mobile" />
-									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Email</th>
 									<Col k="createdAt" label="Created" />
 								</tr>
 							</thead>
@@ -301,7 +322,6 @@ export default function ManageLabsPage() {
 												</td>
 												<td className="px-3 py-2 text-sm">{l.address}</td>
 												<td className="px-3 py-2 text-sm">{l.phone}</td>
-												<td className="px-3 py-2 text-sm">{l.email}</td>
 												<td className="px-3 py-2 text-sm">{new Date(l.createdAt).toLocaleDateString()}</td>
 											</tr>
 										);

@@ -58,14 +58,21 @@ model PasswordSetupToken {
 }
 
 model Patient {
-  id           String        @id @default(cuid())
-  labId        String
-  lab          Lab           @relation(fields: [labId], references: [id])
-  name         String
-  phone        String
-  email        String?
-  createdAt    DateTime      @default(now())
-  appointments Appointment[]
+  id             String   @id @default(cuid())
+  labId          String?
+  lab            Lab?     @relation(fields: [labId], references: [id])
+  patientId      String   @unique           // OP0001, OP0002...
+  name           String
+  tpaName        String?
+  insuranceName  String?
+  doctorName     String?
+  address        String?
+  phone          String
+  isActive       Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  appointments   Appointment[] // if you relate appointments
 }
 
 // ----- Appointment -----
@@ -90,4 +97,16 @@ model Appointment {
   updatedAt         DateTime @updatedAt
 
   @@index([patientId])
+}
+
+model Vendor {
+  id            String   @id @default(cuid())
+  vendorId      String   @unique      // TPA01, TPA02...
+  tpaName       String
+  insuranceName String?
+  address       String?
+  phone         String
+  isActive      Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
