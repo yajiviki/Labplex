@@ -3,18 +3,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Users as PatientsIcon, ChevronDown, ChevronUp, Search, Trash2 } from 'lucide-react';
 
+type VendorWithCompanies = {
+	id: string;
+	vendorId: string;     // TPA01
+	tpaName: string;
+	companies: { id: string; name: string; code?: string | null }[];
+};
+
 type PatientRow = {
 	id: string;
 	patientId: string;
 	name: string;
-	tpaName: string | null;
-	insuranceName: string | null;
-	doctorName: string | null;
 	address: string | null;
 	phone: string;
+	doctorName: string | null;
+
+	vendorId?: string | null;
+	insuranceCompanyId?: string | null;
+	vendor?: { id: string; tpaName: string; vendorId: string } | null;
+	insuranceCompany?: { id: string; name: string } | null;
+
 	createdAt: string;
-	/** NEW */
-	labCode?: string | null;
 };
 
 type SortKey = keyof Pick<PatientRow, 'patientId' | 'name' | 'phone' | 'createdAt'>;
@@ -36,18 +45,17 @@ function nextPatientId(rows: PatientRow[]): string {
 
 export default function PatientsPage() {
 	const [rows, setRows] = useState<PatientRow[]>([]);
+	const [vendors, setVendors] = useState<VendorWithCompanies[]>([]);
 	const [loading, setLoading] = useState(false);
 
 	// form
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [name, setName] = useState('');
-	const [tpaName, setTpaName] = useState('');
-	const [insuranceName, setInsuranceName] = useState('');
 	const [doctorName, setDoctorName] = useState('');
 	const [address, setAddress] = useState('');
 	const [phone, setPhone] = useState('');
-	/** NEW */
-	const [labCode, setLabCode] = useState('');
+	const [vendorId, setVendorId] = useState<string>(''); // chosen TPA
+	const [insuranceCompanyId, setInsuranceCompanyId] = useState<string>(''); // chosen insurance (filtered by vendor)
 
 	// messages
 	const [formErr, setFormErr] = useState<string | null>(null);
@@ -56,7 +64,7 @@ export default function PatientsPage() {
 
 	// table controls
 	const [sortKey, setSortKey] = useState<SortKey>('createdAt');
-	const [sortDir, setSortDir] = useState<SortDir>('asc'); // start asc so newest toggles once to desc
+	const [sortDir, setSortDir] = useState<SortDir>('desc');
 	const [q, setQ] = useState('');
 
 	// selection
@@ -66,20 +74,25 @@ export default function PatientsPage() {
 	async function load() {
 		setLoading(true); setListErr(null); setSelected(new Set());
 		try {
-			const res = await fetch('/api/patients', { cache: 'no-store' });
-			const data = await res.json().catch(() => []);
-			if (!res.ok) { setListErr(data?.error || `Load failed: ${res.status}`); setRows([]); }
-			else setRows(Array.isArray(data) ? data : []);
+			const [r1, r2] = await Promise.all([
+				fetch('/api/patients', { cache: 'no-store' }),
+				fetch('/api/vendors?include=companies', { cache: 'no-store' }),
+			]);
+			const d1 = await r1.json().catch(() => []);
+			const d2 = await r2.json().catch(() => []);
+			if (!r1.ok) { setListErr(d1?.error || `Load failed: ${r1.status}`); setRows([]); }
+			else setRows(Array.isArray(d1) ? d1 : []);
+			setVendors(Array.isArray(d2) ? d2 : []);
 		} catch (e: any) {
-			setListErr(e?.message || 'Network error'); setRows([]);
+			setListErr(e?.message || 'Network error'); setRows([]); setVendors([]);
 		} finally { setLoading(false); }
 	}
 	useEffect(() => { load(); }, []);
 
 	function resetForm() {
 		setEditingId(null);
-		setName(''); setTpaName(''); setInsuranceName(''); setDoctorName('');
-		setAddress(''); setPhone(''); setLabCode('');
+		setName(''); setDoctorName(''); setAddress(''); setPhone('');
+		setVendorId(''); setInsuranceCompanyId('');
 		setFormErr(null); setFormOk(null);
 	}
 
@@ -90,18 +103,14 @@ export default function PatientsPage() {
 		const normalizedPhone = (phone || '').replace(/\D+/g, '');
 		if (!name.trim() || !normalizedPhone) { setFormErr('Please fill Name and Mobile.'); return; }
 		if (normalizedPhone.length < 10 || normalizedPhone.length > 15) { setFormErr('Please enter a valid Mobile number (10–15 digits).'); return; }
-		// If Lab Code should be mandatory, uncomment below:
-		// if (!labCode.trim()) { setFormErr('Please enter Lab Code.'); return; }
 
 		const payload = {
 			name: name.trim(),
-			tpaName: tpaName.trim() || null,
-			insuranceName: insuranceName.trim() || null,
 			doctorName: doctorName.trim() || null,
 			address: address.trim() || null,
 			phone: normalizedPhone,
-			/** NEW */
-			labCode: labCode.trim() || null,
+			vendorId: vendorId || null,
+			insuranceCompanyId: insuranceCompanyId || null,
 		};
 
 		try {
@@ -123,13 +132,11 @@ export default function PatientsPage() {
 	function startEdit(p: PatientRow) {
 		setEditingId(p.id);
 		setName(p.name || '');
-		setTpaName(p.tpaName || '');
-		setInsuranceName(p.insuranceName || '');
 		setDoctorName(p.doctorName || '');
 		setAddress(p.address || '');
 		setPhone(p.phone || '');
-		/** NEW */
-		setLabCode((p.labCode as string) || '');
+		setVendorId(p.vendorId || '');
+		setInsuranceCompanyId(p.insuranceCompanyId || '');
 		setFormErr(null); setFormOk(null);
 	}
 
@@ -139,7 +146,7 @@ export default function PatientsPage() {
 		const term = q.trim().toLowerCase();
 		const base = term
 			? rows.filter((r) =>
-				[r.patientId, r.name, r.phone, r.tpaName, r.insuranceName, r.doctorName, r.address, r.labCode]
+				[r.patientId, r.name, r.phone, r.vendor?.tpaName, r.insuranceCompany?.name, r.address, r.doctorName]
 					.filter(Boolean).some(v => String(v).toLowerCase().includes(term))
 			)
 			: rows;
@@ -182,6 +189,15 @@ export default function PatientsPage() {
 		editingId ? (rows.find(r => r.id === editingId)?.patientId || '') : nextPatientId(rows)
 	), [editingId, rows]);
 
+	// insurance options filtered by chosen vendor
+	const insuranceOptions = useMemo(() => {
+		const v = vendors.find(v => v.id === vendorId);
+		return v?.companies || [];
+	}, [vendorId, vendors]);
+
+	// reset insurance when vendor changes
+	useEffect(() => { setInsuranceCompanyId(''); }, [vendorId]);
+
 	return (
 		<div className="space-y-4">
 			{/* Title */}
@@ -209,28 +225,36 @@ export default function PatientsPage() {
 							<input className="w-full border rounded px-3 py-2 bg-gray-50" value={previewPatientId} readOnly />
 						</div>
 
-						{/* NEW: Lab Code */}
+						{/* TPA (Vendor) */}
 						<div>
-							<label className="block text-sm mb-1">Lab Code</label>
-							<input
+							<label className="block text-sm mb-1">TPA (Vendor)</label>
+							<select className="w-full border rounded px-3 py-2" value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
+								<option value="">Select TPA</option>
+								{vendors.map((v) => (
+									<option key={v.id} value={v.id}>{v.vendorId} — {v.tpaName}</option>
+								))}
+							</select>
+						</div>
+
+						{/* Insurance (depends on chosen TPA) */}
+						<div>
+							<label className="block text-sm mb-1">Insurance Company</label>
+							<select
 								className="w-full border rounded px-3 py-2"
-								value={labCode}
-								onChange={(e) => setLabCode(e.target.value)}
-								placeholder="e.g., LAB01 / MAIN / BR-CHN"
-							/>
+								value={insuranceCompanyId}
+								onChange={(e) => setInsuranceCompanyId(e.target.value)}
+								disabled={!vendorId}
+							>
+								<option value="">{vendorId ? 'Select Insurance' : 'Choose TPA first'}</option>
+								{insuranceOptions.map((c) => (
+									<option key={c.id} value={c.id}>{c.name}</option>
+								))}
+							</select>
 						</div>
 
 						<div>
 							<label className="block text-sm mb-1">Name *</label>
 							<input className="w-full border rounded px-3 py-2" value={name} onChange={(e) => setName(e.target.value)} />
-						</div>
-						<div>
-							<label className="block text-sm mb-1">TPA Name</label>
-							<input className="w-full border rounded px-3 py-2" value={tpaName} onChange={(e) => setTpaName(e.target.value)} />
-						</div>
-						<div>
-							<label className="block text-sm mb-1">Insurance Name</label>
-							<input className="w-full border rounded px-3 py-2" value={insuranceName} onChange={(e) => setInsuranceName(e.target.value)} />
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Doctor Name</label>
@@ -258,7 +282,13 @@ export default function PatientsPage() {
 						<h2 className="text-base font-semibold">Patient Information</h2>
 						<div className="flex items-center gap-2">
 							{anySelected && (
-								<button type="button" onClick={deleteSelected} className="inline-flex items-center justify-center rounded border p-2 text-red-600 hover:bg-red-50" title="Delete selected" aria-label="Delete selected">
+								<button
+									type="button"
+									onClick={deleteSelected}
+									className="inline-flex items-center justify-center rounded border p-2 text-red-600 hover:bg-red-50"
+									title="Delete selected"
+									aria-label="Delete selected"
+								>
 									<Trash2 className="h-4 w-4" />
 								</button>
 							)}
@@ -282,20 +312,20 @@ export default function PatientsPage() {
 										/>
 									</th>
 									<Col k="patientId" label="Patient ID" />
-									{/* NEW header for Lab Code */}
-									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Lab Code</th>
 									<Col k="name" label="Name" />
 									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">TPA</th>
 									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Insurance</th>
 									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Doctor</th>
+									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Address</th>
 									<Col k="phone" label="Mobile" />
+									<Col k="createdAt" label="Created" />
 								</tr>
 							</thead>
 							<tbody>
 								{loading ? (
-									<tr><td colSpan={10} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
+									<tr><td colSpan={9} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
 								) : filtered.length === 0 ? (
-									<tr><td colSpan={10} className="px-3 py-4 text-center text-sm text-gray-500">No patients found</td></tr>
+									<tr><td colSpan={9} className="px-3 py-4 text-center text-sm text-gray-500">No patients found</td></tr>
 								) : (
 									filtered.map((p) => {
 										const isChecked = selected.has(p.id);
@@ -305,15 +335,15 @@ export default function PatientsPage() {
 													<input type="checkbox" checked={isChecked} onChange={(e) => toggleOne(p.id, e.target.checked)} />
 												</td>
 												<td className="px-3 py-2 text-sm">{p.patientId}</td>
-												{/* NEW cell for Lab Code */}
-												<td className="px-3 py-2 text-sm">{p.labCode || ''}</td>
 												<td className="px-3 py-2 text-sm">
 													<button className="underline underline-offset-2" onClick={() => startEdit(p)}>{p.name}</button>
 												</td>
-												<td className="px-3 py-2 text-sm">{p.tpaName}</td>
-												<td className="px-3 py-2 text-sm">{p.insuranceName}</td>
-												<td className="px-3 py-2 text-sm">{p.doctorName}</td>
+												<td className="px-3 py-2 text-sm">{p.vendor?.tpaName || ''}</td>
+												<td className="px-3 py-2 text-sm">{p.insuranceCompany?.name || ''}</td>
+												<td className="px-3 py-2 text-sm">{p.doctorName || ''}</td>
+												<td className="px-3 py-2 text-sm">{p.address || ''}</td>
 												<td className="px-3 py-2 text-sm">{p.phone}</td>
+												<td className="px-3 py-2 text-sm">{new Date(p.createdAt).toLocaleDateString()}</td>
 											</tr>
 										);
 									})

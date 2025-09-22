@@ -24,8 +24,15 @@ export async function GET() {
 			where: { isActive: 1 },
 			orderBy: { createdAt: 'desc' },
 			select: {
-				id: true, patientId: true, name: true, tpaName: true, insuranceName: true,
-				doctorName: true, address: true, phone: true, createdAt: true,
+				id: true, patientId: true, name: true,
+				address: true, phone: true, doctorName: true,
+				// canonical relations (preferred in UI)
+				vendorId: true, insuranceCompanyId: true,
+				vendor: { select: { id: true, tpaName: true, vendorId: true } },
+				insuranceCompany: { select: { id: true, name: true } },
+				// legacy display if you need it
+				tpaName: true, insuranceName: true,
+				createdAt: true,
 			},
 		});
 		return NextResponse.json(items);
@@ -39,10 +46,15 @@ export async function POST(req: Request) {
 		const session = await auth();
 		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-		const { name, tpaName, insuranceName, doctorName, address, phone } = await req.json().catch(() => ({}));
-		if (!name?.trim() || !phone?.trim()) return NextResponse.json({ error: 'Please fill Name and Mobile.' }, { status: 400 });
+		const body = await req.json().catch(() => ({}));
+		const { name, address, phone, doctorName, vendorId, insuranceCompanyId } = body;
 
-		// generate next patientId
+		const normalizedPhone = (phone || '').toString().replace(/\D+/g, '');
+		if (!name?.trim() || !normalizedPhone) {
+			return NextResponse.json({ error: 'Please fill Name and Mobile.' }, { status: 400 });
+		}
+
+		// create next PatientId
 		const all = await prisma.patient.findMany({ select: { patientId: true } });
 		const pid = nextPatientIdFromExisting(all.map(a => a.patientId || ''));
 
@@ -50,16 +62,19 @@ export async function POST(req: Request) {
 			data: {
 				patientId: pid,
 				name: name.trim(),
-				tpaName: tpaName || null,
-				insuranceName: insuranceName || null,
-				doctorName: doctorName || null,
 				address: address || null,
-				phone: phone.trim(),
+				phone: normalizedPhone,
+				doctorName: doctorName || null,
+				vendorId: vendorId || null,
+				insuranceCompanyId: insuranceCompanyId || null,
 				isActive: 1,
 			},
 			select: {
-				id: true, patientId: true, name: true, tpaName: true, insuranceName: true,
-				doctorName: true, address: true, phone: true, createdAt: true,
+				id: true, patientId: true, name: true, address: true, phone: true, doctorName: true,
+				vendorId: true, insuranceCompanyId: true,
+				vendor: { select: { id: true, tpaName: true, vendorId: true } },
+				insuranceCompany: { select: { id: true, name: true } },
+				createdAt: true,
 			},
 		});
 		return NextResponse.json(created, { status: 201 });

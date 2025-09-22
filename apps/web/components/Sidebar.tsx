@@ -5,26 +5,27 @@ import { usePathname } from 'next/navigation';
 import {
 	LayoutDashboard, CalendarDays, UserRound, FileText,
 	Receipt, Activity, Settings, Users, FlaskConical,
-	SlidersHorizontal, ChevronDown, ChevronRight,
-	PanelLeftClose, PanelRightClose, Building2, Stethoscope, UserCheck, KeySquare
+	SlidersHorizontal, ChevronDown, ChevronRight, KeyRound,
+	PanelLeftClose, PanelRightClose, Building2, Stethoscope, KeySquare // ← removed UserCheck
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useState, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 
+
 type Role = 'USER' | 'STAFF' | 'ADMIN' | 'SUPER_ADMIN' | string;
 
+/** CHANGED: single item instead of 3 */
 const appointmentChildren = [
-	{ href: '/appointments/insurance', icon: Building2, label: 'Insurance Vendor' },
-	{ href: '/appointments/doctor', icon: Stethoscope, label: 'Doctor Reference' },
-	{ href: '/appointments/out-patient', icon: UserCheck, label: 'Out Patient' },
+	{ href: '/appointments', icon: Stethoscope, label: 'TPA/DR/OP' },
 ];
 
 const settingsChildrenFull = [
 	{ href: '/settings/user', icon: Users, label: 'Manage User' },
 	{ href: '/settings/labs', icon: FlaskConical, label: 'Manage Labs' },
-	{ href: '/settings/vendors', icon: Building2, label: 'Manage Vendor' },
+	{ href: '/settings/vendors', icon: Building2, label: 'Manage TPA' },
 	{ href: '/settings/config', icon: SlidersHorizontal, label: 'App Configurations' },
+	{ href: '/settings/password', icon: KeyRound, label: 'Change Password' },
 ];
 
 const settingsChangePasswordOnly = [
@@ -39,11 +40,9 @@ export default function Sidebar({
 	onToggle: () => void;
 }) {
 	const pathname = usePathname();
-	const { data: session, status } = useSession();
+	const { data: session } = useSession();
 
-	// Derive role safely from session
 	const role: Role = useMemo(() => {
-		// adjust these paths if your session stores role elsewhere
 		return (
 			((session as any)?.user?.role as Role) ||
 			((session as any)?.role as Role) ||
@@ -61,22 +60,19 @@ export default function Sidebar({
 	const isActive = (href: string) =>
 		pathname === href || pathname.startsWith(href + '/');
 
-	// Visibility rules that DO NOT change structure/flow—just hide items as needed.
 	const canSeeAppointments = role === 'STAFF' || role === 'ADMIN' || role === 'SUPER_ADMIN';
 	const canSeePatients = role === 'STAFF' || role === 'ADMIN' || role === 'SUPER_ADMIN';
 	const canSeeBilling = role === 'STAFF' || role === 'ADMIN' || role === 'SUPER_ADMIN';
 	const canSeeAnalytics = role === 'STAFF' || role === 'ADMIN' || role === 'SUPER_ADMIN';
-	const canSeeSettings = role === 'ADMIN' || role === 'SUPER_ADMIN'; // full settings
+	const canSeeSettings = role === 'ADMIN' || role === 'SUPER_ADMIN';
 	const isPatientUser = role === 'USER';
 
-	// Settings children based on role:
 	const settingsChildren = canSeeSettings
 		? settingsChildrenFull
-		: (isPatientUser ? settingsChangePasswordOnly : []); // staff sees no settings
+		: (isPatientUser ? settingsChangePasswordOnly : []);
 
 	return (
 		<div className="h-full relative">
-			{/* Toggle in the top-right of the sidebar */}
 			<button
 				onClick={onToggle}
 				className="absolute top-2 right-2 inline-flex items-center justify-center rounded-md border px-2.5 py-1.5 text-sm hover:bg-gray-50"
@@ -88,7 +84,7 @@ export default function Sidebar({
 
 			<nav className="h-full overflow-y-auto pt-10">
 				<ul className="p-2 space-y-1">
-					{/* Dashboard: show to everyone */}
+					{/* Dashboard */}
 					<li>
 						<Link
 							href="/dashboard"
@@ -105,7 +101,7 @@ export default function Sidebar({
 						</Link>
 					</li>
 
-					{/* Appointments submenu (kept under Dashboard); hidden for patient users */}
+					{/* Appointments submenu */}
 					{canSeeAppointments && (
 						<li>
 							<button
@@ -162,27 +158,8 @@ export default function Sidebar({
 						</li>
 					)}
 
-					{/* Primary items */}
-					{/* Patient Management: hidden for patient users */}
-					{canSeePatients && (
-						<li>
-							<Link
-								href="/patients"
-								className={clsx(
-									'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-									isActive('/patients')
-										? 'bg-brand/10 text-brand-600 border border-brand/20'
-										: 'hover:bg-gray-50'
-								)}
-								title={!open ? 'Patient Management' : undefined}
-							>
-								<UserRound className="h-4 w-4 shrink-0" />
-								{open && <span className="truncate">Patient Management</span>}
-							</Link>
-						</li>
-					)}
 
-					{/* Reports: visible to everyone (patients only see this + change password) */}
+					{/* Reports */}
 					<li>
 						<Link
 							href="/reports"
@@ -199,7 +176,7 @@ export default function Sidebar({
 						</Link>
 					</li>
 
-					{/* Billing & Analytics: hidden for patient users */}
+					{/* Billing */}
 					{canSeeBilling && (
 						<li>
 							<Link
@@ -218,6 +195,7 @@ export default function Sidebar({
 						</li>
 					)}
 
+					{/* Analytics */}
 					{canSeeAnalytics && (
 						<li>
 							<Link
@@ -236,11 +214,7 @@ export default function Sidebar({
 						</li>
 					)}
 
-					{/* Settings submenu:
-              - ADMIN/SUPER_ADMIN: full settings
-              - USER (patient): only Change Password
-              - STAFF: hidden
-           */}
+					{/* Settings */}
 					{(canSeeSettings || isPatientUser) && (
 						<li>
 							<button

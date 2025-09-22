@@ -1,70 +1,74 @@
 // apps/web/lib/auth.ts
-import NextAuth, { type NextAuthConfig } from 'next-auth';
-import Credentials from 'next-auth/providers/credentials';
-import bcrypt from 'bcryptjs';
-import { prisma } from './db';
+import NextAuth from "next-auth";
+import Credentials from "next-auth/providers/credentials";
+import bcrypt from "bcryptjs";
+import { prisma } from "./db";
 
-/**
- * Env required:
- * - NEXTAUTH_SECRET (32+ chars)
- * - NEXTAUTH_URL    (e.g., http://localhost:4000)
- * - DATABASE_URL    (e.g., file:./prisma/dev.db)
- *
- * Make sure your Prisma User model has:
- *   employeeId String? @unique
- *   password  String
- *   role      String   @default("STAFF")
- *   labId     String
- */
+declare module "next-auth" {
+	interface Session {
+		user?: {
+			id: string;
+			name?: string | null;
+			role?: string | null;
+			labId?: string | null;
+			labCode?: string | null;
+			userId?: string | null; // U0001…
+		} | null;
+	}
+}
 
-export const authConfig: NextAuthConfig = {
+export const { handlers, auth, signIn, signOut } = NextAuth({
+	session: { strategy: "jwt" },
+
 	providers: [
 		Credentials({
-			name: 'User ID + Password',
+			name: "Credentials",
 			credentials: {
-				employeeId: { label: 'User ID', type: 'text' },
-				password: { label: 'Password', type: 'password' },
-				labCode: { label: 'Lab Code', type: 'text' },
+				userId: { label: "User ID", type: "text" },
+				password: { label: "Password", type: "password" },
+				labCode: { label: "Lab Code", type: "text" },
 			},
-			authorize: async (creds) => {
+			async authorize(creds) {
 				try {
-					const employeeId = (creds?.employeeId ?? '').toString().trim();
-					const password = (creds?.password ?? '').toString();
-					const labCode = (creds?.labCode ?? '').toString().trim();
-					if (!employeeId || !password || !labCode) return null;
+					const userId = (creds?.userId || "").trim();
+					const password = String(creds?.password || "");
+					const labCode = (creds?.labCode || "").trim();
 
-					// Find lab by code (tenant)
-					const lab = await prisma.lab.findUnique({ where: { code: labCode } });
+					if (!userId || !password || !labCode) return null;
+
+					// 1) Find lab by code
+					const lab = await prisma.lab.findUnique({
+						where: { labCode },
+						select: { id: true, labCode: true, name: true },
+					});
 					if (!lab) return null;
 
-					// Find user scoped to this lab by employeeId
+					// 2) Find active user in that lab by userId
 					const user = await prisma.user.findFirst({
-						where: { employeeId, labId: lab.id },
+						where: { labId: lab.id, userId, isActive: 1 },
 						select: {
 							id: true,
-							email: true,
+							userId: true,
 							name: true,
 							role: true,
-							labId: true,
-							employeeId: true,
 							password: true,
+							labId: true,
 						},
 					});
-					if (!user || !user.password) return null;
+					if (!user) return null;
 
-					// Verify password
+					// 3) Check password
 					const ok = await bcrypt.compare(password, user.password);
 					if (!ok) return null;
 
-					// Return the safe user payload (merged into JWT in callbacks.jwt)
+					// 4) Return a minimal object; fields go into JWT then session
 					return {
 						id: user.id,
-						email: user.email ?? '',
-						name: user.name,
+						name: user.name ?? user.userId,
 						role: user.role,
 						labId: user.labId,
-						labCode,
-						employeeId: user.employeeId ?? '',
+						labCode: lab.labCode,
+						userId: user.userId,
 					} as any;
 				} catch {
 					return null;
@@ -73,28 +77,36 @@ export const authConfig: NextAuthConfig = {
 		}),
 	],
 
-	session: { strategy: 'jwt' },
-
 	callbacks: {
 		async jwt({ token, user }) {
-			// On sign-in, persist custom fields to token
+			// put fields from authorize() into token
 			if (user) {
+				token.uid = (user as any).id;
+				token.name = (user as any).name;
 				token.role = (user as any).role;
 				token.labId = (user as any).labId;
 				token.labCode = (user as any).labCode;
-				token.employeeId = (user as any).employeeId ?? '';
+				token.userId = (user as any).userId;
 			}
 			return token;
 		},
 		async session({ session, token }) {
-			// Expose custom fields on session for server/client usage
-			(session as any).role = token.role;
-			(session as any).labId = token.labId;
-			(session as any).labCode = token.labCode;
-			(session as any).employeeId = token.employeeId ?? '';
+			session.user = {
+				id: (token as any).uid,
+				name: token.name as any,
+				role: (token as any).role,
+				labId: (token as any).labId,
+				labCode: (token as any).labCode,
+				userId: (token as any).userId,
+			};
 			return session;
 		},
 	},
-};
 
-export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);
+	pages: {
+		signIn: "/login", // your login route
+	},
+
+	trustHost: true,
+	secret: process.env.NEXTAUTH_SECRET,
+});

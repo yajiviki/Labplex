@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Building2, ChevronDown, ChevronUp, Search, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Building2, ChevronDown, ChevronUp, Search, Trash2, Download, Upload } from 'lucide-react';
 
 type VendorRow = {
 	id: string;
@@ -29,9 +29,50 @@ function nextVendorId(rows: VendorRow[]): string {
 		}
 	}
 	const n = max + 1;
-	// 2-digit padding up to 99; grows beyond that
 	const tail = n < 10 ? `0${n}` : `${n}`;
 	return `${prefix}${tail}`;
+}
+
+/** Lightweight CSV/TSV parser (handles simple quotes, detects delimiter) */
+function parseDelimited(content: string): Record<string, string>[] {
+	// detect delimiter: prefer tab if present, else comma
+	const delimiter = content.includes('\t') ? '\t' : ',';
+	const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim().length > 0);
+	if (lines.length === 0) return [];
+	const headers = splitLine(lines[0], delimiter).map(h => h.trim());
+
+	const rows: Record<string, string>[] = [];
+	for (let i = 1; i < lines.length; i++) {
+		const cols = splitLine(lines[i], delimiter);
+		const row: Record<string, string> = {};
+		headers.forEach((h, idx) => {
+			row[h] = (cols[idx] ?? '').trim();
+		});
+		rows.push(row);
+	}
+	return rows;
+
+	function splitLine(line: string, d: string): string[] {
+		const out: string[] = [];
+		let cur = '';
+		let inQuotes = false;
+		for (let i = 0; i < line.length; i++) {
+			const ch = line[i];
+			if (ch === '"') {
+				// handle escaped quotes ("")
+				if (inQuotes && line[i + 1] === '"') {
+					cur += '"'; i++; continue;
+				}
+				inQuotes = !inQuotes;
+			} else if (ch === d && !inQuotes) {
+				out.push(cur); cur = '';
+			} else {
+				cur += ch;
+			}
+		}
+		out.push(cur);
+		return out;
+	}
 }
 
 export default function VendorsPage() {
@@ -49,6 +90,7 @@ export default function VendorsPage() {
 	const [formErr, setFormErr] = useState<string | null>(null);
 	const [formOk, setFormOk] = useState<string | null>(null);
 	const [listErr, setListErr] = useState<string | null>(null);
+	const [importMsg, setImportMsg] = useState<string | null>(null); // IMPORT: feedback
 
 	// table controls
 	const [sortKey, setSortKey] = useState<SortKey>('createdAt');
@@ -58,6 +100,9 @@ export default function VendorsPage() {
 	// selection
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const anySelected = selected.size > 0;
+
+	// IMPORT: file input ref
+	const fileRef = useRef<HTMLInputElement | null>(null);
 
 	async function load() {
 		setLoading(true); setListErr(null); setSelected(new Set());
@@ -154,6 +199,78 @@ export default function VendorsPage() {
 		setSelected(new Set()); await load();
 	}
 
+	// IMPORT: file open + parse + POST
+	function openImport() { fileRef.current?.click(); }
+
+	async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+		setImportMsg(null);
+		const f = e.target.files?.[0];
+		if (!f) return;
+		try {
+			const text = await f.text();
+			const parsed = parseDelimited(text);
+			if (parsed.length === 0) { setImportMsg('No rows detected. Check headers.'); return; }
+
+			// validate expected headers
+			const required = ['vendorId', 'tpaName', 'insuranceName', 'address', 'phone', 'createdAt', 'updatedAt'];
+			const hasAll = required.every(h => Object.prototype.hasOwnProperty.call(parsed[0], h));
+			if (!hasAll) {
+				setImportMsg('Invalid headers. Expected: ' + required.join(', '));
+				return;
+			}
+
+			// normalize payload for API
+			const payload = parsed.map(r => ({
+				vendorId: r.vendorId?.trim(),
+				tpaName: r.tpaName?.trim(),
+				insuranceName: (r.insuranceName?.trim() || null),
+				address: (r.address?.trim() || null),
+				phone: (r.phone?.trim() || ''),           // your schema says NOT NULL
+				createdAt: r.createdAt?.trim() || null,   // accepts user-provided timestamp
+				updatedAt: r.updatedAt?.trim() || null,
+			}));
+
+			// call bulk import endpoint
+			const res = await fetch('/api/vendors/import', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ rows: payload }),
+			});
+			const data = await res.json().catch(() => ({} as any));
+			if (!res.ok) {
+				setImportMsg(data?.error || 'Import failed');
+				return;
+			}
+			const { inserted = 0, skipped = 0, updated = 0 } = data;
+			setImportMsg(`Imported: ${inserted} • Updated: ${updated} • Skipped: ${skipped}`);
+			await load();
+		} catch (err: any) {
+			setImportMsg(err?.message || 'Import error');
+		} finally {
+			if (fileRef.current) fileRef.current.value = '';
+		}
+	}
+
+	// SAMPLE CSV: download a template
+	function downloadSample() {
+		const headers = 'vendorId,tpaName,insuranceName,address,phone,createdAt,updatedAt';
+		const now = '2025-09-21 16:59:29';
+		const sample = [
+			headers,
+			`TPA01,Alinea Healthcare,SBI Home,,,+${now},${now}`.replace('+,', ','), // empty address/phone
+			`TPA02,Health Assure,ICICI Prudential Life Insurance,,,+${now},${now}`.replace('+,', ','),
+		].join('\n');
+		const blob = new Blob([sample], { type: 'text/csv;charset=utf-8' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = 'vendor-import-sample.csv';
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+		URL.revokeObjectURL(url);
+	}
+
 	const Col = ({ k, label }: { k: SortKey; label: string }) => {
 		const active = sortKey === k;
 		return (
@@ -188,11 +305,32 @@ export default function VendorsPage() {
 				<div className="lg:col-span-4 rounded-xl border bg-white p-4 shadow-sm">
 					<div className="flex items-center justify-between mb-3">
 						<h2 className="text-base font-semibold">{editingId ? 'Update Vendor' : 'Add New Vendor'}</h2>
-						<button onClick={resetForm} className="text-sm text-gray-600 hover:underline">Clear</button>
+
+						{/* IMPORT: button + hidden input */}
+						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								onClick={openImport}
+								className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-sm hover:bg-gray-50"
+								title="Import CSV/TSV"
+							>
+								<Upload className="h-4 w-4" />
+								Import
+							</button>
+							<input
+								ref={fileRef}
+								type="file"
+								accept=".csv,.tsv,text/csv,text/tab-separated-values"
+								className="hidden"
+								onChange={handleFileChange}
+							/>
+							<button onClick={resetForm} className="text-sm text-gray-600 hover:underline">Clear</button>
+						</div>
 					</div>
 
 					{formErr && <div className="mb-3 text-sm text-red-600">{formErr}</div>}
 					{formOk && <div className="mb-3 text-sm text-green-600">{formOk}</div>}
+					{importMsg && <div className="mb-3 text-sm text-blue-600">{importMsg}</div>}
 
 					<form onSubmit={onSubmit} className="grid grid-cols-1 gap-3">
 						<div>
@@ -228,6 +366,17 @@ export default function VendorsPage() {
 					<div className="flex flex-wrap items-center gap-2 justify-between mb-3">
 						<h2 className="text-base font-semibold">TPA Information</h2>
 						<div className="flex items-center gap-2">
+							{/* SAMPLE CSV: button */}
+							<button
+								type="button"
+								onClick={downloadSample}
+								className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-sm hover:bg-gray-50"
+								title="Download sample CSV"
+							>
+								<Download className="h-4 w-4" />
+								Sample CSV
+							</button>
+
 							{anySelected && (
 								<button
 									type="button"

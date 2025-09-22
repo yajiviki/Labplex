@@ -2,32 +2,107 @@ import { NextResponse } from 'next/server';
 import { prisma } from '../../../../lib/db';
 import { auth } from '../../../../lib/auth';
 
+export const dynamic = 'force-dynamic';
+
+function canManageAll(role?: string | null) {
+	return role === 'SUPER_ADMIN' || role === 'ADMIN';
+}
+function canManageOwn(role?: string | null) {
+	return role === 'LAB_ADMIN' || role === 'STAFF';
+}
+
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
 	try {
 		const session = await auth();
-		const labId = (session as any)?.labId as string | undefined;
-		if (!labId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+		const role = (session as any)?.user?.role as string | undefined;
+		const sessionLabId = (session as any)?.user?.labId as string | undefined;
+
+		if (!canManageAll(role) && !canManageOwn(role)) {
+			return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+		}
 
 		const id = params.id;
+		if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+
 		const body = await req.json().catch(() => ({}));
 
-		const existing = await prisma.appointment.findFirst({ where: { id, labId, isActive: 1 } });
-		if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+		// Load current row
+		const current = await prisma.appointment.findUnique({
+			where: { id },
+			select: { id: true, labId: true, isActive: true },
+		});
+		if (!current || current.isActive !== 1) {
+			return NextResponse.json({ error: 'Not found' }, { status: 404 });
+		}
+
+		// Only own lab unless admin
+		if (!canManageAll(role) && current.labId !== sessionLabId) {
+			return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+		}
+
+		// Optional admin lab move via labCode
+		let nextLabId: string | undefined;
+		if (body.labCode) {
+			if (!canManageAll(role)) {
+				return NextResponse.json({ error: 'Forbidden to move between labs' }, { status: 403 });
+			}
+			const lab = await prisma.lab.findUnique({
+				where: { labCode: String(body.labCode).trim() },
+				select: { id: true },
+			});
+			if (!lab) return NextResponse.json({ error: 'Invalid Lab Code.' }, { status: 400 });
+			nextLabId = lab.id;
+		}
+
+		// Normalize phone if provided
+		let phoneDigits: string | undefined;
+		if (body.phone != null) {
+			phoneDigits = String(body.phone).replace(/\D+/g, '');
+			if (phoneDigits && (phoneDigits.length < 10 || phoneDigits.length > 15)) {
+				return NextResponse.json(
+					{ error: 'Please enter a valid Mobile number (10–15 digits).' },
+					{ status: 400 }
+				);
+			}
+		}
 
 		const updated = await prisma.appointment.update({
 			where: { id },
 			data: {
-				patientId: body.patientId ?? existing.patientId,
-				patientName: body.patientName ?? existing.patientName,
-				phone: body.phone ?? existing.phone,
-				source: body.source ?? existing.source,
-				visitType: body.visitType ?? existing.visitType,
-				doctorName: body.doctorName ?? existing.doctorName,
-				insuranceVendorId: body.insuranceVendorId ?? existing.insuranceVendorId,
-				apptAt: body.apptAt ? new Date(body.apptAt) : existing.apptAt,
-				status: body.status ?? existing.status,
-				tatHours: body.tatHours ?? existing.tatHours,
-				notes: body.notes ?? existing.notes,
+				...(nextLabId ? { labId: nextLabId } : {}),
+				// keep your existing fields; set only if provided
+				...(body.patientId !== undefined ? { patientId: body.patientId } : {}),
+				...(body.patientName !== undefined ? { patientName: body.patientName } : {}),
+				...(body.phone !== undefined ? { phone: phoneDigits ?? null } : {}),
+				...(body.source !== undefined ? { source: body.source } : {}),
+				...(body.visitType !== undefined ? { visitType: body.visitType } : {}),
+				...(body.doctorName !== undefined ? { doctorName: body.doctorName } : {}),
+				...(body.insuranceVendorId !== undefined ? { insuranceVendorId: body.insuranceVendorId } : {}),
+				...(body.apptAt ? { apptAt: new Date(body.apptAt) } : {}),
+				...(body.status !== undefined ? { status: body.status } : {}),
+				...(body.tatHours !== undefined ? { tatHours: body.tatHours } : {}),
+				...(body.notes !== undefined ? { notes: body.notes } : {}),
+				// extended fields (if present in your schema)
+				...(body.gender !== undefined ? { gender: body.gender } : {}),
+				...(body.age !== undefined ? { age: typeof body.age === 'number' ? body.age : null } : {}),
+				...(body.address !== undefined ? { address: body.address } : {}),
+				...(body.tpaName !== undefined ? { tpaName: body.tpaName } : {}),
+				...(body.insuranceName !== undefined ? { insuranceName: body.insuranceName } : {}),
+				...(body.testCode !== undefined ? { testCode: body.testCode } : {}),
+				...(body.testDescription !== undefined ? { testDescription: body.testDescription } : {}),
+				...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+			},
+			select: {
+				id: true, labId: true,
+				patientId: true, patientName: true, phone: true,
+				source: true, visitType: true, doctorName: true, insuranceVendorId: true,
+				apptAt: true, status: true, tatHours: true, notes: true,
+				gender: true, age: true, address: true, tpaName: true, insuranceName: true,
+				testCode: true, testDescription: true,
+				isActive: true, updatedAt: true,
+				lab: { select: { labCode: true, name: true } },
 			},
 		});
 
@@ -40,11 +115,26 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
 	try {
 		const session = await auth();
-		const labId = (session as any)?.labId as string | undefined;
-		if (!labId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-		const existing = await prisma.appointment.findFirst({ where: { id: params.id, labId, isActive: 1 } });
-		if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+		const role = (session as any)?.user?.role as string | undefined;
+		const sessionLabId = (session as any)?.user?.labId as string | undefined;
+
+		if (!canManageAll(role) && !canManageOwn(role)) {
+			return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+		}
+
+		const current = await prisma.appointment.findUnique({
+			where: { id: params.id },
+			select: { id: true, labId: true, isActive: true },
+		});
+		if (!current || current.isActive !== 1) {
+			return NextResponse.json({ error: 'Not found' }, { status: 404 });
+		}
+
+		if (!canManageAll(role) && current.labId !== sessionLabId) {
+			return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+		}
 
 		await prisma.appointment.update({
 			where: { id: params.id },

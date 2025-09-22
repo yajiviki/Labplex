@@ -8,105 +8,185 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// ===========================================================
+// Lab (tie-up labs)
+// ===========================================================
 model Lab {
   id        String   @id @default(cuid())
-  labCode   String?  @unique // temporarily optional
+  labCode   String   @unique // e.g. LB01
   name      String
   address   String?
-  phone     String? // temporarily optional
-  email     String?  @unique
+  phone     String?
+  email     String?
   isActive  Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Relations
   users        User[]
   appointments Appointment[]
   patients     Patient[]
 }
 
+// ===========================================================
+// User (staff/admin + generic users)
+// - userId is per-lab, composite unique with labId (U0001, U0002…)
+// ===========================================================
 model User {
-  id    String  @id @default(cuid())
-  labId String?
-  lab   Lab?    @relation(fields: [labId], references: [id])
+  id String @id @default(cuid())
 
-  employeeId String?   @unique
-  userType   String? // 'PATIENT' | 'STAFF'
-  name       String
-  phone      String
-  role       String // 'USER' | 'ADMIN' | 'SUPER_ADMIN'
-  email      String?   @unique
-  password   String
-  isActive   Int       @default(1)
-  dob        DateTime?
-  address    String?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-
-  passwordSetupTokens PasswordSetupToken[]
-}
-
-model PasswordSetupToken {
-  id        String    @id @default(cuid())
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token     String    @unique
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime  @default(now())
-
-  @@index([userId, token])
-}
-
-model Patient {
-  id             String   @id @default(cuid())
-  labId          String?
-  lab            Lab?     @relation(fields: [labId], references: [id])
-  patientId      String   @unique           // OP0001, OP0002...
-  name           String
-  tpaName        String?
-  insuranceName  String?
-  doctorName     String?
-  address        String?
-  phone          String
-  isActive       Int      @default(1)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  appointments   Appointment[] // if you relate appointments
-}
-
-// ----- Appointment -----
-model Appointment {
-  id    String @id @default(cuid())
   labId String
   lab   Lab    @relation(fields: [labId], references: [id])
 
-  patientId String?
-  patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  userId   String // e.g. U0001 (per lab)
+  name     String
+  phone    String
+  role     String // 'USER' | 'ADMIN' | 'SUPER_ADMIN'
+  password String
+  email    String?
+  dob      DateTime?
+  address  String?
+  isActive Int       @default(1)
 
-  source            String
-  visitType         String
-  doctorName        String?
-  insuranceVendorId String?
-  notes             String?
-  apptAt            DateTime
-  status            String   @default("BOOKED")
-  tatHours          Int?
-  isActive          Int      @default(1)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@index([patientId])
+  // Password setup tokens backref (allow multiple)
+  passwordSetupTokens PasswordSetupToken[] @relation("PasswordSetupTokens")
+
+  @@unique([labId, userId]) // composite unique per lab
+  @@index([labId])
+  @@index([phone])
 }
 
+// ===========================================================
+// PasswordSetupToken (optional; used if you email setup links)
+// ===========================================================
+model PasswordSetupToken {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation("PasswordSetupTokens", fields: [userId], references: [id], onDelete: Cascade)
+
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ===========================================================
+// Vendor (TPA) and InsuranceCompany
+// - vendorId = TPA01, TPA02… (unique)
+// - Insurance companies belong to a TPA
+// ===========================================================
 model Vendor {
   id            String   @id @default(cuid())
-  vendorId      String   @unique      // TPA01, TPA02...
+  vendorId      String
   tpaName       String
-  insuranceName String?
   address       String?
-  phone         String
+  phone         String?
+  insuranceName String? // legacy single-name field (kept for compatibility)
   isActive      Int      @default(1)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  companies InsuranceCompany[]
+}
+
+model InsuranceCompany {
+  id String @id @default(cuid())
+
+  vendorId String
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  name      String
+  code      String?
+  isActive  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vendorId])
+  @@index([name])
+}
+
+// ===========================================================
+// Patient (for Patient Management form)
+// - patientId per-lab (OP0001…) composite unique with labId
+// ===========================================================
+model Patient {
+  id String @id @default(cuid())
+
+  labId String
+  lab   Lab    @relation(fields: [labId], references: [id])
+
+  patientId     String // e.g. OP0001 (per lab)
+  name          String
+  tpaName       String? // shown if Source is TPA
+  insuranceName String?
+  doctorName    String?
+  address       String?
+  phone         String
+  isActive      Int     @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  appointments Appointment[]
+
+  @@unique([labId, patientId])
+  @@index([labId])
+  @@index([phone])
+}
+
+// ===========================================================
+// Appointment
+// - We store names for TPA/Insurance for your UI needs
+// - Optional relation to Patient (when you map by patientId)
+// ===========================================================
+model Appointment {
+  id String @id @default(cuid())
+
+  labId String
+  lab   Lab    @relation(fields: [labId], references: [id])
+
+  // Optional relation to Patient (when available)
+  patientIdRef String?
+  patient      Patient? @relation(fields: [patientIdRef], references: [id], onDelete: SetNull)
+
+  // Source-dependent identifiers
+  source     String // 'TPA' | 'Doctor Ref' | 'Direct Visit'
+  proposalNo String? // for TPA
+  patientId  String? // for non-TPA (e.g. OPxxxx if you want to store the external string too)
+
+  // Person info
+  patientName String
+  gender      String?
+  age         Int?
+  address     String?
+
+  // TPA Info (stored as strings for your dropdown mapping)
+  tpaName       String?
+  insuranceName String?
+
+  // Doctor info
+  doctorName String?
+
+  // Flow
+  visitType       String // 'CENTER' | 'HOME'
+  status          String // 'BOOKED' | 'CHECKED IN' | 'SAMPLING' | 'PROCESSING' | 'REPORT READY' | 'CLOSED' | 'CANCELED'
+  mobile          String
+  apptAt          DateTime
+  testCode        String?
+  testDescription String?
+
+  isActive  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([labId])
+  @@index([status])
+  @@index([apptAt])
+  @@index([tpaName])
+  @@index([insuranceName])
 }

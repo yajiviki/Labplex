@@ -10,13 +10,12 @@ type UserRow = {
 	role: 'USER' | 'ADMIN' | 'SUPER_ADMIN' | string;
 	dob: string | null;
 	address: string | null;
-	employeeId: string | null;
+	employeeId: string | null; // mapped from backend userId
 	createdAt: string;
-	labId?: string | null;
 	lab?: { labCode: string; name: string } | null;
 };
 
-type LabRow = { id: string; labCode: string; name: string };
+type LabRow = { labCode: string; name: string };
 
 type SortKey = keyof Pick<UserRow, 'employeeId' | 'name' | 'phone' | 'role' | 'createdAt'>;
 type SortDir = 'asc' | 'desc';
@@ -48,7 +47,7 @@ export default function ManageUsersPage() {
 	const [phone, setPhone] = useState('');
 	const [role, setRole] = useState<'USER' | 'ADMIN' | 'SUPER_ADMIN' | ''>('');
 	const [email, setEmail] = useState('');
-	const [labId, setLabId] = useState<string>('');
+	const [labCode, setLabCode] = useState<string>(''); // << use labCode
 
 	// Messages
 	const [formErr, setFormErr] = useState<string | null>(null);
@@ -79,14 +78,24 @@ export default function ManageUsersPage() {
 		try {
 			const [resUsers, resLabs] = await Promise.all([
 				fetch('/api/users', { cache: 'no-store' }),
-				fetch('/api/labs', { cache: 'no-store' }),
+				fetch('/api/labs?select=codeAndName', { cache: 'no-store' }), // assume your /api/labs supports this
 			]);
 			const dataUsers = await resUsers.json().catch(() => []);
 			const dataLabs = await resLabs.json().catch(() => []);
+
 			if (!resUsers.ok) {
 				setListErr((dataUsers && dataUsers.error) || `Load failed: ${resUsers.status}`);
 				setRows([]);
-			} else setRows(Array.isArray(dataUsers) ? dataUsers : []);
+			} else {
+				// map backend userId -> UI employeeId
+				const normalized = (Array.isArray(dataUsers) ? dataUsers : []).map((u: any) => ({
+					...u,
+					employeeId: u.userId,
+				}));
+				setRows(normalized);
+			}
+
+			// expect labs [{ labCode, name }]
 			setLabs(resLabs.ok && Array.isArray(dataLabs) ? dataLabs : []);
 		} catch (e: any) {
 			setListErr(e?.message || 'Network error');
@@ -98,7 +107,7 @@ export default function ManageUsersPage() {
 	function resetForm() {
 		setEditingId(null);
 		setName(''); setDob(''); setAddress(''); setPhone('');
-		setRole(''); setEmail(''); setLabId('');
+		setRole(''); setEmail(''); setLabCode('');
 		setFormErr(null); setFormOk(null);
 	}
 
@@ -107,6 +116,7 @@ export default function ManageUsersPage() {
 		setFormErr(null); setFormOk(null);
 
 		const normalizedPhone = (phone || '').replace(/\D+/g, '');
+		if (!labCode) { setFormErr('Please select Lab.'); return; }
 		if (!name.trim() || !normalizedPhone || !role) { setFormErr('Please fill Name, Mobile and Role.'); return; }
 		if (normalizedPhone.length < 10 || normalizedPhone.length > 15) { setFormErr('Please enter a valid Mobile number (10–15 digits).'); return; }
 		const allowed = new Set(['USER', 'ADMIN', 'SUPER_ADMIN']);
@@ -119,9 +129,7 @@ export default function ManageUsersPage() {
 			dob: dob ? new Date(dob).toISOString() : null,
 			address: address.trim() || null,
 			email: email.trim() || null,
-			labId: labId || null,
-			// optional: let server generate final employeeId; we only preview in UI
-			// employeeId: editingId ? undefined : getNextUserId(rows),
+			labCode, // << send labCode, not labId
 		};
 
 		try {
@@ -136,7 +144,7 @@ export default function ManageUsersPage() {
 			if (!editingId) {
 				if (data?.defaultPassword) {
 					setModalPassword(data.defaultPassword);
-					setModalUserId(data.employeeId || '');
+					setModalUserId(data.userId || '');   // from API
 					setModalUserName(data.name || '');
 					setPwdMask(true); setPwdCopied(false); setPwdModalOpen(true);
 				}
@@ -158,10 +166,11 @@ export default function ManageUsersPage() {
 		setPhone(u.phone || '');
 		setRole(((u.role || '') as any) || '');
 		setEmail('');
-		setLabId(u.labId || '');
+		setLabCode(u.lab?.labCode || ''); // << use labCode
 		setFormErr(null); setFormOk(null);
 	}
 
+	type SortKey = keyof Pick<UserRow, 'employeeId' | 'name' | 'phone' | 'role' | 'createdAt'>;
 	function sortBy(key: SortKey) { if (key === sortKey) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortKey(key); setSortDir('asc'); } }
 
 	const filtered = useMemo(() => {
@@ -246,10 +255,10 @@ export default function ManageUsersPage() {
 
 						<div>
 							<label className="block text-sm mb-1">Lab Code</label>
-							<select className="w-full border rounded px-3 py-2" value={labId} onChange={(e) => setLabId(e.target.value)}>
+							<select className="w-full border rounded px-3 py-2" value={labCode} onChange={(e) => setLabCode(e.target.value)}>
 								<option value="">Select Lab</option>
 								{labs.map((lab) => (
-									<option key={lab.id} value={lab.id}>{lab.labCode} — {lab.name}</option>
+									<option key={lab.labCode} value={lab.labCode}>{lab.labCode} — {lab.name}</option>
 								))}
 							</select>
 						</div>

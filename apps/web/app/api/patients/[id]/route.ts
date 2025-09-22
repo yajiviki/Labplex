@@ -9,22 +9,30 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
 		const id = params.id;
-		const { name, tpaName, insuranceName, doctorName, address, phone } = await req.json().catch(() => ({}));
-		if (!name?.trim() || !phone?.trim()) return NextResponse.json({ error: 'Please fill Name and Mobile.' }, { status: 400 });
+		const body = await req.json().catch(() => ({}));
+		const { name, address, phone, doctorName, vendorId, insuranceCompanyId } = body;
+
+		const normalizedPhone = (phone || '').toString().replace(/\D+/g, '');
+		if (!name?.trim() || !normalizedPhone) {
+			return NextResponse.json({ error: 'Please fill Name and Mobile.' }, { status: 400 });
+		}
 
 		const updated = await prisma.patient.update({
 			where: { id },
 			data: {
 				name: name.trim(),
-				tpaName: tpaName || null,
-				insuranceName: insuranceName || null,
-				doctorName: doctorName || null,
 				address: address || null,
-				phone: phone.trim(),
+				phone: normalizedPhone,
+				doctorName: doctorName || null,
+				vendorId: vendorId || null,
+				insuranceCompanyId: insuranceCompanyId || null,
 			},
 			select: {
-				id: true, patientId: true, name: true, tpaName: true, insuranceName: true,
-				doctorName: true, address: true, phone: true, createdAt: true,
+				id: true, patientId: true, name: true, address: true, phone: true, doctorName: true,
+				vendorId: true, insuranceCompanyId: true,
+				vendor: { select: { id: true, tpaName: true, vendorId: true } },
+				insuranceCompany: { select: { id: true, name: true } },
+				createdAt: true,
 			},
 		});
 		return NextResponse.json(updated);

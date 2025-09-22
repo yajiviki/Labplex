@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { signIn } from 'next-auth/react';
 
 export default function ClientLoginForm() {
-	const [employeeId, setEmployeeId] = useState('');
+	const [userId, setUserId] = useState('');
 	const [password, setPassword] = useState('');
 	const [labCode, setLabCode] = useState('demo'); // default for dev
 	const [captcha, setCaptcha] = useState('');
@@ -25,7 +25,7 @@ export default function ClientLoginForm() {
 		setLoading(true);
 		setErr(null);
 
-		if (!employeeId.trim() || !password) {
+		if (!userId.trim() || !password) {
 			setErr('User ID and password are required.');
 			setLoading(false);
 			return;
@@ -36,11 +36,19 @@ export default function ClientLoginForm() {
 			return;
 		}
 
+		// const res = await signIn('credentials', {
+		// 	redirect: false,
+		// 	userId: userId.trim(),
+		// 	password,
+		// 	labCode: labCode.trim(),
+		// });
+
 		const res = await signIn('credentials', {
 			redirect: false,
-			employeeId: employeeId.trim(),
-			password,
-			labCode: labCode.trim(),
+			callbackUrl: '/dashboard',
+			userId,          // ✅ not "username" or "userId"
+			labCode,         // ✅ "LB01"
+			password,        // ✅ plain input
 		});
 
 		if (res?.error) {
@@ -68,8 +76,8 @@ export default function ClientLoginForm() {
 							<input
 								type="text"
 								placeholder="Enter User ID"
-								value={employeeId}
-								onChange={(e) => setEmployeeId(e.target.value)}
+								value={userId}
+								onChange={(e) => setUserId(e.target.value)}
 								className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-green-400 outline-none"
 							/>
 						</div>
