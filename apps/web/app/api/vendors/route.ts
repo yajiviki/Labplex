@@ -1,15 +1,9 @@
 import { NextResponse } from 'next/server';
-import { auth } from '../../../lib/auth';
-import { prisma } from '../../../lib/db';
+import { auth } from '../../../lib/auth';      // ✅ correct path from app/api/vendors
+import { prisma } from '../../../lib/db';      // ✅
 
 export const dynamic = 'force-dynamic';
 
-/* ---------- Role helpers ---------- */
-function canManageAll(role?: string | null) {
-	return role === 'SUPER_ADMIN' || role === 'ADMIN';
-}
-
-/* ---------- Helpers ---------- */
 function nextVendorIdFrom(rows: { vendorId: string | null }[]) {
 	const prefix = 'TPA';
 	let max = 0;
@@ -27,7 +21,6 @@ function nextVendorIdFrom(rows: { vendorId: string | null }[]) {
 }
 
 /* ---------- GET /api/vendors ---------- */
-/** Support ?include=companies to embed insurance companies under each TPA */
 export async function GET(req: Request) {
 	try {
 		const session = await auth();
@@ -46,7 +39,7 @@ export async function GET(req: Request) {
 					tpaName: true,
 					address: true,
 					phone: true,
-					insuranceName: true, // legacy single-name field
+					insuranceName: true,    // legacy single-name field
 					createdAt: true,
 					companies: {
 						where: { isActive: 1 },
@@ -58,7 +51,6 @@ export async function GET(req: Request) {
 			return NextResponse.json(vendors);
 		}
 
-		// Default: flat vendor list
 		const vendors = await prisma.vendor.findMany({
 			where: { isActive: 1 },
 			orderBy: { createdAt: 'desc' },
@@ -87,11 +79,6 @@ export async function POST(req: Request) {
 		const session = await auth();
 		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-		const role = (session as any)?.user?.role as string | undefined;
-		if (!canManageAll(role)) {
-			return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-		}
-
 		const body = await req.json().catch(() => ({}));
 		const { tpaName, insuranceName, address } = body || {};
 		let { phone } = body || {};
@@ -108,7 +95,7 @@ export async function POST(req: Request) {
 			return NextResponse.json({ error: 'Please enter a valid Mobile number (10–15 digits).' }, { status: 400 });
 		}
 
-		// small retry loop in case of concurrent creation causing P2002 on vendorId
+		// small retry loop to avoid P2002 on vendorId
 		let attempts = 0;
 		while (attempts < 5) {
 			attempts++;
@@ -116,32 +103,44 @@ export async function POST(req: Request) {
 				const all = await prisma.vendor.findMany({ select: { vendorId: true } });
 				const vendorId = nextVendorIdFrom(all);
 
-				const created = await prisma.vendor.create({
-					data: {
-						vendorId,
-						tpaName: tpaName.trim(),
-						insuranceName: (insuranceName || '').trim() || null,
-						address: (address || '').trim() || null,
-						phone: phoneDigits,
-						isActive: 1,
-					},
-					select: {
-						id: true,
-						vendorId: true,
-						tpaName: true,
-						insuranceName: true,
-						address: true,
-						phone: true,
-						createdAt: true,
-					},
+				const created = await prisma.$transaction(async (tx) => {
+					const vendor = await tx.vendor.create({
+						data: {
+							vendorId,
+							tpaName: tpaName.trim(),
+							insuranceName: (insuranceName || '').trim() || null, // legacy column
+							address: (address || '').trim() || null,
+							phone: phoneDigits,
+							isActive: 1,
+						},
+						select: {
+							id: true,
+							vendorId: true,
+							tpaName: true,
+							insuranceName: true,
+							address: true,
+							phone: true,
+							createdAt: true,
+						},
+					});
+
+					// optional: also create a normalized insurance row
+					if (insuranceName && insuranceName.trim()) {
+						await tx.insuranceCompany.create({
+							data: {
+								vendorId: vendor.id,     // FK to Vendor.id
+								name: insuranceName.trim(),
+								isActive: 1,
+							},
+						});
+					}
+
+					return vendor;
 				});
 
 				return NextResponse.json(created, { status: 201 });
 			} catch (e: any) {
-				if (e?.code === 'P2002' && String(e?.meta?.target || '').includes('vendorId')) {
-					// retry with next number
-					continue;
-				}
+				if (e?.code === 'P2002' && String(e?.meta?.target || '').includes('vendorId')) continue;
 				throw e;
 			}
 		}

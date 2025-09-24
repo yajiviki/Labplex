@@ -1,89 +1,36 @@
 import { NextResponse } from 'next/server';
+import { prisma } from '../../../../lib/db';  // ✅ correct depth
 import { auth } from '../../../../lib/auth';
-import { prisma } from '../../../../lib/db';
 
-export const dynamic = 'force-dynamic';
-
-function canManageAll(role?: string | null) {
-	return role === 'SUPER_ADMIN' || role === 'ADMIN';
-}
-
-export async function PUT(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: { id: string } }) {
 	try {
 		const session = await auth();
 		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-		const role = (session as any)?.user?.role as string | undefined;
-		if (!canManageAll(role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
 		const id = params.id;
-		if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
-
 		const body = await req.json().catch(() => ({}));
-		const { tpaName, insuranceName, address } = body || {};
-		let { phone } = body || {};
+		const name = (body?.name || '').trim();
 
-		// Normalize phone if provided
-		let phoneDigits: string | undefined = undefined;
-		if (phone != null) {
-			phoneDigits = String(phone).replace(/\D+/g, '');
-			if (phoneDigits && (phoneDigits.length < 10 || phoneDigits.length > 15)) {
-				return NextResponse.json(
-					{ error: 'Please enter a valid Mobile number (10–15 digits).' },
-					{ status: 400 }
-				);
-			}
+		if (!id) return NextResponse.json({ error: 'Missing vendor id' }, { status: 400 });
+		if (!name) return NextResponse.json({ error: 'Insurance name required' }, { status: 400 });
+
+		const vendor = await prisma.vendor.findUnique({ where: { id }, select: { id: true } });
+		if (!vendor) return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
+
+		const existing = await prisma.insuranceCompany.findFirst({
+			where: { vendorId: vendor.id, name },
+			select: { id: true },
+		});
+		if (existing) {
+			return NextResponse.json({ ok: true, existed: true });
 		}
 
-		const updated = await prisma.vendor.update({
-			where: { id },
-			data: {
-				tpaName: tpaName ?? undefined,
-				insuranceName: insuranceName ?? undefined,
-				address: address ?? undefined,
-				phone: phoneDigits ?? undefined,
-			},
-			select: {
-				id: true,
-				vendorId: true,
-				tpaName: true,
-				insuranceName: true,
-				address: true,
-				phone: true,
-				createdAt: true,
-			},
-		});
-		return NextResponse.json(updated);
-	} catch (e: any) {
-		return NextResponse.json(
-			{ error: e?.message || 'Update failed', databaseUrl: process.env.DATABASE_URL },
-			{ status: 500 }
-		);
-	}
-}
-
-export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
-	try {
-		const session = await auth();
-		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-		const role = (session as any)?.user?.role as string | undefined;
-		if (!canManageAll(role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
-		const id = params.id;
-		if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
-
-		// Soft delete
-		await prisma.vendor.update({
-			where: { id },
-			data: { isActive: 0 },
+		await prisma.insuranceCompany.create({
+			data: { vendorId: vendor.id, name, isActive: 1 },
 		});
 
 		return NextResponse.json({ ok: true });
 	} catch (e: any) {
-		return NextResponse.json(
-			{ error: e?.message || 'Delete failed', databaseUrl: process.env.DATABASE_URL },
-			{ status: 500 }
-		);
+		return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });
 	}
 }

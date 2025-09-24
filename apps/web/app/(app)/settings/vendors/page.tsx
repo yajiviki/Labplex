@@ -1,13 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Building2, ChevronDown, ChevronUp, Search, Trash2, Download, Upload } from 'lucide-react';
+import { Building2, ChevronDown, ChevronUp, Search, Trash2, Download, Upload, X } from 'lucide-react';
 
 type VendorRow = {
 	id: string;
 	vendorId: string;          // TPA01, TPA02, ...
 	tpaName: string;
-	insuranceName: string | null;
+	insuranceName: string | null; // legacy single field (we still show it)
 	address: string | null;
 	phone: string;
 	createdAt: string;
@@ -35,7 +35,6 @@ function nextVendorId(rows: VendorRow[]): string {
 
 /** Lightweight CSV/TSV parser (handles simple quotes, detects delimiter) */
 function parseDelimited(content: string): Record<string, string>[] {
-	// detect delimiter: prefer tab if present, else comma
 	const delimiter = content.includes('\t') ? '\t' : ',';
 	const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim().length > 0);
 	if (lines.length === 0) return [];
@@ -59,10 +58,7 @@ function parseDelimited(content: string): Record<string, string>[] {
 		for (let i = 0; i < line.length; i++) {
 			const ch = line[i];
 			if (ch === '"') {
-				// handle escaped quotes ("")
-				if (inQuotes && line[i + 1] === '"') {
-					cur += '"'; i++; continue;
-				}
+				if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; continue; }
 				inQuotes = !inQuotes;
 			} else if (ch === d && !inQuotes) {
 				out.push(cur); cur = '';
@@ -90,7 +86,7 @@ export default function VendorsPage() {
 	const [formErr, setFormErr] = useState<string | null>(null);
 	const [formOk, setFormOk] = useState<string | null>(null);
 	const [listErr, setListErr] = useState<string | null>(null);
-	const [importMsg, setImportMsg] = useState<string | null>(null); // IMPORT: feedback
+	const [importMsg, setImportMsg] = useState<string | null>(null);
 
 	// table controls
 	const [sortKey, setSortKey] = useState<SortKey>('createdAt');
@@ -103,6 +99,12 @@ export default function VendorsPage() {
 
 	// IMPORT: file input ref
 	const fileRef = useRef<HTMLInputElement | null>(null);
+
+	// Modal to add another insurance under the same TPA
+	const [addMoreOpen, setAddMoreOpen] = useState(false);
+	const [lockedVendorId, setLockedVendorId] = useState<string | null>(null);
+	const [lockedVendorDbId, setLockedVendorDbId] = useState<string | null>(null);
+	const [lockedVendorName, setLockedVendorName] = useState<string | null>(null);
 
 	async function load() {
 		setLoading(true); setListErr(null); setSelected(new Set());
@@ -121,20 +123,50 @@ export default function VendorsPage() {
 		setEditingId(null);
 		setTpaName(''); setInsuranceName(''); setAddress(''); setPhone('');
 		setFormErr(null); setFormOk(null);
+		// also clear locked vendor (exit add-more flow)
+		setLockedVendorDbId(null);
+		setLockedVendorId(null);
+		setLockedVendorName(null);
 	}
 
 	async function onSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		setFormErr(null); setFormOk(null);
 
+		// If we're in "add-more insurance" mode (same TPA), skip creating vendor again.
+		if (lockedVendorDbId && lockedVendorId && lockedVendorName) {
+			const ins = insuranceName.trim();
+			if (!ins) { setFormErr('Please enter Insurance Name'); return; }
+			try {
+				const res = await fetch(`/api/vendors/${lockedVendorDbId}/companies`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ name: ins }),
+				});
+				const data = await res.json().catch(() => ({}));
+				if (!res.ok) { setFormErr(data?.error || 'Add insurance failed'); return; }
+
+				setFormOk(`Added "${ins}" under ${lockedVendorName} (${lockedVendorId})`);
+				setInsuranceName(''); // keep focus here for the next insurance
+				await load();
+				// Stay in add-more flow
+				setAddMoreOpen(true);
+				return;
+			} catch (err: any) {
+				setFormErr(err?.message || 'Network error');
+				return;
+			}
+		}
+
+		// Normal create or update vendor flow
 		const normalizedPhone = (phone || '').replace(/\D+/g, '');
 		if (!tpaName.trim() || !normalizedPhone) { setFormErr('Please fill TPA Name and Mobile.'); return; }
 		if (normalizedPhone.length < 10 || normalizedPhone.length > 15) { setFormErr('Please enter a valid Mobile number (10–15 digits).'); return; }
 
 		const payload = {
 			tpaName: tpaName.trim(),
-			insuranceName: insuranceName.trim() || null,
-			address: address.trim() || null,
+			insuranceName: (insuranceName.trim() || null),
+			address: (address.trim() || null),
 			phone: normalizedPhone,
 		};
 
@@ -146,12 +178,55 @@ export default function VendorsPage() {
 			});
 			const data = await res.json().catch(() => ({}));
 			if (!res.ok) { setFormErr(data?.error || 'Save failed'); return; }
-			setFormOk(editingId ? 'Updated!' : 'Created!');
-			await load();
-			if (!editingId) resetForm();
+
+			if (!editingId) {
+				// Created new TPA. If an insuranceName was supplied, ask to add more under same TPA.
+				setFormOk('Created!');
+				await load();
+
+				if (payload.insuranceName) {
+					// lock current vendor to add more companies
+					setLockedVendorDbId(data?.id || null);
+					setLockedVendorId(data?.vendorId || null);
+					setLockedVendorName(data?.tpaName || null);
+					setAddMoreOpen(true);
+					setInsuranceName(''); // ready for next insurance
+				} else {
+					// no insurance given → just clear to next TPA
+					resetForm();
+				}
+			} else {
+				setFormOk('Updated!');
+				await load();
+			}
 		} catch (e: any) {
 			setFormErr(e?.message || 'Network error');
 		}
+	}
+
+	// “Yes, add another insurance” keeps vendor locked, just focuses insurance field.
+	function confirmAddMoreYes() {
+		setAddMoreOpen(false);
+		// keep vendor locked; do nothing else – user can type next insurance
+		// ensure the field is ready
+		const el = document.querySelector<HTMLInputElement>('input[name="insuranceName"]');
+		el?.focus();
+	}
+
+	// “No” exits the flow, clears vendor lock and advances preview id
+	function confirmAddMoreNo() {
+		setAddMoreOpen(false);
+		// exit add-more flow
+		setLockedVendorDbId(null);
+		setLockedVendorId(null);
+		setLockedVendorName(null);
+		// clear the form for a fresh TPA
+		setTpaName('');
+		setInsuranceName('');
+		setAddress('');
+		setPhone('');
+		setFormErr(null);
+		setFormOk(null);
 	}
 
 	function startEdit(v: VendorRow) {
@@ -161,6 +236,10 @@ export default function VendorsPage() {
 		setAddress(v.address || '');
 		setPhone(v.phone || '');
 		setFormErr(null); setFormOk(null);
+		// editing cancels add-more flow
+		setLockedVendorDbId(null);
+		setLockedVendorId(null);
+		setLockedVendorName(null);
 	}
 
 	function sortBy(key: SortKey) { if (key === sortKey) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortKey(key); setSortDir('asc'); } }
@@ -211,7 +290,6 @@ export default function VendorsPage() {
 			const parsed = parseDelimited(text);
 			if (parsed.length === 0) { setImportMsg('No rows detected. Check headers.'); return; }
 
-			// validate expected headers
 			const required = ['vendorId', 'tpaName', 'insuranceName', 'address', 'phone', 'createdAt', 'updatedAt'];
 			const hasAll = required.every(h => Object.prototype.hasOwnProperty.call(parsed[0], h));
 			if (!hasAll) {
@@ -219,18 +297,16 @@ export default function VendorsPage() {
 				return;
 			}
 
-			// normalize payload for API
 			const payload = parsed.map(r => ({
-				vendorId: r.vendorId?.trim(),
-				tpaName: r.tpaName?.trim(),
+				vendorId: r.vendorId?.trim() || null,
+				tpaName: r.tpaName?.trim() || null,
 				insuranceName: (r.insuranceName?.trim() || null),
 				address: (r.address?.trim() || null),
-				phone: (r.phone?.trim() || ''),           // your schema says NOT NULL
-				createdAt: r.createdAt?.trim() || null,   // accepts user-provided timestamp
+				phone: (r.phone?.trim() || null),
+				createdAt: r.createdAt?.trim() || null,
 				updatedAt: r.updatedAt?.trim() || null,
 			}));
 
-			// call bulk import endpoint
 			const res = await fetch('/api/vendors/import', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -241,8 +317,8 @@ export default function VendorsPage() {
 				setImportMsg(data?.error || 'Import failed');
 				return;
 			}
-			const { inserted = 0, skipped = 0, updated = 0 } = data;
-			setImportMsg(`Imported: ${inserted} • Updated: ${updated} • Skipped: ${skipped}`);
+			const { insertedVendors = 0, updatedVendors = 0, insertedCompanies = 0, skippedCompanies = 0 } = data;
+			setImportMsg(`Vendors: +${insertedVendors} / updated ${updatedVendors} • Companies: +${insertedCompanies} / skipped ${skippedCompanies}`);
 			await load();
 		} catch (err: any) {
 			setImportMsg(err?.message || 'Import error');
@@ -257,7 +333,7 @@ export default function VendorsPage() {
 		const now = '2025-09-21 16:59:29';
 		const sample = [
 			headers,
-			`TPA01,Alinea Healthcare,SBI Home,,,+${now},${now}`.replace('+,', ','), // empty address/phone
+			`TPA01,Alinea Healthcare,SBI Home,,,+${now},${now}`.replace('+,', ','),
 			`TPA02,Health Assure,ICICI Prudential Life Insurance,,,+${now},${now}`.replace('+,', ','),
 		].join('\n');
 		const blob = new Blob([sample], { type: 'text/csv;charset=utf-8' });
@@ -286,9 +362,12 @@ export default function VendorsPage() {
 		);
 	};
 
-	const previewVendorId = useMemo(() => (
-		editingId ? (rows.find(r => r.id === editingId)?.vendorId || '') : nextVendorId(rows)
-	), [editingId, rows]);
+	const previewVendorId = useMemo(() => {
+		if (lockedVendorId) return lockedVendorId; // during add-more, show locked id
+		return editingId ? (rows.find(r => r.id === editingId)?.vendorId || '') : nextVendorId(rows);
+	}, [editingId, rows, lockedVendorId]);
+
+	const tpaDisabled = Boolean(lockedVendorId); // lock fields when in add-more flow
 
 	return (
 		<div className="space-y-4">
@@ -306,7 +385,6 @@ export default function VendorsPage() {
 					<div className="flex items-center justify-between mb-3">
 						<h2 className="text-base font-semibold">{editingId ? 'Update Vendor' : 'Add New Vendor'}</h2>
 
-						{/* IMPORT: button + hidden input */}
 						<div className="flex items-center gap-2">
 							<button
 								type="button"
@@ -339,23 +417,43 @@ export default function VendorsPage() {
 						</div>
 						<div>
 							<label className="block text-sm mb-1">TPA Name *</label>
-							<input className="w-full border rounded px-3 py-2" value={tpaName} onChange={(e) => setTpaName(e.target.value)} />
+							<input
+								className="w-full border rounded px-3 py-2"
+								value={tpaName}
+								onChange={(e) => setTpaName(e.target.value)}
+								disabled={tpaDisabled}
+							/>
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Insurance Name</label>
-							<input className="w-full border rounded px-3 py-2" value={insuranceName} onChange={(e) => setInsuranceName(e.target.value)} />
+							<input
+								name="insuranceName"
+								className="w-full border rounded px-3 py-2"
+								value={insuranceName}
+								onChange={(e) => setInsuranceName(e.target.value)}
+							/>
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Address</label>
-							<input className="w-full border rounded px-3 py-2" value={address} onChange={(e) => setAddress(e.target.value)} />
+							<input
+								className="w-full border rounded px-3 py-2"
+								value={address}
+								onChange={(e) => setAddress(e.target.value)}
+								disabled={tpaDisabled}
+							/>
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Mobile *</label>
-							<input className="w-full border rounded px-3 py-2" value={phone} onChange={(e) => setPhone(e.target.value)} />
+							<input
+								className="w-full border rounded px-3 py-2"
+								value={phone}
+								onChange={(e) => setPhone(e.target.value)}
+								disabled={tpaDisabled}
+							/>
 						</div>
 
 						<div className="flex gap-2 mt-1">
-							<button className="rounded bg-brand text-white px-4 py-2">{editingId ? 'Update' : 'Create'}</button>
+							<button className="rounded bg-brand text-white px-4 py-2">{editingId ? 'Update' : (lockedVendorId ? 'Add Insurance' : 'Create')}</button>
 							<button type="button" className="rounded border px-4 py-2" onClick={resetForm}>Reset</button>
 						</div>
 					</form>
@@ -366,7 +464,6 @@ export default function VendorsPage() {
 					<div className="flex flex-wrap items-center gap-2 justify-between mb-3">
 						<h2 className="text-base font-semibold">TPA Information</h2>
 						<div className="flex items-center gap-2">
-							{/* SAMPLE CSV: button */}
 							<button
 								type="button"
 								onClick={downloadSample}
@@ -457,6 +554,33 @@ export default function VendorsPage() {
 					{listErr && <div className="mt-3 text-sm text-red-600">{listErr}</div>}
 				</div>
 			</div>
+
+			{/* Add-more modal */}
+			{addMoreOpen && lockedVendorId && lockedVendorName && (
+				<div className="fixed inset-0 z-50">
+					<div className="absolute inset-0 bg-black/40" onClick={() => setAddMoreOpen(false)} />
+					<div className="absolute inset-0 flex items-center justify-center p-4">
+						<div className="w-full max-w-md rounded-2xl bg-white shadow-xl border">
+							<div className="flex items-center justify-between px-4 py-3 border-b">
+								<div className="font-semibold">Add more insurance companies?</div>
+								<button onClick={() => setAddMoreOpen(false)} className="p-1 rounded hover:bg-gray-100" aria-label="Close">
+									<X className="h-5 w-5" />
+								</button>
+							</div>
+							<div className="px-4 py-4 space-y-2 text-sm">
+								<div>
+									TPA: <span className="font-medium">{lockedVendorName}</span> (<span className="font-mono">{lockedVendorId}</span>)
+								</div>
+								<p>Do you want to add another insurance company under this TPA?</p>
+							</div>
+							<div className="px-4 py-3 border-t flex justify-end gap-2">
+								<button className="rounded border px-4 py-2" onClick={confirmAddMoreNo}>No</button>
+								<button className="rounded bg-brand text-white px-4 py-2" onClick={confirmAddMoreYes}>Yes</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

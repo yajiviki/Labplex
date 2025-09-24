@@ -25,7 +25,7 @@ model Lab {
   // Relations
   users        User[]
   appointments Appointment[]
-  patients     Patient[]
+  Patient      Patient[]
 }
 
 // ===========================================================
@@ -33,15 +33,14 @@ model Lab {
 // - userId is per-lab, composite unique with labId (U0001, U0002…)
 // ===========================================================
 model User {
-  id String @id @default(cuid())
-
+  id    String @id @default(cuid())
   labId String
   lab   Lab    @relation(fields: [labId], references: [id])
 
-  userId   String // e.g. U0001 (per lab)
+  userId   String    @unique // <-- make globally unique now
   name     String
   phone    String
-  role     String // 'USER' | 'ADMIN' | 'SUPER_ADMIN'
+  role     String
   password String
   email    String?
   dob      DateTime?
@@ -51,10 +50,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Password setup tokens backref (allow multiple)
   passwordSetupTokens PasswordSetupToken[] @relation("PasswordSetupTokens")
 
-  @@unique([labId, userId]) // composite unique per lab
   @@index([labId])
   @@index([phone])
 }
@@ -77,35 +74,42 @@ model PasswordSetupToken {
 
 // ===========================================================
 // Vendor (TPA) and InsuranceCompany
-// - vendorId = TPA01, TPA02… (unique)
-// - Insurance companies belong to a TPA
+// - vendorId = TPA01, TPA02… (human ID, unique)
+// - Insurance companies belong to a TPA (via Vendor.id)
 // ===========================================================
 model Vendor {
   id            String   @id @default(cuid())
   vendorId      String
   tpaName       String
+  insuranceName String?
   address       String?
   phone         String?
-  insuranceName String? // legacy single-name field (kept for compatibility)
   isActive      Int      @default(1)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  companies InsuranceCompany[]
+  // Back-relations
+  companies    InsuranceCompany[] // all insurance companies under this TPA
+  appointments Appointment[] // appointments that reference this TPA
+
+  @@unique([vendorId]) // strongly recommended so TPA01/TPA02 are unique
+  @@index([tpaName])
 }
 
 model InsuranceCompany {
-  id String @id @default(cuid())
-
-  vendorId String
-  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-
+  id        String   @id @default(cuid())
+  vendorId  String
+  vendor    Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
   name      String
-  code      String?
+  code      String? // optional, keep/remove as you wish
   isActive  Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Back-relation
+  appointments Appointment[]
+
+  @@unique([vendorId, name]) // one company name once per TPA
   @@index([vendorId])
   @@index([name])
 }
@@ -144,49 +148,55 @@ model Patient {
 // - We store names for TPA/Insurance for your UI needs
 // - Optional relation to Patient (when you map by patientId)
 // ===========================================================
+
 model Appointment {
   id String @id @default(cuid())
 
-  labId String
-  lab   Lab    @relation(fields: [labId], references: [id])
+  // When
+  apptAt DateTime
 
-  // Optional relation to Patient (when available)
-  patientIdRef String?
-  patient      Patient? @relation(fields: [patientIdRef], references: [id], onDelete: SetNull)
+  // Patient (client) link — optional; make required if you always have a patient
+  patientId String?
+  patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
 
-  // Source-dependent identifiers
-  source     String // 'TPA' | 'Doctor Ref' | 'Direct Visit'
-  proposalNo String? // for TPA
-  patientId  String? // for non-TPA (e.g. OPxxxx if you want to store the external string too)
+  // TPA (Vendor) link
+  vendorId String?
+  vendor   Vendor? @relation(fields: [vendorId], references: [id], onDelete: SetNull)
 
-  // Person info
-  patientName String
-  gender      String?
-  age         Int?
-  address     String?
+  // Lab link
+  labId String?
+  lab   Lab?    @relation(fields: [labId], references: [id], onDelete: SetNull)
 
-  // TPA Info (stored as strings for your dropdown mapping)
-  tpaName       String?
-  insuranceName String?
+  // Insurance company link
+  insuranceCompanyId String?
+  insuranceCompany   InsuranceCompany? @relation(fields: [insuranceCompanyId], references: [id], onDelete: SetNull)
 
-  // Doctor info
-  doctorName String?
+  // Client info (scalars)
+  clientName String
+  clientRef  String?
+  gender     String?
+  age        Int?
+  address    String?
+  phone      String?
 
-  // Flow
-  visitType       String // 'CENTER' | 'HOME'
-  status          String // 'BOOKED' | 'CHECKED IN' | 'SAMPLING' | 'PROCESSING' | 'REPORT READY' | 'CLOSED' | 'CANCELED'
-  mobile          String
-  apptAt          DateTime
-  testCode        String?
-  testDescription String?
+  // Visit / logistics
+  visitType String?
+  location  String?
 
+  // Medical/report/payment
+  status String?
+
+  extraChargeRs Int?
+  paymentStatus String?
+
+  // Bookkeeping
   isActive  Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([labId])
-  @@index([status])
   @@index([apptAt])
-  @@index([tpaName])
-  @@index([insuranceName])
+  @@index([patientId])
+  @@index([vendorId])
+  @@index([labId])
+  @@index([insuranceCompanyId])
 }

@@ -1,112 +1,78 @@
-// apps/web/lib/auth.ts
-import NextAuth from "next-auth";
-import Credentials from "next-auth/providers/credentials";
-import bcrypt from "bcryptjs";
-import { prisma } from "./db";
+import NextAuth, { NextAuthOptions } from 'next-auth';
+import Credentials from 'next-auth/providers/credentials';
+import bcrypt from 'bcryptjs';
+import { prisma } from './db';
 
-declare module "next-auth" {
-	interface Session {
-		user?: {
-			id: string;
-			name?: string | null;
-			role?: string | null;
-			labId?: string | null;
-			labCode?: string | null;
-			userId?: string | null; // U0001…
-		} | null;
-	}
-}
-
-export const { handlers, auth, signIn, signOut } = NextAuth({
-	session: { strategy: "jwt" },
-
+export const authOptions: NextAuthOptions = {
+	session: { strategy: 'jwt' },
+	pages: {
+		signIn: '/login',
+		error: '/login',
+	},
 	providers: [
 		Credentials({
-			name: "Credentials",
+			name: 'Credentials',
 			credentials: {
-				userId: { label: "User ID", type: "text" },
-				password: { label: "Password", type: "password" },
-				labCode: { label: "Lab Code", type: "text" },
+				userId: { label: 'User ID', type: 'text' },
+				password: { label: 'Password', type: 'password' },
 			},
 			async authorize(creds) {
-				try {
-					const userId = (creds?.userId || "").trim();
-					const password = String(creds?.password || "");
-					const labCode = (creds?.labCode || "").trim();
+				const userId = (creds?.userId || '').trim().toUpperCase();
+				const password = creds?.password || '';
 
-					if (!userId || !password || !labCode) return null;
+				if (!userId || !password) throw new Error('Please enter User ID and Password.');
 
-					// 1) Find lab by code
-					const lab = await prisma.lab.findUnique({
-						where: { labCode },
-						select: { id: true, labCode: true, name: true },
-					});
-					if (!lab) return null;
+				// userId must be UNIQUE in your schema
+				const user = await prisma.user.findUnique({
+					where: { userId },
+					select: {
+						id: true, userId: true, name: true, role: true, password: true,
+						labId: true, lab: { select: { labCode: true, name: true } },
+						isActive: true,
+					},
+				});
 
-					// 2) Find active user in that lab by userId
-					const user = await prisma.user.findFirst({
-						where: { labId: lab.id, userId, isActive: 1 },
-						select: {
-							id: true,
-							userId: true,
-							name: true,
-							role: true,
-							password: true,
-							labId: true,
-						},
-					});
-					if (!user) return null;
+				if (!user || user.isActive !== 1) throw new Error('Invalid credentials.');
+				const ok = await bcrypt.compare(password, user.password);
+				if (!ok) throw new Error('Invalid credentials.');
 
-					// 3) Check password
-					const ok = await bcrypt.compare(password, user.password);
-					if (!ok) return null;
-
-					// 4) Return a minimal object; fields go into JWT then session
-					return {
-						id: user.id,
-						name: user.name ?? user.userId,
-						role: user.role,
-						labId: user.labId,
-						labCode: lab.labCode,
-						userId: user.userId,
-					} as any;
-				} catch {
-					return null;
-				}
+				return {
+					id: user.id,
+					userId: user.userId,
+					name: user.name,
+					role: user.role,
+					labId: user.labId,
+					labCode: user.lab?.labCode ?? null,
+				} as any;
 			},
 		}),
 	],
-
 	callbacks: {
 		async jwt({ token, user }) {
-			// put fields from authorize() into token
 			if (user) {
-				token.uid = (user as any).id;
+				token.id = (user as any).id;
+				token.userId = (user as any).userId;
 				token.name = (user as any).name;
 				token.role = (user as any).role;
 				token.labId = (user as any).labId;
-				token.labCode = (user as any).labCode;
-				token.userId = (user as any).userId;
+				token.labCode = (user as any).labCode ?? null;
 			}
 			return token;
 		},
 		async session({ session, token }) {
 			session.user = {
-				id: (token as any).uid,
-				name: token.name as any,
-				role: (token as any).role,
-				labId: (token as any).labId,
-				labCode: (token as any).labCode,
-				userId: (token as any).userId,
-			};
+				id: token.id as string,
+				userId: token.userId as string,
+				name: (token.name as string) ?? null,
+				role: (token.role as string) ?? null,
+				labId: (token.labId as string) ?? null,
+				labCode: (token.labCode as string) ?? null,
+			} as any;
 			return session;
 		},
 	},
+	debug: process.env.NODE_ENV !== 'production',
+};
 
-	pages: {
-		signIn: "/login", // your login route
-	},
-
-	trustHost: true,
-	secret: process.env.NEXTAUTH_SECRET,
-});
+// v5 app-router helpers
+export const { handlers, auth, signIn, signOut } = NextAuth(authOptions);

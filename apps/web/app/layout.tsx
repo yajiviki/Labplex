@@ -1,15 +1,14 @@
-import { SessionProvider } from 'next-auth/react';
+import type { Metadata } from 'next';
+import Providers from '../components/Providers';
 import './globals.css';
-import type { ReactNode } from 'react';
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export const metadata: Metadata = { title: 'LabPlex' };
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
 	return (
 		<html lang="en">
-			<body className="min-h-screen bg-gray-50 text-gray-900">
-				<SessionProvider>
-					{children}
-				</SessionProvider>
-
+			<body>
+				<Providers>{children}</Providers>
 			</body>
 		</html>
 	);
