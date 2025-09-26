@@ -328,7 +328,7 @@ export default function AppointmentsPage() {
 						<label className="block text-sm mb-1">TPA Name</label>
 						<select className="w-full border rounded px-3 py-2" value={vendorId} onChange={(e) => { setVendorId(e.target.value); setInsuranceCompanyId(''); }}>
 							<option value="">Select TPA</option>
-							{vendors.map(v => <option key={v.id} value={v.id}>{v.vendorId} — {v.tpaName}</option>)}
+							{vendors.map(v => <option key={v.id} value={v.id}> {v.tpaName}</option>)}
 						</select>
 					</div>
 
@@ -344,7 +344,7 @@ export default function AppointmentsPage() {
 						<label className="block text-sm mb-1">Lab Name</label>
 						<select className="w-full border rounded px-3 py-2" value={labId} onChange={(e) => setLabId(e.target.value)}>
 							<option value="">Select Lab</option>
-							{labs.map(l => <option key={l.id} value={l.id}>{l.labCode} — {l.name}</option>)}
+							{labs.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
 						</select>
 					</div>
 
@@ -483,8 +483,8 @@ export default function AppointmentsPage() {
 									return (
 										<tr key={a.id} className="border-t hover:bg-gray-50">
 											<td className="px-3 py-2 text-sm whitespace-nowrap">{new Date(a.apptAt).toLocaleString()}</td>
-											<td className="px-3 py-2 text-sm">{tpa ? `${tpa.vendorId} — ${tpa.tpaName}` : ''}</td>
-											<td className="px-3 py-2 text-sm">{lab ? `${lab.labCode} — ${lab.name}` : ''}</td>
+											<td className="px-3 py-2 text-sm">{tpa?.tpaName || ''}</td>
+											<td className="px-3 py-2 text-sm">{lab?.name || ''}</td>
 											<td className="px-3 py-2 text-sm">{ins?.name || ''}</td>
 											<td className="px-3 py-2 text-sm">{a.clientName || ''}</td>
 											<td className="px-3 py-2 text-sm">{a.clientRef || ''}</td>
