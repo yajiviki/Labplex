@@ -1,36 +1,51 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '../../../../lib/db';  // ✅ correct depth
-import { auth } from '../../../../lib/auth';
+import { prisma } from '../../../../lib/db';
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+
+export async function PUT(
+	req: Request,
+	{ params }: { params: { id: string } }
+) {
 	try {
-		const session = await auth();
-		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
 		const id = params.id;
 		const body = await req.json().catch(() => ({}));
-		const name = (body?.name || '').trim();
 
-		if (!id) return NextResponse.json({ error: 'Missing vendor id' }, { status: 400 });
-		if (!name) return NextResponse.json({ error: 'Insurance name required' }, { status: 400 });
+		const tpaName = String(body?.tpaName || '').trim();
+		if (!tpaName) return NextResponse.json({ error: 'TPA Name is required.' }, { status: 400 });
 
-		const vendor = await prisma.vendor.findUnique({ where: { id }, select: { id: true } });
-		if (!vendor) return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
+		const phone = (String(body?.phone || '') || '').replace(/\D+/g, '') || null;
+		const address = (String(body?.address || '') || '').trim() || null;
+		const email = (String(body?.email || '') || '').trim() || null;
 
-		const existing = await prisma.insuranceCompany.findFirst({
-			where: { vendorId: vendor.id, name },
-			select: { id: true },
+		// Do NOT change vendorId here (keep code stable)
+		const updated = await prisma.vendor.update({
+			where: { id },
+			data: {
+				tpaName,
+				address,
+				phone,
+				email,
+			},
+			select: {
+				id: true, vendorId: true, tpaName: true, address: true, phone: true, email: true, createdAt: true,
+			},
 		});
-		if (existing) {
-			return NextResponse.json({ ok: true, existed: true });
-		}
 
-		await prisma.insuranceCompany.create({
-			data: { vendorId: vendor.id, name, isActive: 1 },
-		});
+		return NextResponse.json(updated);
+	} catch (e: any) {
+		return NextResponse.json({ error: e?.message || 'Update failed' }, { status: 500 });
+	}
+}
 
+export async function DELETE(
+	_req: Request,
+	{ params }: { params: { id: string } }
+) {
+	try {
+		const id = params.id;
+		await prisma.vendor.delete({ where: { id } });
 		return NextResponse.json({ ok: true });
 	} catch (e: any) {
-		return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });
+		return NextResponse.json({ error: e?.message || 'Delete failed' }, { status: 500 });
 	}
 }

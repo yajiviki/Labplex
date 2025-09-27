@@ -38,8 +38,9 @@ export default function ClientLoginForm() {
 			return;
 		}
 
+		//debugger;
 		const res = await signIn('credentials', {
-			redirect: false,
+			redirect: true,
 			userId: uid,
 			password: pwd,
 			callbackUrl: '/dashboard',

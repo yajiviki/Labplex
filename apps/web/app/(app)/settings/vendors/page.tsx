@@ -1,173 +1,163 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Building2, ChevronDown, ChevronUp, Search, Trash2, Download, Upload, X } from 'lucide-react';
+import {
+	Building2, ChevronDown, ChevronUp, Search, Trash2, Upload
+} from 'lucide-react';
 
 type VendorRow = {
 	id: string;
-	vendorId: string;          // TPA01, TPA02, ...
+	vendorId: string;        // TPA01…
 	tpaName: string;
-	insuranceName: string | null; // legacy single field (we still show it)
 	address: string | null;
-	phone: string;
+	phone: string | null;
+	email: string | null;
+	isActive?: number;
 	createdAt: string;
 };
 
-type SortKey = keyof Pick<VendorRow, 'vendorId' | 'tpaName' | 'phone' | 'createdAt'>;
+type SortKey = keyof Pick<VendorRow, 'vendorId' | 'tpaName' | 'phone' | 'email' | 'createdAt'>;
 type SortDir = 'asc' | 'desc';
 
-/** Next vendor id: TPA01, TPA02, ... (2+ digits, grows as needed) */
-function nextVendorId(rows: VendorRow[]): string {
+function nextVendorId(rows: { vendorId?: string }[]) {
 	const prefix = 'TPA';
 	let max = 0;
 	for (const r of rows) {
-		const id = r.vendorId || '';
-		if (id.startsWith(prefix)) {
-			const tail = id.slice(prefix.length); // "01"
-			const n = parseInt(tail, 10);
-			if (!isNaN(n) && n > max) max = n;
+		const v = r.vendorId || '';
+		if (v.startsWith(prefix)) {
+			const n = parseInt(v.slice(prefix.length), 10);
+			if (!Number.isNaN(n) && n > max) max = n;
 		}
 	}
-	const n = max + 1;
-	const tail = n < 10 ? `0${n}` : `${n}`;
-	return `${prefix}${tail}`;
+	return `${prefix}${String(max + 1).padStart(2, '0')}`;
 }
 
-/** Lightweight CSV/TSV parser (handles simple quotes, detects delimiter) */
-function parseDelimited(content: string): Record<string, string>[] {
-	const delimiter = content.includes('\t') ? '\t' : ',';
-	const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim().length > 0);
-	if (lines.length === 0) return [];
-	const headers = splitLine(lines[0], delimiter).map(h => h.trim());
-
-	const rows: Record<string, string>[] = [];
-	for (let i = 1; i < lines.length; i++) {
-		const cols = splitLine(lines[i], delimiter);
-		const row: Record<string, string> = {};
-		headers.forEach((h, idx) => {
-			row[h] = (cols[idx] ?? '').trim();
-		});
-		rows.push(row);
+// CSV parser with quote support
+function parseCsv(text: string): string[][] {
+	const rows: string[][] = [];
+	let cur = '', inQuotes = false;
+	let row: string[] = [];
+	for (let i = 0; i < text.length; i++) {
+		const ch = text[i];
+		if (ch === '"') {
+			if (inQuotes && text[i + 1] === '"') { cur += '"'; i++; }
+			else { inQuotes = !inQuotes; }
+		} else if (ch === ',' && !inQuotes) {
+			row.push(cur.trim()); cur = '';
+		} else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+			if (cur.length || row.length) { row.push(cur.trim()); rows.push(row); row = []; cur = ''; }
+		} else cur += ch;
 	}
-	return rows;
+	if (cur.length || row.length) { row.push(cur.trim()); rows.push(row); }
+	return rows.filter(r => r.some(c => c.length));
+}
 
-	function splitLine(line: string, d: string): string[] {
-		const out: string[] = [];
-		let cur = '';
-		let inQuotes = false;
-		for (let i = 0; i < line.length; i++) {
-			const ch = line[i];
-			if (ch === '"') {
-				if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; continue; }
-				inQuotes = !inQuotes;
-			} else if (ch === d && !inQuotes) {
-				out.push(cur); cur = '';
-			} else {
-				cur += ch;
-			}
-		}
-		out.push(cur);
-		return out;
-	}
+function Dialog({ open, title, message, onClose }: {
+	open: boolean; title: string; message: string; onClose: () => void
+}) {
+	if (!open) return null;
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center">
+			<div className="absolute inset-0 bg-black/30" onClick={onClose} />
+			<div className="relative z-10 w-full max-w-md rounded-xl border bg-white p-4 shadow-lg">
+				<div className="text-base font-semibold mb-2">{title}</div>
+				<div className="text-sm text-gray-700 whitespace-pre-wrap">{message}</div>
+				<div className="mt-3 flex justify-end">
+					<button onClick={onClose} className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50">
+						Close
+					</button>
+				</div>
+			</div>
+		</div>
+	);
 }
 
 export default function VendorsPage() {
 	const [rows, setRows] = useState<VendorRow[]>([]);
 	const [loading, setLoading] = useState(false);
 
-	// form
+	// form (left)
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [tpaName, setTpaName] = useState('');
-	const [insuranceName, setInsuranceName] = useState('');
 	const [address, setAddress] = useState('');
 	const [phone, setPhone] = useState('');
+	const [email, setEmail] = useState('');
 
 	// messages
 	const [formErr, setFormErr] = useState<string | null>(null);
 	const [formOk, setFormOk] = useState<string | null>(null);
 	const [listErr, setListErr] = useState<string | null>(null);
-	const [importMsg, setImportMsg] = useState<string | null>(null);
 
-	// table controls
+	// table (right)
 	const [sortKey, setSortKey] = useState<SortKey>('createdAt');
 	const [sortDir, setSortDir] = useState<SortDir>('desc');
 	const [q, setQ] = useState('');
-
-	// selection
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const anySelected = selected.size > 0;
 
-	// IMPORT: file input ref
-	const fileRef = useRef<HTMLInputElement | null>(null);
+	// dialog
+	const [dlgOpen, setDlgOpen] = useState(false);
+	const [dlgTitle, setDlgTitle] = useState('');
+	const [dlgMsg, setDlgMsg] = useState('');
 
-	// Modal to add another insurance under the same TPA
-	const [addMoreOpen, setAddMoreOpen] = useState(false);
-	const [lockedVendorId, setLockedVendorId] = useState<string | null>(null);
-	const [lockedVendorDbId, setLockedVendorDbId] = useState<string | null>(null);
-	const [lockedVendorName, setLockedVendorName] = useState<string | null>(null);
+	const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+	function showDialog(title: string, msg: string) {
+		setDlgTitle(title);
+		setDlgMsg(msg);
+		setDlgOpen(true);
+	}
 
 	async function load() {
-		setLoading(true); setListErr(null); setSelected(new Set());
+		setLoading(true);
+		setListErr(null);
+		setSelected(new Set());
 		try {
 			const res = await fetch('/api/vendors', { cache: 'no-store' });
 			const data = await res.json().catch(() => []);
-			if (!res.ok) { setListErr(data?.error || `Load failed: ${res.status}`); setRows([]); }
-			else setRows(Array.isArray(data) ? data : []);
+			if (!res.ok) {
+				setListErr(data?.error || `Load failed: ${res.status}`);
+				setRows([]);
+			} else {
+				setRows((Array.isArray(data) ? data : []).map((v: any) => ({
+					id: v.id,
+					vendorId: v.vendorId,
+					tpaName: v.tpaName,
+					address: v.address ?? null,
+					phone: v.phone ?? null,
+					email: v.email ?? null,
+					isActive: v.isActive ?? 1,
+					createdAt: v.createdAt,
+				})));
+			}
 		} catch (e: any) {
-			setListErr(e?.message || 'Network error'); setRows([]);
+			setListErr(e?.message || 'Network error');
+			setRows([]);
 		} finally { setLoading(false); }
 	}
 	useEffect(() => { load(); }, []);
 
+	const nextId = useMemo(() => nextVendorId(rows), [rows]);
+
 	function resetForm() {
 		setEditingId(null);
-		setTpaName(''); setInsuranceName(''); setAddress(''); setPhone('');
+		setTpaName(''); setAddress(''); setPhone(''); setEmail('');
 		setFormErr(null); setFormOk(null);
-		// also clear locked vendor (exit add-more flow)
-		setLockedVendorDbId(null);
-		setLockedVendorId(null);
-		setLockedVendorName(null);
 	}
 
 	async function onSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		setFormErr(null); setFormOk(null);
 
-		// If we're in "add-more insurance" mode (same TPA), skip creating vendor again.
-		if (lockedVendorDbId && lockedVendorId && lockedVendorName) {
-			const ins = insuranceName.trim();
-			if (!ins) { setFormErr('Please enter Insurance Name'); return; }
-			try {
-				const res = await fetch(`/api/vendors/${lockedVendorDbId}/companies`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ name: ins }),
-				});
-				const data = await res.json().catch(() => ({}));
-				if (!res.ok) { setFormErr(data?.error || 'Add insurance failed'); return; }
-
-				setFormOk(`Added "${ins}" under ${lockedVendorName} (${lockedVendorId})`);
-				setInsuranceName(''); // keep focus here for the next insurance
-				await load();
-				// Stay in add-more flow
-				setAddMoreOpen(true);
-				return;
-			} catch (err: any) {
-				setFormErr(err?.message || 'Network error');
-				return;
-			}
-		}
-
-		// Normal create or update vendor flow
-		const normalizedPhone = (phone || '').replace(/\D+/g, '');
-		if (!tpaName.trim() || !normalizedPhone) { setFormErr('Please fill TPA Name and Mobile.'); return; }
-		if (normalizedPhone.length < 10 || normalizedPhone.length > 15) { setFormErr('Please enter a valid Mobile number (10–15 digits).'); return; }
+		if (!tpaName.trim()) { setFormErr('TPA Name is required.'); return; }
+		const normalizedPhone = (phone || '').replace(/\D+/g, '') || null;
 
 		const payload = {
+			vendorId: editingId ? undefined : nextId, // assign only when creating
 			tpaName: tpaName.trim(),
-			insuranceName: (insuranceName.trim() || null),
-			address: (address.trim() || null),
+			address: address.trim() || null,
 			phone: normalizedPhone,
+			email: (email || '').trim() || null,
 		};
 
 		try {
@@ -177,84 +167,46 @@ export default function VendorsPage() {
 				body: JSON.stringify(payload),
 			});
 			const data = await res.json().catch(() => ({}));
-			if (!res.ok) { setFormErr(data?.error || 'Save failed'); return; }
-
-			if (!editingId) {
-				// Created new TPA. If an insuranceName was supplied, ask to add more under same TPA.
-				setFormOk('Created!');
-				await load();
-
-				if (payload.insuranceName) {
-					// lock current vendor to add more companies
-					setLockedVendorDbId(data?.id || null);
-					setLockedVendorId(data?.vendorId || null);
-					setLockedVendorName(data?.tpaName || null);
-					setAddMoreOpen(true);
-					setInsuranceName(''); // ready for next insurance
-				} else {
-					// no insurance given → just clear to next TPA
-					resetForm();
-				}
-			} else {
-				setFormOk('Updated!');
-				await load();
+			if (!res.ok) {
+				setFormErr(data?.error || 'Save failed');
+				showDialog('Save failed', data?.error || 'Unable to save vendor');
+				return;
 			}
+			setFormOk(editingId ? 'Updated!' : 'Created!');
+			showDialog('Success', editingId ? 'Vendor updated.' : 'Vendor created.');
+			await load();
+			if (!editingId) resetForm();
 		} catch (e: any) {
 			setFormErr(e?.message || 'Network error');
+			showDialog('Network error', e?.message || 'Please try again.');
 		}
-	}
-
-	// “Yes, add another insurance” keeps vendor locked, just focuses insurance field.
-	function confirmAddMoreYes() {
-		setAddMoreOpen(false);
-		// keep vendor locked; do nothing else – user can type next insurance
-		// ensure the field is ready
-		const el = document.querySelector<HTMLInputElement>('input[name="insuranceName"]');
-		el?.focus();
-	}
-
-	// “No” exits the flow, clears vendor lock and advances preview id
-	function confirmAddMoreNo() {
-		setAddMoreOpen(false);
-		// exit add-more flow
-		setLockedVendorDbId(null);
-		setLockedVendorId(null);
-		setLockedVendorName(null);
-		// clear the form for a fresh TPA
-		setTpaName('');
-		setInsuranceName('');
-		setAddress('');
-		setPhone('');
-		setFormErr(null);
-		setFormOk(null);
 	}
 
 	function startEdit(v: VendorRow) {
 		setEditingId(v.id);
 		setTpaName(v.tpaName || '');
-		setInsuranceName(v.insuranceName || '');
 		setAddress(v.address || '');
 		setPhone(v.phone || '');
+		setEmail(v.email || '');
 		setFormErr(null); setFormOk(null);
-		// editing cancels add-more flow
-		setLockedVendorDbId(null);
-		setLockedVendorId(null);
-		setLockedVendorName(null);
 	}
 
-	function sortBy(key: SortKey) { if (key === sortKey) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortKey(key); setSortDir('asc'); } }
+	function sortBy(key: SortKey) {
+		if (key === sortKey) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+		else { setSortKey(key); setSortDir('asc'); }
+	}
 
 	const filtered = useMemo(() => {
 		const term = q.trim().toLowerCase();
 		const base = term
-			? rows.filter((r) =>
-				[r.vendorId, r.tpaName, r.insuranceName, r.address, r.phone]
-					.filter(Boolean).some(v => String(v).toLowerCase().includes(term))
-			)
+			? rows.filter(r =>
+				[r.vendorId, r.tpaName, r.phone, r.email, r.address]
+					.filter(Boolean).some(v => String(v).toLowerCase().includes(term)))
 			: rows;
 
 		const sorted = [...base].sort((a, b) => {
-			const va = (a[sortKey] ?? '') as any; const vb = (b[sortKey] ?? '') as any;
+			const va = (a[sortKey] ?? '') as any;
+			const vb = (b[sortKey] ?? '') as any;
 			if (va === vb) return 0;
 			return (sortDir === 'asc') ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
 		});
@@ -262,96 +214,40 @@ export default function VendorsPage() {
 	}, [rows, q, sortKey, sortDir]);
 
 	function toggleOne(id: string, checked: boolean) {
-		setSelected(prev => { const next = new Set(prev); if (checked) next.add(id); else next.delete(id); return next; });
+		setSelected(prev => {
+			const next = new Set(prev);
+			if (checked) next.add(id); else next.delete(id);
+			return next;
+		});
 	}
-	function selectAllVisible(checked: boolean) { if (!checked) return setSelected(new Set()); setSelected(new Set(filtered.map(r => r.id))); }
+	function selectAllVisible(checked: boolean) {
+		if (!checked) return setSelected(new Set());
+		setSelected(new Set(filtered.map(r => r.id)));
+	}
 
 	async function deleteSelected() {
 		if (!anySelected) return;
-		if (!confirm(`Delete ${selected.size} selected ${selected.size === 1 ? 'vendor' : 'vendors'}? This cannot be undone.`)) return;
+		if (!confirm(`Delete ${selected.size} TPA(s)? This cannot be undone.`)) return;
 		const ids = Array.from(selected);
 		const results = await Promise.all(ids.map(async (id) => {
 			try { const r = await fetch(`/api/vendors/${id}`, { method: 'DELETE' }); return r.ok; }
 			catch { return false; }
 		}));
-		if (results.some(ok => !ok)) setListErr('Some items could not be deleted.');
-		setSelected(new Set()); await load();
-	}
-
-	// IMPORT: file open + parse + POST
-	function openImport() { fileRef.current?.click(); }
-
-	async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-		setImportMsg(null);
-		const f = e.target.files?.[0];
-		if (!f) return;
-		try {
-			const text = await f.text();
-			const parsed = parseDelimited(text);
-			if (parsed.length === 0) { setImportMsg('No rows detected. Check headers.'); return; }
-
-			const required = ['vendorId', 'tpaName', 'insuranceName', 'address', 'phone', 'createdAt', 'updatedAt'];
-			const hasAll = required.every(h => Object.prototype.hasOwnProperty.call(parsed[0], h));
-			if (!hasAll) {
-				setImportMsg('Invalid headers. Expected: ' + required.join(', '));
-				return;
-			}
-
-			const payload = parsed.map(r => ({
-				vendorId: r.vendorId?.trim() || null,
-				tpaName: r.tpaName?.trim() || null,
-				insuranceName: (r.insuranceName?.trim() || null),
-				address: (r.address?.trim() || null),
-				phone: (r.phone?.trim() || null),
-				createdAt: r.createdAt?.trim() || null,
-				updatedAt: r.updatedAt?.trim() || null,
-			}));
-
-			const res = await fetch('/api/vendors/import', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ rows: payload }),
-			});
-			const data = await res.json().catch(() => ({} as any));
-			if (!res.ok) {
-				setImportMsg(data?.error || 'Import failed');
-				return;
-			}
-			const { insertedVendors = 0, updatedVendors = 0, insertedCompanies = 0, skippedCompanies = 0 } = data;
-			setImportMsg(`Vendors: +${insertedVendors} / updated ${updatedVendors} • Companies: +${insertedCompanies} / skipped ${skippedCompanies}`);
-			await load();
-		} catch (err: any) {
-			setImportMsg(err?.message || 'Import error');
-		} finally {
-			if (fileRef.current) fileRef.current.value = '';
+		if (results.some(ok => !ok)) {
+			setListErr('Some items could not be deleted.');
+			showDialog('Delete', 'Some items could not be deleted.');
+		} else {
+			showDialog('Delete', 'Selected TPAs deleted.');
 		}
-	}
-
-	// SAMPLE CSV: download a template
-	function downloadSample() {
-		const headers = 'vendorId,tpaName,insuranceName,address,phone,createdAt,updatedAt';
-		const now = '2025-09-21 16:59:29';
-		const sample = [
-			headers,
-			`TPA01,Alinea Healthcare,SBI Home,,,+${now},${now}`.replace('+,', ','),
-			`TPA02,Health Assure,ICICI Prudential Life Insurance,,,+${now},${now}`.replace('+,', ','),
-		].join('\n');
-		const blob = new Blob([sample], { type: 'text/csv;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = 'vendor-import-sample.csv';
-		document.body.appendChild(a);
-		a.click();
-		a.remove();
-		URL.revokeObjectURL(url);
+		setSelected(new Set());
+		await load();
 	}
 
 	const Col = ({ k, label }: { k: SortKey; label: string }) => {
 		const active = sortKey === k;
 		return (
 			<th
-				className="px-3 py-2 text-left text-sm font-semibold text-gray-700 cursor-pointer select-none"
+				className="px-3 py-2 text-left text-sm font-semibold text-gray-700 cursor-pointer select-none whitespace-nowrap"
 				onClick={() => sortBy(k)}
 			>
 				<div className="inline-flex items-center gap-1">
@@ -362,118 +258,154 @@ export default function VendorsPage() {
 		);
 	};
 
-	const previewVendorId = useMemo(() => {
-		if (lockedVendorId) return lockedVendorId; // during add-more, show locked id
-		return editingId ? (rows.find(r => r.id === editingId)?.vendorId || '') : nextVendorId(rows);
-	}, [editingId, rows, lockedVendorId]);
+	// Import (CSV/JSON)
+	async function onImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+		const file = e.target.files?.[0];
+		e.target.value = '';
+		if (!file) return;
 
-	const tpaDisabled = Boolean(lockedVendorId); // lock fields when in add-more flow
+		try {
+			const text = await file.text();
+			const rowsForServer: Array<Record<string, any>> = [];
+			const isCSV = file.name.toLowerCase().endsWith('.csv');
+
+			if (isCSV) {
+				const rowsCsv = parseCsv(text);
+				if (!rowsCsv.length) throw new Error('Empty CSV');
+				const headers = rowsCsv[0].map(s => s.toLowerCase());
+				const dataRows = rowsCsv.slice(1);
+				const idx = (name: string) => headers.findIndex(h => h === name.toLowerCase());
+				const iVendorId = idx('vendorid'); // optional
+				const iTpaName = idx('tpaname');  // required
+				const iAddress = idx('address');
+				const iPhone = idx('phone');
+				const iEmail = idx('email');
+
+				for (const r of dataRows) {
+					const tpaName = (iTpaName >= 0 ? r[iTpaName] : '').trim();
+					if (!tpaName) continue;
+					rowsForServer.push({
+						vendorId: iVendorId >= 0 ? (r[iVendorId] || '').trim() : null,
+						tpaName,
+						address: iAddress >= 0 ? (r[iAddress] || '').trim() : null,
+						phone: iPhone >= 0 ? (r[iPhone] || '').trim() : null,
+						email: iEmail >= 0 ? (r[iEmail] || '').trim() : null,
+					});
+				}
+			} else {
+				const json = JSON.parse(text);
+				if (!Array.isArray(json)) throw new Error('File JSON must be an array');
+				for (const r of json) {
+					if (!r?.tpaName) continue;
+					rowsForServer.push({
+						vendorId: r.vendorId ?? null,
+						tpaName: String(r.tpaName),
+						address: r.address ?? null,
+						phone: r.phone ?? null,
+						email: r.email ?? null,
+					});
+				}
+			}
+
+			if (!rowsForServer.length) { showDialog('Import', 'No valid rows found.'); return; }
+
+			const res = await fetch('/api/vendors/import', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ rows: rowsForServer }),
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				showDialog('Import failed', data?.error || 'Please check file format.');
+				return;
+			}
+			showDialog('Import completed', `Inserted: ${data?.inserted || 0}\nUpdated: ${data?.upserted || 0}`);
+			await load();
+		} catch (e: any) {
+			showDialog('Import error', e?.message || 'Failed to import file.');
+		}
+	}
 
 	return (
 		<div className="space-y-4">
-			{/* Title */}
-			<div className="rounded-xl border bg-white px-5 py-4 shadow-sm flex items-center gap-3">
-				<div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand/10 text-brand-600">
-					<Building2 className="h-5 w-5" />
+			<Dialog open={dlgOpen} title={dlgTitle} message={dlgMsg} onClose={() => setDlgOpen(false)} />
+
+			<div className="rounded-xl border bg-white px-5 py-4 shadow-sm flex items-center justify-between gap-3">
+				<div className="flex items-center gap-3">
+					<div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand/10 text-brand-600">
+						<Building2 className="h-5 w-5" />
+					</div>
+					<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Manage TPA (Vendors)</h1>
 				</div>
-				<h1 className="text-2xl md:text-3xl font-bold tracking-tight">TPA Management</h1>
+
+				<div className="flex items-center gap-2">
+					<input
+						ref={fileInputRef}
+						type="file"
+						accept=".csv,application/json"
+						className="hidden"
+						onChange={onImportFile}
+					/>
+					<button
+						type="button"
+						className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50"
+						onClick={() => fileInputRef.current?.click()}
+						title="Import CSV / JSON"
+					>
+						<Upload className="h-4 w-4" />
+						Import
+					</button>
+				</div>
 			</div>
 
 			<div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-				{/* Form */}
+				{/* LEFT: Form */}
 				<div className="lg:col-span-4 rounded-xl border bg-white p-4 shadow-sm">
 					<div className="flex items-center justify-between mb-3">
-						<h2 className="text-base font-semibold">{editingId ? 'Update Vendor' : 'Add New Vendor'}</h2>
-
-						<div className="flex items-center gap-2">
-							<button
-								type="button"
-								onClick={openImport}
-								className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-sm hover:bg-gray-50"
-								title="Import CSV/TSV"
-							>
-								<Upload className="h-4 w-4" />
-								Import
-							</button>
-							<input
-								ref={fileRef}
-								type="file"
-								accept=".csv,.tsv,text/csv,text/tab-separated-values"
-								className="hidden"
-								onChange={handleFileChange}
-							/>
-							<button onClick={resetForm} className="text-sm text-gray-600 hover:underline">Clear</button>
-						</div>
+						<h2 className="text-base font-semibold">{editingId ? 'Update TPA' : 'Add New TPA'}</h2>
+						<button onClick={resetForm} className="text-sm text-gray-600 hover:underline">Clear</button>
 					</div>
 
 					{formErr && <div className="mb-3 text-sm text-red-600">{formErr}</div>}
 					{formOk && <div className="mb-3 text-sm text-green-600">{formOk}</div>}
-					{importMsg && <div className="mb-3 text-sm text-blue-600">{importMsg}</div>}
 
 					<form onSubmit={onSubmit} className="grid grid-cols-1 gap-3">
 						<div>
-							<label className="block text-sm mb-1">TPA ID</label>
-							<input className="w-full border rounded px-3 py-2 bg-gray-50" value={previewVendorId} readOnly />
+							<label className="block text-sm mb-1">TPA Code</label>
+							<input
+								className="w-full border rounded px-3 py-2 bg-gray-50"
+								value={editingId ? (rows.find(r => r.id === editingId)?.vendorId || '') : nextId}
+								readOnly
+							/>
 						</div>
 						<div>
 							<label className="block text-sm mb-1">TPA Name *</label>
-							<input
-								className="w-full border rounded px-3 py-2"
-								value={tpaName}
-								onChange={(e) => setTpaName(e.target.value)}
-								disabled={tpaDisabled}
-							/>
+							<input className="w-full border rounded px-3 py-2" value={tpaName} onChange={(e) => setTpaName(e.target.value)} />
 						</div>
 						<div>
-							<label className="block text-sm mb-1">Insurance Name</label>
-							<input
-								name="insuranceName"
-								className="w-full border rounded px-3 py-2"
-								value={insuranceName}
-								onChange={(e) => setInsuranceName(e.target.value)}
-							/>
+							<label className="block text-sm mb-1">Email</label>
+							<input type="email" className="w-full border rounded px-3 py-2" value={email} onChange={(e) => setEmail(e.target.value)} />
+						</div>
+						<div>
+							<label className="block text-sm mb-1">Mobile</label>
+							<input className="w-full border rounded px-3 py-2" value={phone} onChange={(e) => setPhone(e.target.value)} />
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Address</label>
-							<input
-								className="w-full border rounded px-3 py-2"
-								value={address}
-								onChange={(e) => setAddress(e.target.value)}
-								disabled={tpaDisabled}
-							/>
+							<input className="w-full border rounded px-3 py-2" value={address} onChange={(e) => setAddress(e.target.value)} />
 						</div>
-						<div>
-							<label className="block text-sm mb-1">Mobile *</label>
-							<input
-								className="w-full border rounded px-3 py-2"
-								value={phone}
-								onChange={(e) => setPhone(e.target.value)}
-								disabled={tpaDisabled}
-							/>
-						</div>
-
 						<div className="flex gap-2 mt-1">
-							<button className="rounded bg-brand text-white px-4 py-2">{editingId ? 'Update' : (lockedVendorId ? 'Add Insurance' : 'Create')}</button>
+							<button className="rounded bg-brand text-white px-4 py-2">{editingId ? 'Update' : 'Create'}</button>
 							<button type="button" className="rounded border px-4 py-2" onClick={resetForm}>Reset</button>
 						</div>
 					</form>
 				</div>
 
-				{/* Table */}
+				{/* RIGHT: Table */}
 				<div className="lg:col-span-8 rounded-xl border bg-white p-4 shadow-sm">
 					<div className="flex flex-wrap items-center gap-2 justify-between mb-3">
 						<h2 className="text-base font-semibold">TPA Information</h2>
 						<div className="flex items-center gap-2">
-							<button
-								type="button"
-								onClick={downloadSample}
-								className="inline-flex items-center gap-1 rounded border px-2.5 py-1.5 text-sm hover:bg-gray-50"
-								title="Download sample CSV"
-							>
-								<Download className="h-4 w-4" />
-								Sample CSV
-							</button>
-
 							{anySelected && (
 								<button
 									type="button"
@@ -509,40 +441,33 @@ export default function VendorsPage() {
 											onChange={(e) => selectAllVisible(e.target.checked)}
 										/>
 									</th>
-									<Col k="vendorId" label="TPA ID" />
+									<Col k="vendorId" label="TPA Code" />
 									<Col k="tpaName" label="TPA Name" />
-									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Insurance</th>
-									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Address</th>
 									<Col k="phone" label="Mobile" />
+									<Col k="email" label="Email" />
+									<Col k="createdAt" label="Created" />
 								</tr>
 							</thead>
 							<tbody>
 								{loading ? (
-									<tr><td colSpan={8} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
+									<tr><td colSpan={7} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
 								) : filtered.length === 0 ? (
-									<tr><td colSpan={8} className="px-3 py-4 text-center text-sm text-gray-500">No vendors found</td></tr>
+									<tr><td colSpan={7} className="px-3 py-4 text-center text-sm text-gray-500">No TPAs found</td></tr>
 								) : (
 									filtered.map((v) => {
 										const isChecked = selected.has(v.id);
 										return (
 											<tr key={v.id} className="border-t hover:bg-gray-50">
 												<td className="px-3 py-2 text-sm">
-													<input
-														type="checkbox"
-														checked={isChecked}
-														onChange={(e) => toggleOne(v.id, e.target.checked)}
-														aria-label={`Select ${v.vendorId || v.tpaName || v.id}`}
-													/>
+													<input type="checkbox" checked={isChecked} onChange={(e) => toggleOne(v.id, e.target.checked)} />
 												</td>
-												<td className="px-3 py-2 text-sm">{v.vendorId}</td>
+												<td className="px-3 py-2 text-sm whitespace-nowrap">{v.vendorId}</td>
 												<td className="px-3 py-2 text-sm">
-													<button className="underline underline-offset-2" onClick={() => startEdit(v)} title="Edit this vendor">
-														{v.tpaName}
-													</button>
+													<button className="underline underline-offset-2" onClick={() => startEdit(v)}>{v.tpaName}</button>
 												</td>
-												<td className="px-3 py-2 text-sm">{v.insuranceName}</td>
-												<td className="px-3 py-2 text-sm">{v.address}</td>
-												<td className="px-3 py-2 text-sm">{v.phone}</td>
+												<td className="px-3 py-2 text-sm whitespace-nowrap">{v.phone || ''}</td>
+												<td className="px-3 py-2 text-sm">{v.email || ''}</td>
+												<td className="px-3 py-2 text-sm whitespace-nowrap">{new Date(v.createdAt).toLocaleDateString()}</td>
 											</tr>
 										);
 									})
@@ -554,33 +479,6 @@ export default function VendorsPage() {
 					{listErr && <div className="mt-3 text-sm text-red-600">{listErr}</div>}
 				</div>
 			</div>
-
-			{/* Add-more modal */}
-			{addMoreOpen && lockedVendorId && lockedVendorName && (
-				<div className="fixed inset-0 z-50">
-					<div className="absolute inset-0 bg-black/40" onClick={() => setAddMoreOpen(false)} />
-					<div className="absolute inset-0 flex items-center justify-center p-4">
-						<div className="w-full max-w-md rounded-2xl bg-white shadow-xl border">
-							<div className="flex items-center justify-between px-4 py-3 border-b">
-								<div className="font-semibold">Add more insurance companies?</div>
-								<button onClick={() => setAddMoreOpen(false)} className="p-1 rounded hover:bg-gray-100" aria-label="Close">
-									<X className="h-5 w-5" />
-								</button>
-							</div>
-							<div className="px-4 py-4 space-y-2 text-sm">
-								<div>
-									TPA: <span className="font-medium">{lockedVendorName}</span> (<span className="font-mono">{lockedVendorId}</span>)
-								</div>
-								<p>Do you want to add another insurance company under this TPA?</p>
-							</div>
-							<div className="px-4 py-3 border-t flex justify-end gap-2">
-								<button className="rounded border px-4 py-2" onClick={confirmAddMoreNo}>No</button>
-								<button className="rounded bg-brand text-white px-4 py-2" onClick={confirmAddMoreYes}>Yes</button>
-							</div>
-						</div>
-					</div>
-				</div>
-			)}
 		</div>
 	);
 }

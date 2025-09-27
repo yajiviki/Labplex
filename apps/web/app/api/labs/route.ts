@@ -4,89 +4,109 @@ import { auth } from '../../../lib/auth';
 
 export const dynamic = 'force-dynamic';
 
-function canManageAll(role?: string | null) {
-	return role === 'SUPER_ADMIN' || role === 'ADMIN';
-}
-
-export async function GET(req: Request) {
-	const session = await auth();
-	if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-	const role = (session as any)?.user?.role as string | undefined;
-	const userLabId = (session as any)?.user?.labId as string | undefined;
-	const { searchParams } = new URL(req.url);
-	const select = searchParams.get('select');
-
-	// Lightweight dropdown list
-	if (select === 'codeAndName') {
-		const where = canManageAll(role) ? { isActive: 1 } : { id: userLabId, isActive: 1 };
-		const labs = await prisma.lab.findMany({
-			where,
-			orderBy: { labCode: 'asc' },
-			select: { labCode: true, name: true },
-		});
-		return NextResponse.json(labs);
-	}
-
-	// Full list: all if admin/super-admin, else only own lab
-	const where = canManageAll(role) ? {} : { id: userLabId };
-	const labs = await prisma.lab.findMany({
-		where,
-		orderBy: { createdAt: 'desc' },
-		select: {
-			id: true,
-			labCode: true,
-			name: true,
-			address: true,
-			phone: true,
-			email: true,
-			isActive: true,
-			createdAt: true,
-			updatedAt: true,
-		},
+// helper to generate next LB code at DB side safely
+async function nextLabCode() {
+	const last = await prisma.lab.findFirst({
+		where: { labCode: { startsWith: 'LB' } },
+		orderBy: { labCode: 'desc' },
+		select: { labCode: true },
 	});
-	return NextResponse.json(labs);
+	let max = 0;
+	if (last?.labCode?.startsWith('LB')) {
+		const tail = last.labCode.slice(2);
+		const n = parseInt(tail, 10);
+		if (!isNaN(n)) max = n;
+	}
+	const n = max + 1;
+	return `LB${String(n).padStart(2, '0')}`;
 }
 
-export async function POST(req: Request) {
-	const session = await auth();
-	if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-	const role = (session as any)?.user?.role as string | undefined;
-	if (!canManageAll(role)) {
-		return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-	}
-
-	const body = await req.json().catch(() => ({}));
-	const { labCode, name, address, phone, email } = body || {};
-	if (!labCode?.trim() || !name?.trim()) {
-		return NextResponse.json({ error: 'Lab Code and Name are required.' }, { status: 400 });
-	}
-
+// Temporary GET: works even if Lab model has no 'labVendors' field,
+// BUT your schema still needs the LabVendor model in Prisma to query it.
+export async function GET() {
 	try {
-		const created = await prisma.lab.create({
-			data: {
-				labCode: labCode.trim(),
-				name: name.trim(),
-				address: (address || '').trim() || null,
-				phone: (phone || '').trim() || null,
-				email: (email || '').trim() || null,
-				isActive: 1,
-			},
+		const labs = await prisma.lab.findMany({
+			where: { isActive: 1 },
+			orderBy: { createdAt: 'desc' },
 			select: {
-				id: true,
-				labCode: true,
-				name: true,
-				address: true,
-				phone: true,
-				email: true,
-				createdAt: true,
+				id: true, labCode: true, name: true, address: true, phone: true, email: true, createdAt: true,
 			},
 		});
+
+		// load mapping separately
+		const links = await prisma.labVendor.findMany({
+			where: { labId: { in: labs.map(l => l.id) } },
+			select: {
+				labId: true,
+				vendor: { select: { id: true, vendorId: true, tpaName: true } },
+			},
+		});
+
+		const byLab = new Map<string, { id: string; vendorId: string; tpaName: string }[]>();
+		for (const lv of links) {
+			const arr = byLab.get(lv.labId) || [];
+			arr.push(lv.vendor);
+			byLab.set(lv.labId, arr);
+		}
+
+		const data = labs.map(l => {
+			const vendors = byLab.get(l.id) || [];
+			return {
+				...l,
+				tpa: vendors.map(v => `${v.vendorId} - ${v.tpaName}`).join(', '),
+				vendors,
+			};
+		});
+
+		return NextResponse.json(data);
+	} catch (e: any) {
+		return NextResponse.json({ error: e?.message || 'Failed to load labs' }, { status: 500 });
+	}
+}
+
+
+/** POST /api/labs : create lab + map TPAs */
+export async function POST(req: Request) {
+	try {
+		const session = await auth();
+		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+		const body = await req.json().catch(() => ({}));
+		const { labCode, name, address, phone, email, vendorIds } = body || {};
+
+		const phoneDigits = String(phone || '').replace(/\D+/g, '');
+		if (!name?.trim() || !phoneDigits) {
+			return NextResponse.json({ error: 'Name and Mobile are required.' }, { status: 400 });
+		}
+
+		const created = await prisma.$transaction(async (tx) => {
+			const code = labCode?.trim() || await nextLabCode();
+			const lab = await tx.lab.create({
+				data: {
+					labCode: code,
+					name: name.trim(),
+					address: address?.trim() || null,
+					phone: phoneDigits,
+					email: email?.trim() || null,
+					isActive: 1,
+				},
+				select: { id: true, labCode: true, name: true, address: true, phone: true, email: true, createdAt: true },
+			});
+
+			if (Array.isArray(vendorIds) && vendorIds.length) {
+				await tx.labVendor.createMany({
+					data: vendorIds.map((vid: string) => ({ labId: lab.id, vendorId: vid })),
+					skipDuplicates: true,
+				});
+			}
+
+			return lab;
+		});
+
 		return NextResponse.json(created, { status: 201 });
 	} catch (e: any) {
 		if (e?.code === 'P2002') {
-			return NextResponse.json({ error: 'Lab Code already exists.' }, { status: 409 });
+			return NextResponse.json({ error: 'Lab Code already exists' }, { status: 409 });
 		}
 		return NextResponse.json({ error: e?.message || 'Create failed' }, { status: 500 });
 	}

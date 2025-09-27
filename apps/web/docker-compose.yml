@@ -1,0 +1,25 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: Welc0me@123
+      POSTGRES_DB: labplex_db
+    ports:
+      - "5432"
+    volumes:
+      - labplux_pg:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.test
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8081:80"
+
+volumes:
+  labplux_pg:

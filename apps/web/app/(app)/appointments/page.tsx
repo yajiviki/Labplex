@@ -3,14 +3,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarPlus, Search, Trash2, Edit3, ChevronDown, ChevronUp } from 'lucide-react';
 
-type Vendor = {
+type Vendor = { id: string; vendorId: string; tpaName: string };
+type Lab = {
 	id: string;
-	vendorId: string;    // TPA01…
-	tpaName: string;
-	insuranceName?: string | null;
-	companies?: { id: string; name: string; code?: string | null }[];
+	labCode: string;
+	name: string;
+	vendors?: Vendor[];       // server includes vendors via labVendors include
 };
-type Lab = { id: string; labCode: string; name: string };
+
+type Insurance = {
+	id: string;
+	code: string | null;
+	name: string;
+};
 
 type Appointment = {
 	id: string;
@@ -26,7 +31,7 @@ type Appointment = {
 	phone: string | null;           // Mobile No
 	visitType: string | null;       // CENTER | HOME
 	location: string | null;
-	status: string | null;          // merged single field
+	status: string | null;          // unified "Status"
 	extraChargeRs: number | null;
 	paymentStatus: string | null;   // Paid | On Account
 	createdAt: string;
@@ -38,7 +43,6 @@ const VISIT_TYPE_OPTS = [
 	{ value: 'HOME', label: 'Home' },
 ] as const;
 
-/** Single Status list (medical + report) */
 const STATUS_OPTS = [
 	'TBI',
 	'On hold',
@@ -72,15 +76,17 @@ function fromDateLocalValue(v: string) { return v ? new Date(v).toISOString() : 
 export default function AppointmentsPage() {
 	const [loading, setLoading] = useState(false);
 	const [rows, setRows] = useState<Appointment[]>([]);
-	const [vendors, setVendors] = useState<Vendor[]>([]);
+	const [vendors, setVendors] = useState<Vendor[]>([]);       // full list (for fallback)
 	const [labs, setLabs] = useState<Lab[]>([]);
+	const [insurers, setInsurers] = useState<Insurance[]>([]);
 
 	// form state
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [apptAt, setApptAt] = useState<string>(toDateLocalValue(new Date()));
-	const [vendorId, setVendorId] = useState<string>('');                     // Vendor.id
+	const [labId, setLabId] = useState<string>('');                        // Lab.id
+	const [vendorId, setVendorId] = useState<string>('');                  // Vendor.id (filtered by lab)
 	const [insuranceCompanyId, setInsuranceCompanyId] = useState<string>(''); // InsuranceCompany.id
-	const [labId, setLabId] = useState<string>('');
+
 	const [clientName, setClientName] = useState('');
 	const [clientRef, setClientRef] = useState('');
 	const [gender, setGender] = useState<string>('');
@@ -91,7 +97,7 @@ export default function AppointmentsPage() {
 	const [location, setLocation] = useState('');
 	const [status, setStatus] = useState<string>('TBI');
 	const [extraChargeRs, setExtraChargeRs] = useState<string>('');
-	const [paymentStatus, setPaymentStatus] = useState<string>('On Account');
+	const [paymentStatus, setPaymentStatus] = useState<string>('TBI');
 
 	// messages
 	const [formErr, setFormErr] = useState<string | null>(null);
@@ -102,51 +108,62 @@ export default function AppointmentsPage() {
 	const [q, setQ] = useState('');
 	const [fDateFrom, setFDateFrom] = useState<string>('');
 	const [fDateTo, setFDateTo] = useState<string>('');
-	const [fStatus, setFStatus] = useState<string>(''); // single status filter
+	const [fStatus, setFStatus] = useState<string>('');
 	const [sortKey, setSortKey] = useState<keyof Appointment>('apptAt');
 	const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
 	async function load() {
 		setLoading(true); setListErr(null);
 		try {
-			const [rVendors, rLabs, rAppts] = await Promise.all([
-				fetch('/api/vendors?include=companies', { cache: 'no-store' }),
-				fetch('/api/labs', { cache: 'no-store' }),
-				fetch('/api/appointments?q=', { cache: 'no-store' }),
+			const [rVendors, rLabs, rAppts, rIns] = await Promise.all([
+				fetch('/api/vendors', { cache: 'no-store' }),
+				fetch('/api/labs', { cache: 'no-store' }),          // must include vendors in each lab
+				fetch('/api/appointments?status=&source=&q=', { cache: 'no-store' }),
+				fetch('/api/insurance', { cache: 'no-store' }),
 			]);
-			const [vendorsJson, labsJson, apptsJson] = await Promise.all([
+			const [vendorsJson, labsJson, apptsJson, insJson] = await Promise.all([
 				rVendors.json().catch(() => []),
 				rLabs.json().catch(() => []),
 				rAppts.json().catch(() => []),
+				rIns.json().catch(() => []),
 			]);
 			if (!rVendors.ok) throw new Error(vendorsJson?.error || 'Load vendors failed');
 			if (!rLabs.ok) throw new Error(labsJson?.error || 'Load labs failed');
 			if (!rAppts.ok) throw new Error(apptsJson?.error || 'Load appointments failed');
+			if (!rIns.ok) throw new Error(insJson?.error || 'Load insurance failed');
+
 			setVendors(Array.isArray(vendorsJson) ? vendorsJson : []);
 			setLabs(Array.isArray(labsJson) ? labsJson : []);
 			setRows(Array.isArray(apptsJson) ? apptsJson : []);
+			setInsurers(Array.isArray(insJson) ? insJson : []);
 		} catch (e: any) {
 			setListErr(e?.message || 'Network error');
-			setVendors([]); setLabs([]); setRows([]);
+			setVendors([]); setLabs([]); setRows([]); setInsurers([]);
 		} finally { setLoading(false); }
 	}
 	useEffect(() => { load(); }, []);
 
-	// insurance dropdown driven by selected vendor
-	const vendorCompanies = useMemo(() => {
-		const v = vendors.find(x => x.id === vendorId);
-		return v?.companies || [];
-	}, [vendors, vendorId]);
+	// When Lab changes, clear TPA selection and repopulate from that lab
+	useEffect(() => {
+		setVendorId('');
+	}, [labId]);
+
+	// Get the vendors tied to the chosen lab (fallback to all vendors if API doesn’t include them yet)
+	const labVendors = useMemo(() => {
+		const l = labs.find(x => x.id === labId);
+		if (l?.vendors?.length) return l.vendors;
+		return vendors; // graceful fallback
+	}, [labs, labId, vendors]);
 
 	function resetForm() {
 		setEditingId(null);
 		setApptAt(toDateLocalValue(new Date()));
-		setVendorId(''); setInsuranceCompanyId(''); setLabId('');
+		setLabId(''); setVendorId(''); setInsuranceCompanyId('');
 		setClientName(''); setClientRef('');
 		setGender(''); setAge(''); setAddress(''); setPhone('');
 		setVisitType('CENTER'); setLocation('');
 		setStatus('TBI');
-		setExtraChargeRs(''); setPaymentStatus('On Account');
+		setExtraChargeRs(''); setPaymentStatus('TBI');
 		setFormErr(null); setFormOk(null);
 	}
 
@@ -155,21 +172,20 @@ export default function AppointmentsPage() {
 		setFormErr(null); setFormOk(null);
 
 		if (!apptAt) { setFormErr('Appointment Date is required'); return; }
-		if (!vendorId) { setFormErr('TPA Name is required'); return; }
+		if (!visitType) { setFormErr('Type of Visit is required'); return; }
 		if (!labId) { setFormErr('Lab Name is required'); return; }
+		if (!vendorId) { setFormErr('TPA Name is required'); return; }
 		if (!insuranceCompanyId) { setFormErr('Insurance name is required'); return; }
 		if (!clientName.trim()) { setFormErr('Client Name is required'); return; }
-		if (!visitType) { setFormErr('Type of Visit is required'); return; }
 		if (!status) { setFormErr('Status is required'); return; }
 		if (!paymentStatus) { setFormErr('Payment Status is required'); return; }
 
 		const payload = {
 			apptAt: fromDateLocalValue(apptAt),
-			vendorId,                           // new
-			insuranceVendorId: vendorId,        // legacy compatibility if server expects it
 			labId,
+			vendorId,                     // <- primary
+			insuranceVendorId: vendorId,  // <- keep for back-compat if your API expects this name
 			insuranceCompanyId,
-			patientName: clientName || null,    // legacy
 			clientName: clientName || null,
 			clientRef: clientRef || null,
 			gender: gender || null,
@@ -178,10 +194,11 @@ export default function AppointmentsPage() {
 			phone: phone || null,
 			visitType,
 			location: location || null,
-			status,
+			status,                       // unified status
 			extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
 			paymentStatus,
 			source: 'INSURANCE',
+			notes: null,
 		};
 
 		try {
@@ -203,9 +220,9 @@ export default function AppointmentsPage() {
 	function startEdit(a: Appointment) {
 		setEditingId(a.id);
 		setApptAt(toDateLocalValue(a.apptAt));
+		setLabId(a.labId || '');
 		setVendorId(a.vendorId || '');
 		setInsuranceCompanyId(a.insuranceCompanyId || '');
-		setLabId(a.labId || '');
 		setClientName(a.clientName || '');
 		setClientRef(a.clientRef || '');
 		setGender(a.gender || '');
@@ -216,7 +233,7 @@ export default function AppointmentsPage() {
 		setLocation(a.location || '');
 		setStatus(a.status || 'TBI');
 		setExtraChargeRs(a.extraChargeRs != null ? String(a.extraChargeRs) : '');
-		setPaymentStatus(a.paymentStatus || 'On Account');
+		setPaymentStatus(a.paymentStatus || 'TBI');
 		setFormErr(null); setFormOk(null);
 	}
 
@@ -256,8 +273,8 @@ export default function AppointmentsPage() {
 					.some(v => String(v).toLowerCase().includes(term))
 				: true;
 			const dateOk = inDateRange(r.apptAt);
-			const statusOk = fStatus ? (r.status === fStatus) : true;
-			return textOk && dateOk && statusOk;
+			const stOk = fStatus ? (r.status === fStatus) : true;
+			return textOk && dateOk && stOk;
 		});
 
 		const sorted = [...base].sort((a, b) => {
@@ -300,7 +317,7 @@ export default function AppointmentsPage() {
 				<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Appointment Management</h1>
 			</div>
 
-			{/* FORM — 5 columns per row (your layout spec: 3 rows) */}
+			{/* FORM */}
 			<div className="rounded-xl border bg-white p-4 shadow-sm">
 				<div className="flex items-center justify-between mb-3">
 					<h2 className="text-base font-semibold">{editingId ? 'Update Appointment' : 'Add New Appointment'}</h2>
@@ -311,10 +328,13 @@ export default function AppointmentsPage() {
 				{formOk && <div className="mb-3 text-sm text-green-600">{formOk}</div>}
 
 				<form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-5 gap-3">
-					{/* Row 1: Appointment Date, Type of Visit, TPA Name, Insurance Name, Lab Name */}
+					{/* Row 1 — (Date, Visit, Lab, TPA, Insurance) */}
 					<div>
 						<label className="block text-sm mb-1">Appointment Date</label>
-						<input type="datetime-local" value={apptAt} onChange={(e) => setApptAt(e.target.value)} className="w-full border rounded px-3 py-2" />
+						<input type="datetime-local" value={apptAt} onChange={(e) => setApptAt(e.target.value)}
+							className="w-full rounded px-3 py-2 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-brand/50 focus:border-brand"
+						/>
+
 					</div>
 
 					<div>
@@ -325,30 +345,47 @@ export default function AppointmentsPage() {
 					</div>
 
 					<div>
-						<label className="block text-sm mb-1">TPA Name</label>
-						<select className="w-full border rounded px-3 py-2" value={vendorId} onChange={(e) => { setVendorId(e.target.value); setInsuranceCompanyId(''); }}>
-							<option value="">Select TPA</option>
-							{vendors.map(v => <option key={v.id} value={v.id}> {v.tpaName}</option>)}
-						</select>
-					</div>
-
-					<div>
-						<label className="block text-sm mb-1">Insurance Name</label>
-						<select className="w-full border rounded px-3 py-2" value={insuranceCompanyId} onChange={(e) => setInsuranceCompanyId(e.target.value)} disabled={!vendorId}>
-							<option value="">Select Insurance</option>
-							{vendorCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-						</select>
-					</div>
-
-					<div>
 						<label className="block text-sm mb-1">Lab Name</label>
-						<select className="w-full border rounded px-3 py-2" value={labId} onChange={(e) => setLabId(e.target.value)}>
+						<select
+							className="w-full border rounded px-3 py-2"
+							value={labId}
+							onChange={(e) => setLabId(e.target.value)}
+						>
 							<option value="">Select Lab</option>
 							{labs.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
 						</select>
 					</div>
 
-					{/* Row 2: Client Name, Client Id/Proposal No, Gender, Age, Address, Location */}
+					<div>
+						<label className="block text-sm mb-1">TPA Name</label>
+						<select
+							className="w-full border rounded px-3 py-2"
+							value={vendorId}
+							onChange={(e) => setVendorId(e.target.value)}
+							disabled={!labId}
+						>
+							<option value="">{labId ? 'Select TPA' : 'Select a Lab first'}</option>
+							{labVendors.map(v => <option key={v.id} value={v.id}> {v.tpaName}</option>)}
+						</select>
+					</div>
+
+					<div>
+						<label className="block text-sm mb-1">Insurance Name</label>
+						<select
+							className="w-full border rounded px-3 py-2"
+							value={insuranceCompanyId}
+							onChange={(e) => setInsuranceCompanyId(e.target.value)}
+						>
+							<option value="">Select Insurance</option>
+							{insurers.map(ins => (
+								<option key={ins.id} value={ins.id}>
+									{ins.name}
+								</option>
+							))}
+						</select>
+					</div>
+
+					{/* Row 2 — Client Name, Proposal No, Gender, Age, Address, Location */}
 					<div>
 						<label className="block text-sm mb-1">Client Name</label>
 						<input className="w-full border rounded px-3 py-2" value={clientName} onChange={(e) => setClientName(e.target.value)} />
@@ -382,7 +419,7 @@ export default function AppointmentsPage() {
 						<input className="w-full border rounded px-3 py-2" value={location} onChange={(e) => setLocation(e.target.value)} />
 					</div>
 
-					{/* Row 3: Mobile No, Status, Payment Status, Extra Charge (Rs) */}
+					{/* Row 3 — Phone, Status, Payment, Extra Charge */}
 					<div>
 						<label className="block text-sm mb-1">Mobile No</label>
 						<input className="w-full border rounded px-3 py-2" value={phone} onChange={(e) => setPhone(e.target.value)} />
@@ -441,7 +478,7 @@ export default function AppointmentsPage() {
 
 					<div>
 						<label className="block text-xs text-gray-600 mb-1">Status</label>
-						<select className="border rounded px-3 py-2 min-w-[220px]" value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+						<select className="border rounded px-3 py-2 min-w-[200px]" value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
 							<option value="">All</option>
 							{STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
 						</select>
@@ -455,12 +492,12 @@ export default function AppointmentsPage() {
 					<table className="w-full border rounded">
 						<thead className="bg-gray-50">
 							<tr>
-								<Col k="apptAt" label="Appointment Date" />
-								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">TPA Name</th>
+								<Col k="apptAt" label="Date" />
 								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Lab Name</th>
+								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">TPA Name</th>
 								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Insurance name</th>
 								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Client Name</th>
-								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Client Id/Proposal No</th>
+								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Proposal No</th>
 								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Mobile No</th>
 								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Type of Visit</th>
 								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Location</th>
@@ -477,15 +514,17 @@ export default function AppointmentsPage() {
 								<tr><td colSpan={14} className="px-3 py-4 text-center text-sm text-gray-500">No appointments found</td></tr>
 							) : (
 								filtered.map((a) => {
-									const tpa = vendors.find(v => v.id === a.vendorId);
 									const lab = labs.find(l => l.id === a.labId);
-									const ins = (tpa?.companies || []).find(c => c.id === a.insuranceCompanyId);
+									const vendor =
+										lab?.vendors?.find(v => v.id === a.vendorId) ||
+										vendors.find(v => v.id === a.vendorId);
+									const ins = insurers.find(i => i.id === a.insuranceCompanyId);
 									return (
 										<tr key={a.id} className="border-t hover:bg-gray-50">
 											<td className="px-3 py-2 text-sm whitespace-nowrap">{new Date(a.apptAt).toLocaleString()}</td>
-											<td className="px-3 py-2 text-sm">{tpa?.tpaName || ''}</td>
-											<td className="px-3 py-2 text-sm">{lab?.name || ''}</td>
-											<td className="px-3 py-2 text-sm">{ins?.name || ''}</td>
+											<td className="px-3 py-2 text-sm">{lab ? `${lab.labCode} — ${lab.name}` : ''}</td>
+											<td className="px-3 py-2 text-sm">{vendor ? `${vendor.vendorId} — ${vendor.tpaName}` : ''}</td>
+											<td className="px-3 py-2 text-sm">{ins ? ((ins.code ? `${ins.code} — ` : '') + ins.name) : ''}</td>
 											<td className="px-3 py-2 text-sm">{a.clientName || ''}</td>
 											<td className="px-3 py-2 text-sm">{a.clientRef || ''}</td>
 											<td className="px-3 py-2 text-sm whitespace-nowrap">{a.phone || ''}</td>

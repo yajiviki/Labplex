@@ -1,7 +1,8 @@
 // prisma/schema.prisma
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 generator client {
@@ -25,6 +26,7 @@ model Lab {
   // Relations
   users        User[]
   appointments Appointment[]
+  labVendors   LabVendor[]
   Patient      Patient[]
 }
 
@@ -78,39 +80,47 @@ model PasswordSetupToken {
 // - Insurance companies belong to a TPA (via Vendor.id)
 // ===========================================================
 model Vendor {
-  id            String   @id @default(cuid())
-  vendorId      String
-  tpaName       String
-  insuranceName String?
-  address       String?
-  phone         String?
-  isActive      Int      @default(1)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id        String   @id @default(cuid())
+  vendorId  String
+  tpaName   String
+  address   String?
+  phone     String?
+  email     String?
+  isActive  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // Back-relations
-  companies    InsuranceCompany[] // all insurance companies under this TPA
+  // Back-relations  
   appointments Appointment[] // appointments that reference this TPA
+  labVendors   LabVendor[]
 
   @@unique([vendorId]) // strongly recommended so TPA01/TPA02 are unique
   @@index([tpaName])
 }
 
+model LabVendor {
+  labId    String
+  vendorId String
+
+  lab    Lab    @relation(fields: [labId], references: [id], onDelete: Cascade)
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@id([labId, vendorId])
+  @@index([vendorId])
+}
+
 model InsuranceCompany {
   id        String   @id @default(cuid())
-  vendorId  String
-  vendor    Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  code      String?  @unique
   name      String
-  code      String? // optional, keep/remove as you wish
+  address   String? // ← make sure this exists
+  phone     String?
   isActive  Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Back-relation
   appointments Appointment[]
 
-  @@unique([vendorId, name]) // one company name once per TPA
-  @@index([vendorId])
   @@index([name])
 }
 
@@ -156,8 +166,8 @@ model Appointment {
   apptAt DateTime
 
   // Patient (client) link — optional; make required if you always have a patient
-  patientId String?
-  patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  //patientId String?
+  //patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
 
   // TPA (Vendor) link
   vendorId String?
@@ -193,9 +203,11 @@ model Appointment {
   isActive  Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  Patient   Patient? @relation(fields: [patientId], references: [id])
+  patientId String?
 
   @@index([apptAt])
-  @@index([patientId])
+  //@@index([patientId])
   @@index([vendorId])
   @@index([labId])
   @@index([insuranceCompanyId])

@@ -1,140 +1,99 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '../../../../lib/db';   // ✅ correct depth
+import { NextResponse } from 'next/server';
+import { prisma } from '../../../../lib/db';
 
-type ImportRow = {
-	vendorId?: string | null;
-	tpaName?: string | null;
-	insuranceName?: string | null;
-	address?: string | null;
-	phone?: string | null;
-	createdAt?: string | null;
-	updatedAt?: string | null;
-};
 
-function parseDate(s?: string | null): Date {
-	if (!s) return new Date();
-	const normalized = s.replace('T', ' ');
-	const d = new Date(normalized);
-	return isNaN(d.getTime()) ? new Date() : d;
-}
-
-async function nextVendorHumanId(): Promise<string> {
-	const last = await prisma.vendor.findFirst({
-		where: { vendorId: { startsWith: 'TPA' } },
-		orderBy: { vendorId: 'desc' },
+// Generate next vendorId (TPAxx) from DB
+async function nextVendorIdFromDb() {
+	const prefix = 'TPA';
+	const all = await prisma.vendor.findMany({
+		where: { vendorId: { startsWith: prefix } },
 		select: { vendorId: true },
 	});
 	let max = 0;
-	if (last?.vendorId?.startsWith('TPA')) {
-		const tail = last.vendorId.slice(3);
-		const n = parseInt(tail, 10);
-		if (!isNaN(n)) max = n;
+	for (const r of all) {
+		const v = r.vendorId || '';
+		if (v.startsWith(prefix)) {
+			const n = parseInt(v.slice(prefix.length), 10);
+			if (!Number.isNaN(n) && n > max) max = n;
+		}
 	}
-	const n = max + 1;
-	const tail = n < 10 ? `0${n}` : `${n}`;
-	return `TPA${tail}`;
+	return `${prefix}${String(max + 1).padStart(2, '0')}`;
 }
 
-export async function POST(req: NextRequest) {
+function normPhone(v: any) {
+	const s = String(v ?? '').replace(/\D+/g, '');
+	return s ? s : null;
+}
+function normStr(v: any) {
+	const s = String(v ?? '').trim();
+	return s ? s : null;
+}
+
+export async function POST(req: Request) {
 	try {
-		const body = await req.json();
-		const rows: ImportRow[] = Array.isArray(body?.rows) ? body.rows : [];
-		if (rows.length === 0) {
-			return NextResponse.json({ error: 'No rows supplied' }, { status: 400 });
+		const body = await req.json().catch(() => ({}));
+		const rows = Array.isArray(body?.rows) ? body.rows : [];
+		if (!rows.length) {
+			return NextResponse.json({ error: 'No rows provided', inserted: 0, upserted: 0, skipped: 0, total: 0 }, { status: 400 });
 		}
 
-		let insertedVendors = 0;
-		let updatedVendors = 0;
-		let insertedCompanies = 0;
-		let skippedCompanies = 0;
+		let inserted = 0;
+		let upserted = 0;
+		let skipped = 0;
 
-		for (const raw of rows) {
-			const tpaName = (raw.tpaName || '').trim();
-			const insuranceName = (raw.insuranceName || '').trim();
-			const address = (raw.address || '').trim();
-			const phone = (raw.phone || '').trim();
-			const createdAt = parseDate(raw.createdAt ?? null);
-			const updatedAt = parseDate(raw.updatedAt ?? null);
+		// Process sequentially to keep nextVendorId monotonic if many new rows have no vendorId
+		for (const r of rows) {
+			const tpaName = normStr(r?.tpaName);
+			if (!tpaName) { skipped++; continue; }
 
-			if (!tpaName) { skippedCompanies++; continue; }
+			let vendorId = normStr(r?.vendorId); // may be null
+			const address = normStr(r?.address);
+			const phone = normPhone(r?.phone);
+			const email = normStr(r?.email);
 
-			// Prefer vendorId if present, else match exact tpaName (no CI "mode")
-			let vendor =
-				(raw.vendorId?.trim()
-					? await prisma.vendor.findFirst({
-						where: { vendorId: raw.vendorId.trim() },
-						select: { id: true, vendorId: true, tpaName: true, address: true, phone: true },
-					})
-					: null) ||
-				(await prisma.vendor.findFirst({
-					where: { tpaName }, // exact match only
-					select: { id: true, vendorId: true, tpaName: true, address: true, phone: true },
-				}));
-
-			if (!vendor) {
-				const newHumanId = raw.vendorId?.trim() || (await nextVendorHumanId());
-				vendor = await prisma.vendor.create({
-					data: {
-						vendorId: newHumanId,
-						tpaName,
-						address: address || null,
-						phone: phone || '',
-						isActive: 1,
-						createdAt,
-						updatedAt,
-					},
-					select: { id: true, vendorId: true, tpaName: true, address: true, phone: true },
-				});
-				insertedVendors++;
-			} else {
-				const updates: any = {};
-				let needs = false;
-				if (address && address !== (vendor.address || '')) { updates.address = address; needs = true; }
-				if (phone && phone !== (vendor.phone || '')) { updates.phone = phone; needs = true; }
-				if (needs) {
-					updates.updatedAt = updatedAt;
-					vendor = await prisma.vendor.update({
-						where: { id: vendor.id },
-						data: updates,
-						select: { id: true, vendorId: true, tpaName: true, address: true, phone: true },
+			// If vendorId present -> upsert by vendorId (unique)
+			if (vendorId) {
+				const existing = await prisma.vendor.findUnique({ where: { vendorId } });
+				if (existing) {
+					await prisma.vendor.update({
+						where: { vendorId },
+						data: { tpaName, address, phone, email, isActive: 1 },
 					});
-					updatedVendors++;
+					upserted++;
+				} else {
+					await prisma.vendor.create({
+						data: { vendorId, tpaName, address, phone, email, isActive: 1 },
+					});
+					inserted++;
 				}
+				continue;
 			}
 
-			if (insuranceName) {
-				const existingCompany = await prisma.insuranceCompany.findFirst({
-					where: { vendorId: vendor.id, name: insuranceName },
-					select: { id: true },
+			// No vendorId => try match by tpaName (case-insensitive) to avoid duplicates
+			const byName = await prisma.vendor.findFirst({
+				where: { tpaName: { equals: tpaName, mode: 'insensitive' } },
+			});
+
+			if (byName) {
+				await prisma.vendor.update({
+					where: { id: byName.id },
+					data: { tpaName, address, phone, email, isActive: 1 },
 				});
-				if (existingCompany) {
-					await prisma.insuranceCompany.update({
-						where: { id: existingCompany.id },
-						data: { updatedAt },
-					});
-					skippedCompanies++;
-				} else {
-					await prisma.insuranceCompany.create({
-						data: {
-							vendorId: vendor.id,   // FK to Vendor.id
-							name: insuranceName,
-							isActive: 1,
-							createdAt,
-							updatedAt,
-						},
-					});
-					insertedCompanies++;
-				}
+				upserted++;
+			} else {
+				// brand new; assign next code
+				const nextCode = await nextVendorIdFromDb();
+				await prisma.vendor.create({
+					data: { vendorId: nextCode, tpaName, address, phone, email, isActive: 1 },
+				});
+				inserted++;
 			}
 		}
 
 		return NextResponse.json({
-			insertedVendors,
-			updatedVendors,
-			insertedCompanies,
-			skippedCompanies,
+			inserted, upserted, skipped, total: rows.length,
 		});
 	} catch (e: any) {
-		return NextResponse.json({ error: e?.message || 'Import error' }, { status: 500 });
+		return NextResponse.json({ error: e?.message || 'Import failed' }, { status: 500 });
 	}
 }

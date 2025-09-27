@@ -3,19 +3,18 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-	LayoutDashboard, CalendarDays, UserRound, FileText,
+	LayoutDashboard, CalendarDays, FileText,
 	Receipt, Activity, Settings, Users, FlaskConical,
 	SlidersHorizontal, ChevronDown, ChevronRight, KeyRound,
-	PanelLeftClose, PanelRightClose, Building2, Stethoscope, KeySquare // ← removed UserCheck
+	PanelLeftClose, PanelRightClose, Building2, Stethoscope, KeySquare, ShieldCheck
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useState, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 
-
 type Role = 'USER' | 'STAFF' | 'ADMIN' | 'SUPER_ADMIN' | string;
 
-/** CHANGED: single item instead of 3 */
+/** single item instead of 3 (kept your label) */
 const appointmentChildren = [
 	{ href: '/appointments', icon: Stethoscope, label: 'TPA/DR/OP' },
 ];
@@ -24,6 +23,8 @@ const settingsChildrenFull = [
 	{ href: '/settings/user', icon: Users, label: 'Manage User' },
 	{ href: '/settings/labs', icon: FlaskConical, label: 'Manage Labs' },
 	{ href: '/settings/vendors', icon: Building2, label: 'Manage TPA' },
+	// ✅ Added/normalized: Manage Insurance (lowercase route)
+	{ href: '/settings/insurance', icon: ShieldCheck, label: 'Manage Insurance' },
 	{ href: '/settings/config', icon: SlidersHorizontal, label: 'App Configurations' },
 	{ href: '/settings/password', icon: KeyRound, label: 'Change Password' },
 ];
@@ -61,7 +62,6 @@ export default function Sidebar({
 		pathname === href || pathname.startsWith(href + '/');
 
 	const canSeeAppointments = role === 'STAFF' || role === 'ADMIN' || role === 'SUPER_ADMIN';
-	const canSeePatients = role === 'STAFF' || role === 'ADMIN' || role === 'SUPER_ADMIN';
 	const canSeeBilling = role === 'STAFF' || role === 'ADMIN' || role === 'SUPER_ADMIN';
 	const canSeeAnalytics = role === 'STAFF' || role === 'ADMIN' || role === 'SUPER_ADMIN';
 	const canSeeSettings = role === 'ADMIN' || role === 'SUPER_ADMIN';
@@ -158,7 +158,6 @@ export default function Sidebar({
 						</li>
 					)}
 
-
 					{/* Reports */}
 					<li>
 						<Link
@@ -244,7 +243,8 @@ export default function Sidebar({
 								<ul
 									className={clsx(
 										'mt-1 pl-4 space-y-1 overflow-hidden transition-[max-height] duration-300',
-										settingsOpen ? 'max-h-64' : 'max-h-0'
+										// a little taller to fit one more row comfortably
+										settingsOpen ? 'max-h-[400px]' : 'max-h-0'
 									)}
 								>
 									{settingsChildren.map(({ href, icon: Icon, label }) => {

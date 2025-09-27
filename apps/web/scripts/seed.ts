@@ -1,25 +1,54 @@
 // apps/web/scripts/seed.ts
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
-
-async function nextUserIdForLab(labId: string): Promise<string> {
-	// Find numerically largest Uxxxx for THIS lab and increment
-	const last = await prisma.user.findFirst({
-		where: { labId, userId: { startsWith: 'U' } },
-		orderBy: { userId: 'desc' }, // works with zero-padding
-		select: { userId: true },
-	});
-
-	const lastN = parseSuffix(last?.userId ?? null, 'U');
-	return `U${String(lastN + 1).padStart(4, '0')}`;
-}
 
 function parseSuffix(id: string | null, prefix: string): number {
 	if (!id || !id.startsWith(prefix)) return 0;
 	const n = parseInt(id.slice(prefix.length), 10);
 	return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Returns next Uxxxx *within a lab* by scanning that lab's users, but also
+ * ensures the chosen userId is globally unique (since your schema treats userId as unique).
+ */
+async function nextUserIdForLab(labId: string): Promise<string> {
+	// Highest Uxxxx in THIS lab
+	const last = await prisma.user.findFirst({
+		where: { labId, userId: { startsWith: 'U' } },
+		orderBy: { userId: 'desc' }, // zero-padded U0001.. sorts lexicographically
+		select: { userId: true },
+	});
+	let n = parseSuffix(last?.userId ?? null, 'U');
+
+	// Keep incrementing until we find a userId that is free globally
+	while (true) {
+		n += 1;
+		const candidate = `U${String(n).padStart(4, '0')}`;
+		const conflict = await prisma.user.findUnique({
+			where: { userId: candidate },
+			select: { id: true },
+		});
+		if (!conflict) return candidate;
+	}
+}
+
+async function ensureUniqueUserId(desired: string): Promise<string> {
+	// If desired is taken globally, bump until free
+	let suffix = parseSuffix(desired, 'U');
+	let candidate = desired;
+
+	while (true) {
+		const conflict = await prisma.user.findUnique({
+			where: { userId: candidate },
+			select: { id: true },
+		});
+		if (!conflict) return candidate;
+		suffix += 1;
+		candidate = `U${String(suffix).padStart(4, '0')}`;
+	}
 }
 
 async function main() {
@@ -45,31 +74,23 @@ async function main() {
 		},
 	});
 
-	// 2) Ensure there is exactly one Super Admin with this email in THIS lab
-	// Because email is unique globally, we use email to find the user.
+	// 2) Ensure an admin in THIS lab
 	const adminEmail = 'admin@example.com';
 
-	const existingByEmail = await prisma.user.findUnique({
+	// We can’t use findUnique on email if email isn’t unique -> use findFirst
+	const existingByEmail = await prisma.user.findFirst({
 		where: { email: adminEmail },
 		select: { id: true, labId: true, userId: true },
 	});
 
 	if (existingByEmail) {
-		// User with that email already exists somewhere. Update it to match this lab & data.
-		// Ensure userId is set and unique within this lab.
+		// Move/update the existing user to this lab, ensuring userId is unique globally.
 		let targetUserId = existingByEmail.userId;
 		if (!targetUserId) {
 			targetUserId = await nextUserIdForLab(lab.id);
 		} else {
-			// If the user moves labs, their current userId might collide in the new lab.
-			// Check composite uniqueness in target lab and adjust if needed.
-			const conflict = await prisma.user.findUnique({
-				where: { labId_userId: { labId: lab.id, userId: targetUserId } },
-				select: { id: true },
-			});
-			if (conflict && conflict.id !== existingByEmail.id) {
-				targetUserId = await nextUserIdForLab(lab.id);
-			}
+			// Make sure the current userId is globally unique (and if taken by someone else, bump it)
+			targetUserId = await ensureUniqueUserId(targetUserId);
 		}
 
 		await prisma.user.update({
@@ -80,24 +101,29 @@ async function main() {
 				name: 'Super Admin',
 				phone: '9999999999',
 				role: 'SUPER_ADMIN',
-				password: pw,     // re-assign known password for seed
+				password: pw, // reset for seed
 				isActive: 1,
+				email: adminEmail,
 			},
 		});
+
+		console.log(`🔄 Updated admin "${targetUserId}" in lab ${lab.labCode}`);
 	} else {
 		// No user with that email — create a fresh one in this lab.
 		const nextId = await nextUserIdForLab(lab.id);
 
-		// Use composite upsert by (labId, userId) to be future-proof
+		// Upsert by userId (unique)
 		await prisma.user.upsert({
-			where: { labId_userId: { labId: lab.id, userId: nextId } },
+			where: { userId: nextId },
 			update: {
-				// should not hit update on seed, but kept for idempotency
+				// Not expected on first run, but harmless for idempotency
+				labId: lab.id,
 				name: 'Super Admin',
 				phone: '9999999999',
 				role: 'SUPER_ADMIN',
 				password: pw,
 				isActive: 1,
+				email: adminEmail,
 			},
 			create: {
 				labId: lab.id,
@@ -110,9 +136,11 @@ async function main() {
 				isActive: 1,
 			},
 		});
+
+		console.log(`✅ Created admin "${nextId}" in lab ${lab.labCode}`);
 	}
 
-	console.log('✅ Seed completed.');
+	console.log('🎉 Seed completed.');
 }
 
 main()
