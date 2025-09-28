@@ -371,7 +371,7 @@ export default function InsurersPage() {
 							<input className="w-full border rounded px-3 py-2" value={name} onChange={(e) => setName(e.target.value)} />
 						</div>
 						<div>
-							<label className="block text-sm mb-1">Address</label>
+							<label className="block text-sm mb-1">Nick Name</label>
 							<input className="w-full border rounded px-3 py-2" value={address} onChange={(e) => setAddress(e.target.value)} />
 						</div>
 						<div>
@@ -409,7 +409,7 @@ export default function InsurersPage() {
 						</div>
 					</div>
 
-					<div className="overflow-x-auto">
+					<div className="overflow-x-auto overflow-y-auto max-h-[400px] rounded border">
 						<table className="min-w-full border rounded">
 							<thead className="bg-gray-50">
 								<tr>
@@ -419,7 +419,7 @@ export default function InsurersPage() {
 									{/* CODE first, NAME second */}
 									<Col k="code" label="Code" />
 									<Col k="name" label="Name" />
-									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Address</th>
+									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Nick Name</th>
 									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Phone</th>
 								</tr>
 							</thead>

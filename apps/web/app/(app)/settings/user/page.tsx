@@ -322,7 +322,7 @@ export default function ManageUsersPage() {
 						</div>
 					</div>
 
-					<div className="overflow-x-auto">
+					<div className="overflow-x-auto overflow-y-auto max-h-[400px] rounded border">
 						<table className="min-w-full border rounded">
 							<thead className="bg-gray-50">
 								<tr>

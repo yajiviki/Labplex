@@ -421,7 +421,7 @@ export default function ManageLabsPage() {
 			</div>
 
 			{/* TABLE */}
-			<div className="rounded-xl border bg-white p-4 shadow-sm">
+			<div className="rounded-xl border bg-white p-4 shadow-sm overflow-x-auto overflow-y-auto max-h-[400px] rounded border">
 				<div className="flex flex-wrap items-center gap-2 justify-between mb-3">
 					<h2 className="text-base font-semibold">Lab Information</h2>
 
@@ -463,7 +463,7 @@ export default function ManageLabsPage() {
 								</th>
 								<Col k="labCode" label="Lab Code" />
 								<Col k="name" label="Name" />
-								<Col k="phone" label="Mobile" />
+								{/* <Col k="phone" label="Mobile" /> */}
 								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">TPA list</th>
 							</tr>
 						</thead>
@@ -477,7 +477,7 @@ export default function ManageLabsPage() {
 									const isChecked = selected.has(l.id);
 									const tpaText =
 										l.vendors?.length
-											? l.vendors.map(v => `${v.vendorId} - ${v.tpaName}`).join(', ')
+											? l.vendors.map(v => `${v.tpaName}`).join(', ')
 											: (l.tpa || '');
 									return (
 										<tr key={l.id} className="border-t hover:bg-gray-50">
@@ -485,10 +485,10 @@ export default function ManageLabsPage() {
 												<input type="checkbox" checked={isChecked} onChange={(e) => toggleOne(l.id, e.target.checked)} />
 											</td>
 											<td className="px-3 py-2 text-sm">{l.labCode}</td>
-											<td className="px-3 py-2 text-sm">
+											<td className="px-3 py-2 text-sm whitespace-nowrap">
 												<button className="underline underline-offset-2" onClick={() => startEdit(l)}>{l.name}</button>
 											</td>
-											<td className="px-3 py-2 text-sm">{l.phone}</td>
+											{/* <td className="px-3 py-2 text-sm">{l.phone}</td> */}
 											<td className="px-3 py-2 text-sm">{tpaText}</td>
 										</tr>
 									);

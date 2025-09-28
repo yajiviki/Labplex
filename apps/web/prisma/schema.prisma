@@ -146,7 +146,7 @@ model Patient {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  appointments Appointment[]
+  //appointments Appointment[]
 
   @@unique([labId, patientId])
   @@index([labId])
@@ -166,7 +166,7 @@ model Appointment {
   apptAt DateTime
 
   // Patient (client) link — optional; make required if you always have a patient
-  //patientId String?
+  //patientId String?npx
   //patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
 
   // TPA (Vendor) link
@@ -203,9 +203,10 @@ model Appointment {
   isActive  Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  Patient   Patient? @relation(fields: [patientId], references: [id])
-  patientId String?
+  //Patient   Patient? @relation(fields: [patientId], references: [id])
+  //patientId String?
 
+  @@unique([clientRef, apptAt])
   @@index([apptAt])
   //@@index([patientId])
   @@index([vendorId])

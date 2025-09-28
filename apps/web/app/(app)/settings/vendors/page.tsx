@@ -403,7 +403,7 @@ export default function VendorsPage() {
 
 				{/* RIGHT: Table */}
 				<div className="lg:col-span-8 rounded-xl border bg-white p-4 shadow-sm">
-					<div className="flex flex-wrap items-center gap-2 justify-between mb-3">
+					<div className="flex flex-wrap items-center gap-2 justify-between mb-3 ">
 						<h2 className="text-base font-semibold">TPA Information</h2>
 						<div className="flex items-center gap-2">
 							{anySelected && (
@@ -429,7 +429,7 @@ export default function VendorsPage() {
 						</div>
 					</div>
 
-					<div className="overflow-x-auto">
+					<div className="overflow-x-auto overflow-y-auto max-h-[400px] rounded border">
 						<table className="min-w-full border rounded">
 							<thead className="bg-gray-50">
 								<tr>
@@ -462,7 +462,7 @@ export default function VendorsPage() {
 													<input type="checkbox" checked={isChecked} onChange={(e) => toggleOne(v.id, e.target.checked)} />
 												</td>
 												<td className="px-3 py-2 text-sm whitespace-nowrap">{v.vendorId}</td>
-												<td className="px-3 py-2 text-sm">
+												<td className="px-3 py-2 text-sm whitespace-nowrap">
 													<button className="underline underline-offset-2" onClick={() => startEdit(v)}>{v.tpaName}</button>
 												</td>
 												<td className="px-3 py-2 text-sm whitespace-nowrap">{v.phone || ''}</td>
