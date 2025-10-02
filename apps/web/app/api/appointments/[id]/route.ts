@@ -2,6 +2,21 @@ import { NextResponse } from 'next/server';
 import { prisma } from '../../../../lib/db';
 import { auth } from '../../../../lib/auth';
 
+function parseDateOnlyStart(v?: string | null) {
+	if (!v) return null;
+	const a = v.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+	if (a) return new Date(+a[1], +a[2] - 1, +a[3], 0, 0, 0, 0);
+	const b = v.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+	if (b) return new Date(+b[3], +b[2] - 1, +b[1], 0, 0, 0, 0);
+	const d = new Date(v);
+	return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+function parseISOOrNull(v?: string | null) {
+	if (!v) return null;
+	const d = new Date(v);
+	return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
 	try {
 		const session = await auth();
@@ -20,6 +35,13 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
 		const resolvedVendorId = body.vendorId || body.insuranceVendorId || existing.vendorId;
 
+		// Handle paymentDate which might be date-only or ISO
+		let newPaymentDate: Date | null | undefined = undefined;
+		if ('paymentDate' in body) {
+			if (body.paymentDate === null || body.paymentDate === '') newPaymentDate = null;
+			else newPaymentDate = parseDateOnlyStart(body.paymentDate) ?? parseISOOrNull(body.paymentDate);
+		}
+
 		const updated = await prisma.appointment.update({
 			where: { id },
 			data: {
@@ -32,8 +54,11 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 				clientName: (body.clientName ?? body.patientName ?? existing.clientName),
 				clientRef: body.clientRef ?? existing.clientRef,
 				gender: body.gender ?? existing.gender,
-				age: (body.age !== undefined ? (body.age === null ? null : Number(body.age)) : existing.age),
-				address: body.address ?? existing.address,
+				age:
+					body.age !== undefined
+						? (body.age === null || body.age === '' ? null : Number(body.age))
+						: existing.age,
+				// address removed
 				phone: body.phone ?? existing.phone,
 
 				visitType: body.visitType ?? existing.visitType,
@@ -41,9 +66,13 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 				status: body.status ?? existing.status,
 				extraChargeRs:
 					body.extraChargeRs !== undefined
-						? (body.extraChargeRs === null ? null : Number(body.extraChargeRs))
+						? (body.extraChargeRs === null || body.extraChargeRs === '' ? null : Number(body.extraChargeRs))
 						: existing.extraChargeRs,
 				paymentStatus: body.paymentStatus ?? existing.paymentStatus,
+
+				// NEW
+				serviceType: body.serviceType ?? existing.serviceType,
+				paymentDate: newPaymentDate !== undefined ? newPaymentDate : existing.paymentDate,
 			},
 		});
 

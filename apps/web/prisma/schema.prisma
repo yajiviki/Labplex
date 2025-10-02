@@ -186,7 +186,7 @@ model Appointment {
   clientRef  String?
   gender     String?
   age        Int?
-  address    String?
+  //address    String?
   phone      String?
 
   // Visit / logistics
@@ -205,6 +205,9 @@ model Appointment {
   updatedAt DateTime @updatedAt
   //Patient   Patient? @relation(fields: [patientId], references: [id])
   //patientId String?
+
+  serviceType         String?   // e.g. 'Outer Area', 'Local', 'Walk-in'
+  paymentDate         DateTime? // when payment was made (if any)
 
   @@unique([clientRef, apptAt])
   @@index([apptAt])

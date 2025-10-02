@@ -24,13 +24,14 @@ type Appointment = {
 	clientRef: string | null;
 	gender: string | null;
 	age: number | null;
-	address: string | null;
 	phone: string | null;
 	visitType: string | null; // CENTER | HOME
 	location: string | null;
 	status: string | null;
 	extraChargeRs: number | null;
 	paymentStatus: string | null;
+	serviceType?: string | null;   // NEW
+	paymentDate?: string | null;   // NEW (ISO)
 	createdAt: string;
 };
 
@@ -59,22 +60,15 @@ function toDateLocalValue(d?: string | Date | null) {
 }
 function fromDateLocalValue(v: string) { return v ? new Date(v).toISOString() : null; }
 
-
-
-function formatDateOnly(iso: string): string {
+function formatDateOnly(iso?: string | null): string {
+	if (!iso) return '';
 	const d = new Date(iso);
 	if (Number.isNaN(d.getTime())) return '';
-
 	const year = d.getFullYear();
 	const month = String(d.getMonth() + 1).padStart(2, '0'); // 01–12
 	const day = String(d.getDate()).padStart(2, '0');        // 01–31
-
 	return `${year}-${month}-${day}`;
 }
-
-// function formatDateOnly(iso: string): string {
-// 	return apptYMD(iso) || '';
-// }
 
 // current month start/end (yyyy-mm-dd)
 function getCurrentMonthBounds() {
@@ -108,12 +102,15 @@ function statusClasses(s?: string | null) {
 			return 'bg-blue-100 text-blue-800';
 		case 'cancelled':
 			return 'bg-blue-200 text-blue-900';
-		case 'onprogress':
+		case 'report - inprogress':
+		case 'onprocess':
 			return 'bg-yellow-200 text-black-900';
+		case 'report - completed':
 		case 'completed':
 			return 'bg-green-100 text-green-800';
+		case 'report - submitted':
 		case 'submitted':
-			return 'bg-green-100 text-green-800';
+			return 'bg-green-200 text-green-900';
 		default:
 			return 'bg-gray-100 text-gray-800';
 	}
@@ -136,13 +133,14 @@ export default function AppointmentsPage() {
 	const [clientRef, setClientRef] = useState('');
 	const [gender, setGender] = useState<string>('');
 	const [age, setAge] = useState<string>('');
-	const [address, setAddress] = useState('');
 	const [phone, setPhone] = useState('');
 	const [visitType, setVisitType] = useState<string>('CENTER');
 	const [location, setLocation] = useState('');
 	const [status, setStatus] = useState<string>('TBI');
 	const [extraChargeRs, setExtraChargeRs] = useState<string>('');
 	const [paymentStatus, setPaymentStatus] = useState<string>('TBI');
+	const [serviceType, setServiceType] = useState<string>('');   // NEW
+	const [paymentDate, setPaymentDate] = useState<string>('');   // NEW (yyyy-mm-dd)
 
 	// messages
 	const [formErr, setFormErr] = useState<string | null>(null);
@@ -160,7 +158,8 @@ export default function AppointmentsPage() {
 	// sorting
 	type TableSortKey =
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
-		| 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment';
+		| 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment'
+		| 'service' | 'paydate'; // NEW
 
 	const [sortKey, setSortKey] = useState<TableSortKey>('date');
 	const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -168,7 +167,8 @@ export default function AppointmentsPage() {
 	// columns
 	type ColKey =
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
-		| 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment';
+		| 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment'
+		| 'service' | 'paydate'; // NEW
 
 	const [visibleCols, setVisibleCols] = useState<Record<ColKey, boolean>>({
 		date: true,
@@ -180,6 +180,8 @@ export default function AppointmentsPage() {
 		visit: true,
 		location: true,
 		status: true,
+		service: false,     // NEW show by default
+		paydate: false,     // NEW show by default
 		mobile: false,
 		extra: false,
 		payment: false,
@@ -259,9 +261,10 @@ export default function AppointmentsPage() {
 		setApptAt(toDateLocalValue(new Date()));
 		setLabId(''); setVendorId(''); setInsuranceCompanyId('');
 		setClientName(''); setClientRef('');
-		setGender(''); setAge(''); setAddress(''); setPhone('');
+		setGender(''); setAge(''); setPhone('');
 		setVisitType('CENTER'); setLocation('');
 		setStatus('TBI'); setExtraChargeRs(''); setPaymentStatus('TBI');
+		setServiceType(''); setPaymentDate('');
 		setFormErr(null); setFormOk(null);
 	}
 
@@ -279,7 +282,7 @@ export default function AppointmentsPage() {
 		if (!paymentStatus) return setFormErr('Payment Status is required');
 
 		const payload = {
-			apptAt: formatDateOnly(apptAt),
+			apptAt: fromDateLocalValue(apptAt),   // send ISO, backend will parse
 			labId,
 			vendorId,
 			insuranceVendorId: vendorId,
@@ -288,13 +291,14 @@ export default function AppointmentsPage() {
 			clientRef: clientRef || null,
 			gender: gender || null,
 			age: age ? Number(age) : null,
-			address: address || null,
 			phone: phone || null,
 			visitType,
 			location: location || null,
 			status,
 			extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
 			paymentStatus,
+			serviceType: serviceType || null,           // NEW
+			paymentDate: paymentDate || null,           // NEW (yyyy-mm-dd)
 			source: 'INSURANCE',
 			notes: null,
 		};
@@ -329,13 +333,16 @@ export default function AppointmentsPage() {
 		setClientRef(a.clientRef || '');
 		setGender(a.gender || '');
 		setAge(a.age != null ? String(a.age) : '');
-		setAddress(a.address || '');
 		setPhone(a.phone || '');
 		setVisitType(a.visitType || 'CENTER');
 		setLocation(a.location || '');
 		setStatus(a.status || 'TBI');
 		setExtraChargeRs(a.extraChargeRs != null ? String(a.extraChargeRs) : '');
 		setPaymentStatus(a.paymentStatus || 'TBI');
+
+		setServiceType(a.serviceType || '');                                    // NEW
+		setPaymentDate(a.paymentDate ? formatDateOnly(a.paymentDate) : '');     // NEW
+
 		setFormErr(null); setFormOk(null);
 	}
 
@@ -356,9 +363,8 @@ export default function AppointmentsPage() {
 		switch (key) {
 			case 'date': {
 				const ymd = formatDateOnly(r.apptAt);                 // "2025-09-01"
-				return ymd ? Number(ymd.replaceAll('-', '')) : 0; // 20250901
+				return ymd ? Number(ymd.replaceAll('-', '')) : 0;     // 20250901
 			}
-
 			case 'lab': {
 				const lab = labs.find(l => l.id === r.labId);
 				return (lab?.name || '').toLowerCase();
@@ -380,6 +386,11 @@ export default function AppointmentsPage() {
 			case 'status': return (r.status || '').toLowerCase();
 			case 'extra': return r.extraChargeRs ?? -1;
 			case 'payment': return (r.paymentStatus || '').toLowerCase();
+			case 'service': return (r.serviceType || '').toLowerCase();                        // NEW
+			case 'paydate': {
+				const ymd = formatDateOnly(r.paymentDate || '');
+				return ymd ? Number(ymd.replaceAll('-', '')) : 0;                                // NEW
+			}
 			default: return '';
 		}
 	};
@@ -388,7 +399,7 @@ export default function AppointmentsPage() {
 		const term = q.trim().toLowerCase();
 		const base = rows.filter(r => {
 			const textOk = term
-				? [r.clientName, r.clientRef, r.phone, r.location]
+				? [r.clientName, r.clientRef, r.phone, r.location, r.serviceType]
 					.filter(Boolean)
 					.some(v => String(v).toLowerCase().includes(term))
 				: true;
@@ -439,8 +450,8 @@ export default function AppointmentsPage() {
 				<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Appointment Management</h1>
 			</div>
 
-			{/* FORM */}
-			<div className="rounded-xl border px-3 bg-white p-4 shadow-sm">
+			{/* FORM (table-like with full grid lines) */}
+			<div className="rounded-xl border bg-white p-4 shadow-sm">
 				<div className="flex items-center justify-between mb-3">
 					<h2 className="text-base font-semibold">{editingId ? 'Update Appointment' : 'New Appointment'}</h2>
 					<button onClick={resetForm} className="text-sm text-gray-600 hover:underline">Clear</button>
@@ -449,108 +460,136 @@ export default function AppointmentsPage() {
 				{formErr && <div className="mb-3 text-sm text-red-600">{formErr}</div>}
 				{formOk && <div className="mb-3 text-sm text-green-600">{formOk}</div>}
 
-				<form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-5 gap-3">
-					{/* Row 1 */}
-					<div>
-						<label className="block text-sm mb-1">Appointment Date</label>
-						<input
-							type="datetime-local"
-							value={apptAt}
-							onChange={(e) => setApptAt(e.target.value)}
-							className="w-full rounded px-3 py-2 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-brand/50 focus:border-brand"
-						/>
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Type of Visit</label>
-						<select className="w-full border rounded px-3 py-2" value={visitType} onChange={(e) => setVisitType(e.target.value)}>
-							{VISIT_TYPE_OPTS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
-						</select>
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Lab Name</label>
-						<select className="w-full border rounded px-3 py-2" value={labId} onChange={(e) => setLabId(e.target.value)}>
-							<option value="">Select Lab</option>
-							{labs.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-						</select>
-					</div>
-					<div>
-						<label className="block text-sm mb-1">TPA Name</label>
-						<select
-							className="w-full border rounded px-3 py-2"
-							value={vendorId}
-							onChange={(e) => setVendorId(e.target.value)}
-							disabled={!labId}
-						>
-							<option value="">{labId ? 'Select TPA' : 'Select a Lab first'}</option>
-							{labVendors.map(v => <option key={v.id} value={v.id}>{v.tpaName}</option>)}
-						</select>
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Insurance Name</label>
-						<select
-							className="w-full border rounded px-3 py-2"
-							value={insuranceCompanyId}
-							onChange={(e) => setInsuranceCompanyId(e.target.value)}
-						>
-							<option value="">Select Insurance</option>
-							{insurers.map(ins => <option key={ins.id} value={ins.id}>{ins.name}</option>)}
-						</select>
-					</div>
+				<form onSubmit={onSubmit}>
+					{/* Outer border with inner grid lines */}
+					<div className="overflow-hidden rounded-md border">
+						{/* ROW 1 */}
+						<div className="grid grid-cols-12 divide-x divide-y">
+							<div className="p-3 col-span-12 md:col-span-3">
+								<label className="block text-sm mb-1">Appointment Date</label>
+								<input
+									type="datetime-local"
+									value={apptAt}
+									onChange={(e) => setApptAt(e.target.value)}
+									className="w-full rounded px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-brand/50 focus:border-brand"
+								/>
+							</div>
+							<div className="p-3 col-span-12 md:col-span-3">
+								<label className="block text-sm mb-1">Lab Name</label>
+								<select className="w-full border rounded px-3 py-2" value={labId} onChange={(e) => setLabId(e.target.value)}>
+									<option value="">Select Lab</option>
+									{labs.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+								</select>
+							</div>
+							<div className="p-3 col-span-12 md:col-span-3">
+								<label className="block text-sm mb-1">TPA Name</label>
+								<select
+									className="w-full border rounded px-3 py-2"
+									value={vendorId}
+									onChange={(e) => setVendorId(e.target.value)}
+									disabled={!labId}
+								>
+									<option value="">{labId ? 'Select TPA' : 'Select a Lab first'}</option>
+									{labVendors.map(v => <option key={v.id} value={v.id}>{v.tpaName}</option>)}
+								</select>
+							</div>
+							<div className="p-3 col-span-12 md:col-span-3">
+								<label className="block text-sm mb-1">Insurance Name</label>
+								<select
+									className="w-full border rounded px-3 py-2"
+									value={insuranceCompanyId}
+									onChange={(e) => setInsuranceCompanyId(e.target.value)}
+								>
+									<option value="">Select Insurance</option>
+									{insurers.map(ins => <option key={ins.id} value={ins.id}>{ins.name}</option>)}
+								</select>
+							</div>
+						</div>
 
-					{/* Row 2 */}
-					<div>
-						<label className="block text-sm mb-1">Client Name</label>
-						<input className="w-full border rounded px-3 py-2" value={clientName} onChange={(e) => setClientName(e.target.value)} />
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Client Id/Proposal No</label>
-						<input className="w-full border rounded px-3 py-2" value={clientRef} onChange={(e) => setClientRef(e.target.value)} />
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Gender</label>
-						<select className="w-full border rounded px-3 py-2" value={gender} onChange={(e) => setGender(e.target.value)}>
-							<option value="">Select…</option>
-							{GENDER_OPTS.map(g => <option key={g} value={g}>{g}</option>)}
-						</select>
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Age</label>
-						<input type="number" min={0} className="w-full border rounded px-3 py-2" value={age} onChange={(e) => setAge(e.target.value)} />
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Address</label>
-						<input className="w-full border rounded px-3 py-2" value={address} onChange={(e) => setAddress(e.target.value)} />
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Location</label>
-						<input className="w-full border rounded px-3 py-2" value={location} onChange={(e) => setLocation(e.target.value)} />
-					</div>
+						<div className="border-t" />
 
-					{/* Row 3 */}
-					<div>
-						<label className="block text-sm mb-1">Mobile No</label>
-						<input className="w-full border rounded px-3 py-2" value={phone} onChange={(e) => setPhone(e.target.value)} />
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Status</label>
-						<select className="w-full border rounded px-3 py-2" value={status} onChange={(e) => setStatus(e.target.value)}>
-							{STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
-						</select>
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Payment Status</label>
-						<select className="w-full border rounded px-3 py-2" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
-							{PAYMENT_STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
-						</select>
-					</div>
-					<div>
-						<label className="block text-sm mb-1">Extra Charge (Rs)</label>
-						<input type="number" min={0} className="w-full border rounded px-3 py-2" value={extraChargeRs} onChange={(e) => setExtraChargeRs(e.target.value)} />
-					</div>
+						{/* ROW 2 */}
+						<div className="grid grid-cols-12 divide-x divide-y">
+							<div className="p-3 col-span-12 md:col-span-4">
+								<label className="block text-sm mb-1">Client Name</label>
+								<input className="w-full border rounded px-3 py-2" value={clientName} onChange={(e) => setClientName(e.target.value)} />
+							</div>
+							<div className="p-3 col-span-12 md:col-span-4">
+								<label className="block text-sm mb-1">Client Id/Proposal No</label>
+								<input className="w-full border rounded px-3 py-2" value={clientRef} onChange={(e) => setClientRef(e.target.value)} />
+							</div>
+							<div className="p-3 col-span-12 md:col-span-4">
+								<label className="block text-sm mb-1">Location</label>
+								<input className="w-full border rounded px-3 py-2" value={location} onChange={(e) => setLocation(e.target.value)} />
+							</div>
+						</div>
 
-					<div className="md:col-span-5 flex gap-2 mt-1">
-						<button className="rounded bg-brand text-white px-4 py-2">{editingId ? 'Update' : 'Create'}</button>
-						<button type="button" className="rounded border px-4 py-2" onClick={resetForm}>Reset</button>
+						<div className="border-t" />
+
+						{/* ROW 3 (compact) */}
+						<div className="grid grid-cols-12 divide-x divide-y">
+							<div className="p-3 col-span-12 md:col-span-2">
+								<label className="block text-sm mb-1">Type of Visit</label>
+								<select className="w-full border rounded px-3 py-2" value={visitType} onChange={(e) => setVisitType(e.target.value)}>
+									{VISIT_TYPE_OPTS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+								</select>
+							</div>
+							<div className="p-3 col-span-12 md:col-span-2">
+								<label className="block text-sm mb-1">Gender</label>
+								<select className="w-full border rounded px-3 py-2" value={gender} onChange={(e) => setGender(e.target.value)}>
+									<option value="">Select…</option>
+									{GENDER_OPTS.map(g => <option key={g} value={g}>{g}</option>)}
+								</select>
+							</div>
+							<div className="p-3 col-span-12 md:col-span-2">
+								<label className="block text-sm mb-1">Age</label>
+								<input type="number" min={0} className="w-full border rounded px-3 py-2" value={age} onChange={(e) => setAge(e.target.value)} />
+							</div>
+							<div className="p-3 col-span-12 md:col-span-2">
+								<label className="block text-sm mb-1">Mobile No</label>
+								<input className="w-full border rounded px-3 py-2" value={phone} onChange={(e) => setPhone(e.target.value)} />
+							</div>
+							<div className="p-3 col-span-12 md:col-span-2">
+								<label className="block text-sm mb-1">Payment Status</label>
+								<select className="w-full border rounded px-3 py-2" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
+									{PAYMENT_STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
+								</select>
+							</div>
+							<div className="p-3 col-span-12 md:col-span-2">
+								<label className="block text-sm mb-1">Service Type</label>
+								<input
+									placeholder="e.g., ECG / X-Ray / Home Visit"
+									className="w-full border rounded px-3 py-2"
+									value={serviceType}
+									onChange={(e) => setServiceType(e.target.value)}
+								/>
+							</div>
+							<div className="p-3 col-span-12 md:col-span-2">
+								<label className="block text-sm mb-1">Extra Charge (Rs)</label>
+								<input type="number" min={0} className="w-full border rounded px-3 py-2" value={extraChargeRs} onChange={(e) => setExtraChargeRs(e.target.value)} />
+							</div>
+							<div className="p-3 col-span-12 md:col-span-2">
+								<label className="block text-sm mb-1">Payment Date</label>
+								<input
+									type="date"
+									className="w-full border rounded px-3 py-2"
+									value={paymentDate}
+									onChange={(e) => setPaymentDate(e.target.value)}
+								/>
+							</div>
+							<div className="p-3 col-span-12 md:col-span-2">
+								<label className="block text-sm mb-1">Status</label>
+								<select className="w-full border rounded px-3 py-2" value={status} onChange={(e) => setStatus(e.target.value)}>
+									{STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
+								</select>
+							</div>
+
+							{/* Actions */}
+							<div className="p-3 col-span-12 flex gap-2">
+								<button className="rounded bg-brand text-white px-4 py-2">{editingId ? 'Update' : 'Create'}</button>
+								<button type="button" className="rounded border px-4 py-2" onClick={resetForm}>Reset</button>
+							</div>
+						</div>
 					</div>
 				</form>
 			</div>
@@ -621,8 +660,8 @@ export default function AppointmentsPage() {
 				{/* Table */}
 				<div className="w-full overflow-x-auto">
 					<div className="max-h-[560px] overflow-y-auto">
-						<table className="w-full min-w-[1200px] border rounded">
-							<thead className="sticky top-0 z-10">
+						<table className="w-full min-w-[1400px] border rounded">
+							<thead className="sticky top-0 z-10 bg-white">
 								<tr>
 									{visibleCols.date && <SortTh k="date" label="Date" />}
 									{visibleCols.lab && <SortTh k="lab" label="Lab Name" />}
@@ -634,15 +673,17 @@ export default function AppointmentsPage() {
 									{visibleCols.mobile && <SortTh k="mobile" label="Mobile No" />}
 									{visibleCols.visit && <SortTh k="visit" label="Visit" />}
 									{visibleCols.location && <SortTh k="location" label="Location" />}
+									{visibleCols.service && <SortTh k="service" label="Service Type" />}       {/* NEW */}
+									{visibleCols.paydate && <SortTh k="paydate" label="Payment Date" />}       {/* NEW */}
 									{visibleCols.extra && <SortTh k="extra" label="Extra (Rs)" align="right" />}
 									{visibleCols.payment && <SortTh k="payment" label="Payment Status" />}
 								</tr>
 							</thead>
 							<tbody>
 								{loading ? (
-									<tr><td colSpan={12} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
+									<tr><td colSpan={14} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
 								) : filtered.length === 0 ? (
-									<tr><td colSpan={12} className="px-3 py-4 text-center text-sm text-gray-500">No appointments found</td></tr>
+									<tr><td colSpan={14} className="px-3 py-4 text-center text-sm text-gray-500">No appointments found</td></tr>
 								) : (
 									filtered.map((a) => {
 										const lab = labs.find(l => l.id === a.labId);
@@ -679,6 +720,8 @@ export default function AppointmentsPage() {
 													</td>
 												)}
 												{visibleCols.location && <td className="px-3 py-2 text-sm">{a.location ?? ''}</td>}
+												{visibleCols.service && <td className="px-3 py-2 text-sm">{a.serviceType ?? ''}</td>}
+												{visibleCols.paydate && <td className="px-3 py-2 text-sm whitespace-nowrap">{formatDateOnly(a.paymentDate)}</td>}
 												{visibleCols.extra && <td className="px-3 py-2 text-sm text-right">{a.extraChargeRs ?? ''}</td>}
 												{visibleCols.payment && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.paymentStatus ?? ''}</td>}
 											</tr>
@@ -755,9 +798,7 @@ function DateRangeDropdown({
 							<button
 								type="button"
 								className="border rounded px-3 py-1.5 text-sm"
-								onClick={() => { /* Clear to all dates, or switch to month defaults if you prefer */
-									setFDateFrom(''); setFDateTo(''); setRangeOpen(false);
-								}}
+								onClick={() => { setFDateFrom(''); setFDateTo(''); setRangeOpen(false); }}
 							>
 								Clear
 							</button>
@@ -782,13 +823,14 @@ function ColumnsDropdown({
 	colsOpen: boolean;
 	setColsOpen: (v: boolean) => void;
 	colsRef: React.RefObject<HTMLDivElement>;
-	visibleCols: Record<'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal' | 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment', boolean>;
+	visibleCols: Record<'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal' | 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment' | 'service' | 'paydate', boolean>;
 	toggleCol: (k: any) => void;
 }) {
 	const items: [keyof typeof visibleCols, string][] = [
 		['date', 'Date'], ['lab', 'Lab'], ['tpa', 'TPA'], ['ins', 'Insurance'], ['client', 'Client'],
 		['proposal', 'Proposal No'], ['mobile', 'Mobile'], ['visit', 'Visit Type'],
-		['location', 'Location'], ['status', 'Status'], ['extra', 'Extra Rs'], ['payment', 'Payment'],
+		['location', 'Location'], ['status', 'Status'], ['service', 'Service Type'], ['paydate', 'Payment Date'],
+		['extra', 'Extra Rs'], ['payment', 'Payment'],
 	];
 	return (
 		<div ref={colsRef} className="relative">
@@ -804,7 +846,7 @@ function ColumnsDropdown({
 			</button>
 
 			{colsOpen && (
-				<div className="absolute right-0 z-20 mt-1 w-[280px] rounded border bg-white shadow p-2">
+				<div className="absolute right-0 z-20 mt-1 w-[320px] rounded border bg-white shadow p-2">
 					<div className="grid grid-cols-2 gap-1 text-sm">
 						{items.map(([k, label]) => (
 							<label key={k} className="inline-flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer">
