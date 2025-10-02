@@ -108,11 +108,11 @@ function statusClasses(s?: string | null) {
 			return 'bg-blue-100 text-blue-800';
 		case 'cancelled':
 			return 'bg-blue-200 text-blue-900';
-		case 'report - inprogress':
-			return 'bg-red-200 text-red-900';
-		case 'report - completed':
-			return 'bg-amber-100 text-amber-800';
-		case 'report - submitted':
+		case 'onprogress':
+			return 'bg-yellow-200 text-black-900';
+		case 'completed':
+			return 'bg-green-100 text-green-800';
+		case 'submitted':
 			return 'bg-green-100 text-green-800';
 		default:
 			return 'bg-gray-100 text-gray-800';

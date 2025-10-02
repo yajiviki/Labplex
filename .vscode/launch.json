@@ -10,6 +10,23 @@
 			"name": "Launch Chrome against localhost",
 			"url": "http://localhost:3000",
 			"webRoot": "${workspaceFolder}"
+		},
+		{
+			"type": "node",
+			"request": "launch",
+			"name": "Next.js dev (inspect)",
+			"runtimeExecutable": "npm",
+			"runtimeArgs": [
+				"run",
+				"dev"
+			],
+			"env": {
+				"NODE_OPTIONS": "--inspect=9229 --enable-source-maps"
+			},
+			"console": "integratedTerminal",
+			"skipFiles": [
+				"<node_internals>/**"
+			]
 		}
 	]
 }
