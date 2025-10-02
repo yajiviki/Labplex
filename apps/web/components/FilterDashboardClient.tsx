@@ -362,7 +362,7 @@ export default function FilterDashboardClient({
 					<AreaStack data={safeCharts.reports} lines={[
 						{ key: 'OnProcess', label: 'OnProcess', color: '#0EA5E9' },
 						{ key: 'Completed', label: 'Completed', color: '#84CC16' },
-						{ key: 'Submitted', label: 'Submitted', color: '#111827' },
+						{ key: 'Submitted', label: 'Submitted', color: '#0051ffff' },
 					]} />
 				</ChartCard>
 			</div>
