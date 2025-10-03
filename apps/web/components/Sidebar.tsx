@@ -19,6 +19,11 @@ const appointmentChildren = [
 	{ href: '/appointments', icon: Stethoscope, label: 'TPA/DR/OP' },
 ];
 
+/** NEW: Reports submenu */
+const reportsChildren = [
+	{ href: '/reports/accounts', icon: Receipt, label: 'Accounts' },
+];
+
 const settingsChildrenFull = [
 	{ href: '/settings/user', icon: Users, label: 'Manage User' },
 	{ href: '/settings/labs', icon: FlaskConical, label: 'Manage Labs' },
@@ -53,6 +58,9 @@ export default function Sidebar({
 
 	const [appointmentsOpen, setAppointmentsOpen] = useState<boolean>(() =>
 		pathname.startsWith('/appointments')
+	);
+	const [reportsOpen, setReportsOpen] = useState<boolean>(() =>
+		pathname.startsWith('/reports')
 	);
 	const [settingsOpen, setSettingsOpen] = useState<boolean>(() =>
 		pathname.startsWith('/settings')
@@ -158,21 +166,59 @@ export default function Sidebar({
 						</li>
 					)}
 
-					{/* Reports */}
+					{/* Reports submenu (NEW) */}
 					<li>
-						<Link
-							href="/reports"
+						<button
+							type="button"
+							onClick={() => setReportsOpen(v => !v)}
 							className={clsx(
-								'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-								isActive('/reports')
+								'w-full flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors',
+								pathname.startsWith('/reports')
 									? 'bg-brand/10 text-brand-600 border border-brand/20'
 									: 'hover:bg-gray-50'
 							)}
 							title={!open ? 'Reports' : undefined}
 						>
-							<FileText className="h-4 w-4 shrink-0" />
-							{open && <span className="truncate">Reports</span>}
-						</Link>
+							<span className="flex items-center gap-3">
+								<FileText className="h-4 w-4 shrink-0" />
+								{open && <span className="truncate">Reports</span>}
+							</span>
+							{open &&
+								(reportsOpen ? (
+									<ChevronDown className="h-4 w-4 opacity-70" />
+								) : (
+									<ChevronRight className="h-4 w-4 opacity-70" />
+								))}
+						</button>
+
+						{open && (
+							<ul
+								className={clsx(
+									'mt-1 pl-4 space-y-1 overflow-hidden transition-[max-height] duration-300',
+									reportsOpen ? 'max-h-64' : 'max-h-0'
+								)}
+							>
+								{reportsChildren.map(({ href, icon: Icon, label }) => {
+									const active = isActive(href);
+									return (
+										<li key={href}>
+											<Link
+												href={href}
+												className={clsx(
+													'flex items-center gap-3 rounded-lg px-3 py-2 text-sm',
+													active
+														? 'bg-brand/10 text-brand-600 border border-brand/20'
+														: 'hover:bg-gray-50'
+												)}
+											>
+												<Icon className="h-4 w-4 shrink-0" />
+												<span className="truncate">{label}</span>
+											</Link>
+										</li>
+									);
+								})}
+							</ul>
+						)}
 					</li>
 
 					{/* Billing */}

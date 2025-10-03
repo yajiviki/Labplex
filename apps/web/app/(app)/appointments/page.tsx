@@ -2,16 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-	CalendarPlus, Search, ChevronDown, ChevronUp, SlidersHorizontal
+	CalendarPlus, Search, ChevronDown, ChevronUp, SlidersHorizontal,
+	Trash2, X, AlertTriangle, Info
 } from 'lucide-react';
 
+/* ========= Types ========= */
+
 type Vendor = { id: string; vendorId: string; tpaName: string };
-type Lab = {
-	id: string;
-	labCode: string;
-	name: string;
-	vendors?: Vendor[];
-};
+type Lab = { id: string; labCode: string; name: string; vendors?: Vendor[] };
 type Insurance = { id: string; code: string | null; name: string; address: string | null };
 
 type Appointment = {
@@ -20,18 +18,22 @@ type Appointment = {
 	vendorId: string | null;
 	insuranceCompanyId: string | null;
 	labId: string | null;
+
 	clientName: string | null;
 	clientRef: string | null;
 	gender: string | null;
 	age: number | null;
 	phone: string | null;
+
 	visitType: string | null; // CENTER | HOME
 	location: string | null;
 	status: string | null;
-	extraChargeRs: number | null;
+
+	serviceType: string | null;      // NEW
 	paymentStatus: string | null;
-	serviceType?: string | null;   // NEW
-	paymentDate?: string | null;   // NEW (ISO)
+	extraChargeRs: number | null;
+	paymentDate: string | null;      // NEW (ISO date)
+
 	createdAt: string;
 };
 
@@ -45,32 +47,23 @@ const STATUS_OPTS = [
 	'Sample Collected', 'Medical Done', 'Cancelled', 'Report - InProgress', 'Report - Completed', 'Report - Submitted',
 ] as const;
 const PAYMENT_STATUS_OPTS = ['TBI', 'Paid', 'On Account'] as const;
+const SERVICE_TYPE_OPTS = ['Local', 'Outer Area', 'Others'] as const;
 
-// Helpers
+/* ========= Helpers ========= */
+
 function toDateLocalValue(d?: string | Date | null) {
 	if (!d) return '';
 	const dt = typeof d === 'string' ? new Date(d.includes('T') ? d : d.replace(' ', 'T')) : d;
 	const pad = (n: number) => String(n).padStart(2, '0');
-	const yyyy = dt.getFullYear();
-	const mm = pad(dt.getMonth() + 1);
-	const dd = pad(dt.getDate());
-	const hh = pad(dt.getHours());
-	const mi = pad(dt.getMinutes());
-	return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+	return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
 }
-function fromDateLocalValue(v: string) { return v ? new Date(v).toISOString() : null; }
-
 function formatDateOnly(iso?: string | null): string {
 	if (!iso) return '';
 	const d = new Date(iso);
 	if (Number.isNaN(d.getTime())) return '';
-	const year = d.getFullYear();
-	const month = String(d.getMonth() + 1).padStart(2, '0'); // 01–12
-	const day = String(d.getDate()).padStart(2, '0');        // 01–31
-	return `${year}-${month}-${day}`;
+	const pad = (n: number) => String(n).padStart(2, '0');
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-
-// current month start/end (yyyy-mm-dd)
 function getCurrentMonthBounds() {
 	const pad = (n: number) => String(n).padStart(2, '0');
 	const now = new Date();
@@ -80,41 +73,29 @@ function getCurrentMonthBounds() {
 	const to = `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`;
 	return { from, to };
 }
-
-// --- Status chip styling map ---
 function statusClasses(s?: string | null) {
 	const key = (s || '').trim().toLowerCase();
 	switch (key) {
-		case 'tbi':
-			return 'bg-purple-100 text-purple-800';
+		case 'tbi': return 'bg-purple-100 text-purple-800';
 		case 'on hold':
-		case 'not responding':
-			return 'bg-yellow-100 text-yellow-800';
-		case 'waiting for response':
-			return 'bg-gray-100 text-gray-800';
-		case 'rescheduled':
-			return 'bg-red-100 text-red-800';
-		case 'need confirmation':
-			return 'bg-slate-200 text-slate-900';
-		case 'sample collected':
-			return 'bg-orange-100 text-orange-800';
-		case 'medical done':
-			return 'bg-blue-100 text-blue-800';
-		case 'cancelled':
-			return 'bg-blue-200 text-blue-900';
+		case 'not responding': return 'bg-yellow-100 text-yellow-800';
+		case 'waiting for response': return 'bg-gray-100 text-gray-800';
+		case 'rescheduled': return 'bg-red-100 text-red-800';
+		case 'need confirmation': return 'bg-slate-200 text-slate-900';
+		case 'sample collected': return 'bg-orange-100 text-orange-800';
+		case 'medical done': return 'bg-blue-100 text-blue-800';
+		case 'cancelled': return 'bg-blue-200 text-blue-900';
 		case 'report - inprogress':
-		case 'onprocess':
-			return 'bg-yellow-200 text-black-900';
+		case 'onprocess': return 'bg-yellow-200 text-black-900';
 		case 'report - completed':
-		case 'completed':
-			return 'bg-green-100 text-green-800';
+		case 'completed': return 'bg-green-100 text-green-800';
 		case 'report - submitted':
-		case 'submitted':
-			return 'bg-green-200 text-green-900';
-		default:
-			return 'bg-gray-100 text-gray-800';
+		case 'submitted': return 'bg-green-100 text-green-800';
+		default: return 'bg-gray-100 text-gray-800';
 	}
 }
+
+/* ========= Page ========= */
 
 export default function AppointmentsPage() {
 	const [loading, setLoading] = useState(false);
@@ -123,29 +104,34 @@ export default function AppointmentsPage() {
 	const [labs, setLabs] = useState<Lab[]>([]);
 	const [insurers, setInsurers] = useState<Insurance[]>([]);
 
-	// form
+	// ---- form state
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [apptAt, setApptAt] = useState<string>(toDateLocalValue(new Date()));
 	const [labId, setLabId] = useState<string>('');
-	const [vendorId, setVendorId] = useState<string>('');
-	const [insuranceCompanyId, setInsuranceCompanyId] = useState<string>('');
+	const [vendorId, setVendorId] = useState<string>('');              // optional now
+	const [insuranceCompanyId, setInsuranceCompanyId] = useState<string>(''); // optional now
+
 	const [clientName, setClientName] = useState('');
 	const [clientRef, setClientRef] = useState('');
+	const [status, setStatus] = useState<string>('TBI');
+	const [visitType, setVisitType] = useState<string>('CENTER');
+	const [location, setLocation] = useState('');
+
 	const [gender, setGender] = useState<string>('');
 	const [age, setAge] = useState<string>('');
 	const [phone, setPhone] = useState('');
-	const [visitType, setVisitType] = useState<string>('CENTER');
-	const [location, setLocation] = useState('');
-	const [status, setStatus] = useState<string>('TBI');
-	const [extraChargeRs, setExtraChargeRs] = useState<string>('');
+	const [serviceType, setServiceType] = useState('');
 	const [paymentStatus, setPaymentStatus] = useState<string>('TBI');
-	const [serviceType, setServiceType] = useState<string>('');   // NEW
-	const [paymentDate, setPaymentDate] = useState<string>('');   // NEW (yyyy-mm-dd)
+	const [extraChargeRs, setExtraChargeRs] = useState<string>('');
+	const [paymentDate, setPaymentDate] = useState<string>('');
 
 	// messages
-	const [formErr, setFormErr] = useState<string | null>(null);
 	const [formOk, setFormOk] = useState<string | null>(null);
 	const [listErr, setListErr] = useState<string | null>(null);
+
+	// REQUIRED-FIELDS MODAL
+	const [reqOpen, setReqOpen] = useState(false);
+	const [reqList, setReqList] = useState<string[]>([]);
 
 	// filters
 	const { from: monthFrom, to: monthTo } = getCurrentMonthBounds();
@@ -158,17 +144,19 @@ export default function AppointmentsPage() {
 	// sorting
 	type TableSortKey =
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
-		| 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment'
-		| 'service' | 'paydate'; // NEW
+		| 'mobile' | 'visit' | 'location' | 'status'
+		| 'serviceType' | 'payment' | 'extra' | 'paymentDate'
+		| 'gender' | 'age';
 
 	const [sortKey, setSortKey] = useState<TableSortKey>('date');
 	const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-	// columns
+	// columns (hidden by default per request)
 	type ColKey =
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
-		| 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment'
-		| 'service' | 'paydate'; // NEW
+		| 'status' | 'visit' | 'location'
+		| 'gender' | 'age' | 'mobile'
+		| 'serviceType' | 'payment' | 'extra' | 'paymentDate';
 
 	const [visibleCols, setVisibleCols] = useState<Record<ColKey, boolean>>({
 		date: true,
@@ -177,14 +165,17 @@ export default function AppointmentsPage() {
 		ins: true,
 		client: true,
 		proposal: true,
+		status: true,
 		visit: true,
 		location: true,
-		status: true,
-		service: false,     // NEW show by default
-		paydate: false,     // NEW show by default
+		// hidden by default:
+		gender: false,
+		age: false,
 		mobile: false,
-		extra: false,
+		serviceType: false,
 		payment: false,
+		extra: false,
+		paymentDate: false,
 	});
 
 	// dropdowns
@@ -196,6 +187,11 @@ export default function AppointmentsPage() {
 	// row click = edit
 	const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
 	const suppressVendorResetRef = useRef(false);
+
+	// delete modal
+	const [delOpen, setDelOpen] = useState(false);
+	const [delLoading, setDelLoading] = useState(false);
+	const [delErr, setDelErr] = useState<string | null>(null);
 
 	useEffect(() => {
 		function onDoc(e: MouseEvent) {
@@ -261,32 +257,51 @@ export default function AppointmentsPage() {
 		setApptAt(toDateLocalValue(new Date()));
 		setLabId(''); setVendorId(''); setInsuranceCompanyId('');
 		setClientName(''); setClientRef('');
-		setGender(''); setAge(''); setPhone('');
-		setVisitType('CENTER'); setLocation('');
-		setStatus('TBI'); setExtraChargeRs(''); setPaymentStatus('TBI');
-		setServiceType(''); setPaymentDate('');
-		setFormErr(null); setFormOk(null);
+		setStatus('TBI');
+		setVisitType('CENTER');
+		setLocation('');
+		setGender('');
+		setAge('');
+		setPhone('');
+		setServiceType('');
+		setPaymentStatus('TBI');
+		setExtraChargeRs('');
+		setPaymentDate('');
+		setFormOk(null);
 	}
 
 	async function onSubmit(e: React.FormEvent) {
 		e.preventDefault();
-		setFormErr(null); setFormOk(null);
+		setFormOk(null);
 
-		if (!apptAt) return setFormErr('Appointment Date is required');
-		if (!visitType) return setFormErr('Type of Visit is required');
-		if (!labId) return setFormErr('Lab Name is required');
-		if (!vendorId) return setFormErr('TPA Name is required');
-		if (!insuranceCompanyId) return setFormErr('Insurance name is required');
-		if (!clientName.trim()) return setFormErr('Client Name is required');
-		if (!status) return setFormErr('Status is required');
-		if (!paymentStatus) return setFormErr('Payment Status is required');
+		// Required (TPA & Insurance are OPTIONAL now)
+		const missing: string[] = [];
+		if (!apptAt) missing.push('Appointment Date');
+		if (!labId) missing.push('Lab Name');
+		if (!clientName.trim()) missing.push('Client Name');
+		if (!clientRef.trim()) missing.push('Client ID / Proposal No');
+		if (!gender) missing.push('Gender');
+		if (!serviceType) missing.push('Service Type');
+		if (!visitType) missing.push('Type of Visit');
+		if (!status) missing.push('Status');
+		if (!paymentStatus) missing.push('Payment Status');
+
+		if (missing.length) {
+			// Open dialog with the exact sentence you requested
+			const ordered = ['Lab Name', 'Client Name', 'Client ID / Proposal No', 'Gender', 'Service Type'];
+			const display = ordered.filter(x => missing.includes(x));
+			setReqList(display);
+			setReqOpen(true);
+			return;
+		}
 
 		const payload = {
-			apptAt: fromDateLocalValue(apptAt),   // send ISO, backend will parse
+			apptAt,                               // backend will convert
 			labId,
-			vendorId,
-			insuranceVendorId: vendorId,
-			insuranceCompanyId,
+			vendorId: vendorId || null,           // optional
+			insuranceVendorId: vendorId || null,  // legacy alias
+			insuranceCompanyId: insuranceCompanyId || null, // optional
+
 			clientName: clientName || null,
 			clientRef: clientRef || null,
 			gender: gender || null,
@@ -295,10 +310,10 @@ export default function AppointmentsPage() {
 			visitType,
 			location: location || null,
 			status,
-			extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
+			serviceType: serviceType || null,
 			paymentStatus,
-			serviceType: serviceType || null,           // NEW
-			paymentDate: paymentDate || null,           // NEW (yyyy-mm-dd)
+			extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
+			paymentDate: paymentDate ? `${paymentDate}T00:00:00` : null,
 			source: 'INSURANCE',
 			notes: null,
 		};
@@ -310,12 +325,18 @@ export default function AppointmentsPage() {
 				body: JSON.stringify(payload),
 			});
 			const data = await res.json().catch(() => ({}));
-			if (!res.ok) { setFormErr(data?.error || 'Save failed'); return; }
+			if (!res.ok) {
+				// show as dialog too, so the UX is consistent
+				setReqList([data?.error || 'Save failed']);
+				setReqOpen(true);
+				return;
+			}
 			setFormOk(editingId ? 'Updated!' : 'Created!');
 			await load();
 			if (!editingId) resetForm();
 		} catch (e: any) {
-			setFormErr(e?.message || 'Network error');
+			setReqList([e?.message || 'Network error']);
+			setReqOpen(true);
 		}
 	}
 
@@ -331,66 +352,53 @@ export default function AppointmentsPage() {
 		setInsuranceCompanyId(a.insuranceCompanyId || '');
 		setClientName(a.clientName || '');
 		setClientRef(a.clientRef || '');
+		setStatus(a.status || 'TBI');
+		setVisitType(a.visitType || 'CENTER');
+		setLocation(a.location || '');
+
 		setGender(a.gender || '');
 		setAge(a.age != null ? String(a.age) : '');
 		setPhone(a.phone || '');
-		setVisitType(a.visitType || 'CENTER');
-		setLocation(a.location || '');
-		setStatus(a.status || 'TBI');
-		setExtraChargeRs(a.extraChargeRs != null ? String(a.extraChargeRs) : '');
+		setServiceType(a.serviceType || '');
 		setPaymentStatus(a.paymentStatus || 'TBI');
-
-		setServiceType(a.serviceType || '');                                    // NEW
-		setPaymentDate(a.paymentDate ? formatDateOnly(a.paymentDate) : '');     // NEW
-
-		setFormErr(null); setFormOk(null);
+		setExtraChargeRs(a.extraChargeRs != null ? String(a.extraChargeRs) : '');
+		setPaymentDate(formatDateOnly(a.paymentDate));
+		setFormOk(null);
 	}
 
-	/** Date-only range check using normalized YYYY-MM-DD */
 	function inDateRangeDateOnly(apptISO: string, fromYmd: string, toYmd: string) {
 		const ymd = formatDateOnly(apptISO);
 		if (!ymd) return false;
 		let f = fromYmd || '';
 		let t = toYmd || '';
-		if (f && t && f > t) [f, t] = [t, f]; // auto-correct inverted range
+		if (f && t && f > t) [f, t] = [t, f];
 		if (f && ymd < f) return false;
 		if (t && ymd > t) return false;
 		return true;
 	}
 
-	// value getter for sorting across all columns
 	const getSortVal = (r: Appointment, key: TableSortKey): string | number => {
 		switch (key) {
-			case 'date': {
-				const ymd = formatDateOnly(r.apptAt);                 // "2025-09-01"
-				return ymd ? Number(ymd.replaceAll('-', '')) : 0;     // 20250901
-			}
-			case 'lab': {
-				const lab = labs.find(l => l.id === r.labId);
-				return (lab?.name || '').toLowerCase();
-			}
+			case 'date': { const ymd = formatDateOnly(r.apptAt); return ymd ? Number(ymd.replaceAll('-', '')) : 0; }
+			case 'lab': { const lab = labs.find(l => l.id === r.labId); return (lab?.name || '').toLowerCase(); }
 			case 'tpa': {
 				const lab = labs.find(l => l.id === r.labId);
 				const vendor = lab?.vendors?.find(v => v.id === r.vendorId) || vendors.find(v => v.id === r.vendorId);
 				return (vendor?.tpaName || '').toLowerCase();
 			}
-			case 'ins': {
-				const ins = insurers.find(i => i.id === r.insuranceCompanyId);
-				return (ins?.name || '').toLowerCase();
-			}
+			case 'ins': { const ins = insurers.find(i => i.id === r.insuranceCompanyId); return (ins?.name || '').toLowerCase(); }
 			case 'client': return (r.clientName || '').toLowerCase();
 			case 'proposal': return (r.clientRef || '').toLowerCase();
 			case 'mobile': return (r.phone || '').toLowerCase();
 			case 'visit': return (r.visitType || '').toLowerCase();
 			case 'location': return (r.location || '').toLowerCase();
 			case 'status': return (r.status || '').toLowerCase();
-			case 'extra': return r.extraChargeRs ?? -1;
+			case 'serviceType': return (r.serviceType || '').toLowerCase();
 			case 'payment': return (r.paymentStatus || '').toLowerCase();
-			case 'service': return (r.serviceType || '').toLowerCase();                        // NEW
-			case 'paydate': {
-				const ymd = formatDateOnly(r.paymentDate || '');
-				return ymd ? Number(ymd.replaceAll('-', '')) : 0;                                // NEW
-			}
+			case 'extra': return r.extraChargeRs ?? -1;
+			case 'paymentDate': { const ymd = formatDateOnly(r.paymentDate); return ymd ? Number(ymd.replaceAll('-', '')) : 0; }
+			case 'gender': return (r.gender || '').toLowerCase();
+			case 'age': return r.age ?? -1;
 			default: return '';
 		}
 	};
@@ -399,8 +407,7 @@ export default function AppointmentsPage() {
 		const term = q.trim().toLowerCase();
 		const base = rows.filter(r => {
 			const textOk = term
-				? [r.clientName, r.clientRef, r.phone, r.location, r.serviceType]
-					.filter(Boolean)
+				? [r.clientName, r.clientRef, r.phone, r.location, r.serviceType].filter(Boolean)
 					.some(v => String(v).toLowerCase().includes(term))
 				: true;
 			const dateOk = inDateRangeDateOnly(r.apptAt, fDateFrom, fDateTo);
@@ -422,6 +429,24 @@ export default function AppointmentsPage() {
 	function sortBy(k: TableSortKey) {
 		if (k === sortKey) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
 		else { setSortKey(k); setSortDir('asc'); }
+	}
+
+	async function onDelete() {
+		if (!selectedRowId) return;
+		setDelLoading(true); setDelErr(null);
+		try {
+			const res = await fetch(`/api/appointments/${selectedRowId}`, { method: 'DELETE' });
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(data?.error || 'Delete failed');
+			setDelOpen(false);
+			setSelectedRowId(null);
+			await load();
+			setFormOk('Deleted');
+		} catch (e: any) {
+			setDelErr(e?.message || 'Network error');
+		} finally {
+			setDelLoading(false);
+		}
 	}
 
 	const SortTh = ({ k, label, align = 'left' }: { k: TableSortKey; label: string; align?: 'left' | 'right' }) => {
@@ -450,151 +475,189 @@ export default function AppointmentsPage() {
 				<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Appointment Management</h1>
 			</div>
 
-			{/* FORM (table-like with full grid lines) */}
-			<div className="rounded-xl border bg-white p-4 shadow-sm">
-				<div className="flex items-center justify-between mb-3">
+			{/* ===== FORM (3 rows, table-like separators) ===== */}
+			<div className="rounded-xl border bg-white shadow-sm">
+				<div className="flex items-center justify-between p-4">
 					<h2 className="text-base font-semibold">{editingId ? 'Update Appointment' : 'New Appointment'}</h2>
 					<button onClick={resetForm} className="text-sm text-gray-600 hover:underline">Clear</button>
 				</div>
 
-				{formErr && <div className="mb-3 text-sm text-red-600">{formErr}</div>}
-				{formOk && <div className="mb-3 text-sm text-green-600">{formOk}</div>}
+				{formOk && <div className="px-4 -mt-2 text-sm text-green-600">{formOk}</div>}
 
 				<form onSubmit={onSubmit}>
-					{/* Outer border with inner grid lines */}
-					<div className="overflow-hidden rounded-md border">
-						{/* ROW 1 */}
-						<div className="grid grid-cols-12 divide-x divide-y">
-							<div className="p-3 col-span-12 md:col-span-3">
-								<label className="block text-sm mb-1">Appointment Date</label>
-								<input
-									type="datetime-local"
-									value={apptAt}
-									onChange={(e) => setApptAt(e.target.value)}
-									className="w-full rounded px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-brand/50 focus:border-brand"
-								/>
-							</div>
-							<div className="p-3 col-span-12 md:col-span-3">
-								<label className="block text-sm mb-1">Lab Name</label>
-								<select className="w-full border rounded px-3 py-2" value={labId} onChange={(e) => setLabId(e.target.value)}>
-									<option value="">Select Lab</option>
-									{labs.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-								</select>
-							</div>
-							<div className="p-3 col-span-12 md:col-span-3">
-								<label className="block text-sm mb-1">TPA Name</label>
-								<select
-									className="w-full border rounded px-3 py-2"
-									value={vendorId}
-									onChange={(e) => setVendorId(e.target.value)}
-									disabled={!labId}
-								>
-									<option value="">{labId ? 'Select TPA' : 'Select a Lab first'}</option>
-									{labVendors.map(v => <option key={v.id} value={v.id}>{v.tpaName}</option>)}
-								</select>
-							</div>
-							<div className="p-3 col-span-12 md:col-span-3">
-								<label className="block text-sm mb-1">Insurance Name</label>
-								<select
-									className="w-full border rounded px-3 py-2"
-									value={insuranceCompanyId}
-									onChange={(e) => setInsuranceCompanyId(e.target.value)}
-								>
-									<option value="">Select Insurance</option>
-									{insurers.map(ins => <option key={ins.id} value={ins.id}>{ins.name}</option>)}
-								</select>
-							</div>
+					{/* Row 1: Appointment Date, Lab, TPA (optional), Insurance (optional) */}
+					<div className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 pb-4 border-b">
+						<div className="md:col-span-3">
+							<label className="block text-sm mb-1">Appointment Date</label>
+							<input
+								type="datetime-local"
+								value={apptAt}
+								onChange={(e) => setApptAt(e.target.value)}
+								className="w-full rounded px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-brand/50 focus:border-brand"
+							/>
+						</div>
+						<div className="md:col-span-3">
+							<label className="block text-sm mb-1">Lab Name</label>
+							<select className="w-full border rounded px-3 py-2" value={labId} onChange={(e) => setLabId(e.target.value)}>
+								<option value="">Select Lab</option>
+								{labs.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+							</select>
+						</div>
+						<div className="md:col-span-3">
+							<label className="block text-sm mb-1">TPA Name</label>
+							<select
+								className="w-full border rounded px-3 py-2"
+								value={vendorId}
+								onChange={(e) => setVendorId(e.target.value)}
+								disabled={!labId}
+							>
+								<option value="">{labId ? 'Select TPA' : 'Select a Lab first'}</option>
+								{(labs.find(x => x.id === labId)?.vendors?.length ? labs.find(x => x.id === labId)?.vendors! : vendors)
+									.map(v => <option key={v.id} value={v.id}>{v.tpaName}</option>)}
+							</select>
+						</div>
+						<div className="md:col-span-3">
+							<label className="block text-sm mb-1">Insurance Name</label>
+							<select
+								className="w-full border rounded px-3 py-2"
+								value={insuranceCompanyId}
+								onChange={(e) => setInsuranceCompanyId(e.target.value)}
+							>
+								<option value="">Select Insurance</option>
+								{insurers.map(ins => <option key={ins.id} value={ins.id}>{ins.name}</option>)}
+							</select>
+						</div>
+					</div>
+
+					{/* Row 2: Client Name, Proposal, Status, Visit, Location */}
+					<div className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 py-4 border-b">
+						<div className="md:col-span-3">
+							<label className="block text-sm mb-1">Client Name</label>
+							<input className="w-full border rounded px-3 py-2" value={clientName} onChange={(e) => setClientName(e.target.value)} />
+						</div>
+						<div className="md:col-span-3">
+							<label className="block text-sm mb-1">Client ID / Proposal No</label>
+							<input className="w-full border rounded px-3 py-2" value={clientRef} onChange={(e) => setClientRef(e.target.value)} />
+						</div>
+						<div className="md:col-span-2">
+							<label className="block text-sm mb-1">Status</label>
+							<select className="w-full border rounded px-3 py-2" value={status} onChange={(e) => setStatus(e.target.value)}>
+								{STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
+							</select>
+						</div>
+						<div className="md:col-span-2">
+							<label htmlFor="visitType" className="block text-sm mb-1">Type of Visit</label>
+							<select
+								id="visitType"
+								className="w-full border rounded px-3 py-2"
+								value={visitType}
+								onChange={(e) => setVisitType(e.target.value)}
+							>
+								{VISIT_TYPE_OPTS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+							</select>
+						</div>
+						<div className="md:col-span-2">
+							<label className="block text-sm mb-1">Location</label>
+							<input className="w-full border rounded px-3 py-2" value={location} onChange={(e) => setLocation(e.target.value)} />
+						</div>
+					</div>
+
+					{/* Row 3 — exact widths (130px 90px 170px 180px 160px 120px 170px) */}
+					<div className="grid grid-cols-1 md:grid-cols-[130px_90px_170px_180px_160px_120px_170px] gap-3 px-4 py-4">
+						{/* Gender (130px) */}
+						<div>
+							<label className="block text-sm mb-1">Gender</label>
+							<select
+								className="w-full border rounded px-3 py-2"
+								value={gender}
+								onChange={(e) => setGender(e.target.value)}
+							>
+								<option value="">-- Select --</option>
+								{GENDER_OPTS.map(g => <option key={g} value={g}>{g}</option>)}
+							</select>
 						</div>
 
-						<div className="border-t" />
-
-						{/* ROW 2 */}
-						<div className="grid grid-cols-12 divide-x divide-y">
-							<div className="p-3 col-span-12 md:col-span-4">
-								<label className="block text-sm mb-1">Client Name</label>
-								<input className="w-full border rounded px-3 py-2" value={clientName} onChange={(e) => setClientName(e.target.value)} />
-							</div>
-							<div className="p-3 col-span-12 md:col-span-4">
-								<label className="block text-sm mb-1">Client Id/Proposal No</label>
-								<input className="w-full border rounded px-3 py-2" value={clientRef} onChange={(e) => setClientRef(e.target.value)} />
-							</div>
-							<div className="p-3 col-span-12 md:col-span-4">
-								<label className="block text-sm mb-1">Location</label>
-								<input className="w-full border rounded px-3 py-2" value={location} onChange={(e) => setLocation(e.target.value)} />
-							</div>
+						{/* Age (90px) */}
+						<div>
+							<label className="block text-sm mb-1">Age</label>
+							<input
+								type="number"
+								min={0}
+								className="w-full border rounded px-3 py-2"
+								value={age}
+								onChange={(e) => setAge(e.target.value)}
+							/>
 						</div>
 
-						<div className="border-t" />
+						{/* Mobile No (170px) */}
+						<div>
+							<label className="block text-sm mb-1">Mobile No</label>
+							<input
+								className="w-full border rounded px-3 py-2"
+								value={phone}
+								onChange={(e) => setPhone(e.target.value)}
+							/>
+						</div>
 
-						{/* ROW 3 (compact) */}
-						<div className="grid grid-cols-12 divide-x divide-y">
-							<div className="p-3 col-span-12 md:col-span-2">
-								<label className="block text-sm mb-1">Type of Visit</label>
-								<select className="w-full border rounded px-3 py-2" value={visitType} onChange={(e) => setVisitType(e.target.value)}>
-									{VISIT_TYPE_OPTS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
-								</select>
-							</div>
-							<div className="p-3 col-span-12 md:col-span-2">
-								<label className="block text-sm mb-1">Gender</label>
-								<select className="w-full border rounded px-3 py-2" value={gender} onChange={(e) => setGender(e.target.value)}>
-									<option value="">Select…</option>
-									{GENDER_OPTS.map(g => <option key={g} value={g}>{g}</option>)}
-								</select>
-							</div>
-							<div className="p-3 col-span-12 md:col-span-2">
-								<label className="block text-sm mb-1">Age</label>
-								<input type="number" min={0} className="w-full border rounded px-3 py-2" value={age} onChange={(e) => setAge(e.target.value)} />
-							</div>
-							<div className="p-3 col-span-12 md:col-span-2">
-								<label className="block text-sm mb-1">Mobile No</label>
-								<input className="w-full border rounded px-3 py-2" value={phone} onChange={(e) => setPhone(e.target.value)} />
-							</div>
-							<div className="p-3 col-span-12 md:col-span-2">
-								<label className="block text-sm mb-1">Payment Status</label>
-								<select className="w-full border rounded px-3 py-2" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
-									{PAYMENT_STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
-								</select>
-							</div>
-							<div className="p-3 col-span-12 md:col-span-2">
-								<label className="block text-sm mb-1">Service Type</label>
-								<input
-									placeholder="e.g., ECG / X-Ray / Home Visit"
-									className="w-full border rounded px-3 py-2"
-									value={serviceType}
-									onChange={(e) => setServiceType(e.target.value)}
-								/>
-							</div>
-							<div className="p-3 col-span-12 md:col-span-2">
-								<label className="block text-sm mb-1">Extra Charge (Rs)</label>
-								<input type="number" min={0} className="w-full border rounded px-3 py-2" value={extraChargeRs} onChange={(e) => setExtraChargeRs(e.target.value)} />
-							</div>
-							<div className="p-3 col-span-12 md:col-span-2">
-								<label className="block text-sm mb-1">Payment Date</label>
-								<input
-									type="date"
-									className="w-full border rounded px-3 py-2"
-									value={paymentDate}
-									onChange={(e) => setPaymentDate(e.target.value)}
-								/>
-							</div>
-							<div className="p-3 col-span-12 md:col-span-2">
-								<label className="block text-sm mb-1">Status</label>
-								<select className="w-full border rounded px-3 py-2" value={status} onChange={(e) => setStatus(e.target.value)}>
-									{STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
-								</select>
-							</div>
+						{/* Service Type (180px) */}
+						<div>
+							<label className="block text-sm mb-1">Service Type</label>
+							<select
+								className="w-full border rounded px-3 py-2"
+								value={serviceType}
+								onChange={(e) => setServiceType(e.target.value)}
+							>
+								<option value="">-- Select --</option>
+								{SERVICE_TYPE_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
+							</select>
+						</div>
 
-							{/* Actions */}
-							<div className="p-3 col-span-12 flex gap-2">
-								<button className="rounded bg-brand text-white px-4 py-2">{editingId ? 'Update' : 'Create'}</button>
-								<button type="button" className="rounded border px-4 py-2" onClick={resetForm}>Reset</button>
-							</div>
+						{/* Payment Status (160px) */}
+						<div>
+							<label className="block text-sm mb-1">Payment Status</label>
+							<select
+								className="w-full border rounded px-3 py-2"
+								value={paymentStatus}
+								onChange={(e) => setPaymentStatus(e.target.value)}
+							>
+								{PAYMENT_STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
+							</select>
+						</div>
+
+						{/* Extra Charge (Rs) (120px) */}
+						<div>
+							<label className="block text-sm mb-1">Extra Charge (Rs)</label>
+							<input
+								type="number"
+								min={0}
+								className="w-full border rounded px-3 py-2"
+								value={extraChargeRs}
+								onChange={(e) => setExtraChargeRs(e.target.value)}
+							/>
+						</div>
+
+						{/* Payment Date (170px) */}
+						<div>
+							<label className="block text-sm mb-1">Payment Date</label>
+							<input
+								type="date"
+								className="w-full border rounded px-3 py-2"
+								value={paymentDate}
+								onChange={(e) => setPaymentDate(e.target.value)}
+							/>
+						</div>
+					</div>
+
+					<div className="px-4 pb-4">
+						<div className="flex gap-2">
+							<button className="rounded bg-brand text-white px-4 py-2">{editingId ? 'Update' : 'Create'}</button>
+							<button type="button" className="rounded border px-4 py-2" onClick={resetForm}>Reset</button>
 						</div>
 					</div>
 				</form>
 			</div>
 
-			{/* TABLE + FILTER BAR */}
+			{/* ===== TABLE + FILTER BAR ===== */}
 			<div className="rounded-xl border bg-white p-4 shadow-sm">
 				{/* Filter bar */}
 				<div className="rounded-l border bg-white p-4 shadow-sm">
@@ -657,6 +720,26 @@ export default function AppointmentsPage() {
 					</div>
 				</div>
 
+				{/* Table Toolbar (Delete on selection) */}
+				<div className="flex items-center justify-between px-1 pb-2">
+					<div className="text-sm text-gray-600">
+						{selectedRowId ? '1 row selected' : ''}
+					</div>
+					<div className="flex items-center gap-2">
+						{selectedRowId && (
+							<button
+								type="button"
+								className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+								onClick={() => { setDelErr(null); setDelOpen(true); }}
+								title="Delete (soft delete)"
+							>
+								<Trash2 className="h-4 w-4" />
+								Delete
+							</button>
+						)}
+					</div>
+				</div>
+
 				{/* Table */}
 				<div className="w-full overflow-x-auto">
 					<div className="max-h-[560px] overflow-y-auto">
@@ -665,68 +748,77 @@ export default function AppointmentsPage() {
 								<tr>
 									{visibleCols.date && <SortTh k="date" label="Date" />}
 									{visibleCols.lab && <SortTh k="lab" label="Lab Name" />}
-									{visibleCols.tpa && <SortTh k="tpa" label="TPA Name" />}
-									{visibleCols.ins && <SortTh k="ins" label="Insurance" />}
+									{/* {visibleCols.tpa && <SortTh k="tpa" label="TPA Name" />} */}
+									{/* {visibleCols.ins && <SortTh k="ins" label="Insurance" />} */}
 									{visibleCols.status && <SortTh k="status" label="Status" />}
 									{visibleCols.client && <SortTh k="client" label="Client Name" />}
 									{visibleCols.proposal && <SortTh k="proposal" label="Proposal No" />}
 									{visibleCols.mobile && <SortTh k="mobile" label="Mobile No" />}
 									{visibleCols.visit && <SortTh k="visit" label="Visit" />}
 									{visibleCols.location && <SortTh k="location" label="Location" />}
-									{visibleCols.service && <SortTh k="service" label="Service Type" />}       {/* NEW */}
-									{visibleCols.paydate && <SortTh k="paydate" label="Payment Date" />}       {/* NEW */}
-									{visibleCols.extra && <SortTh k="extra" label="Extra (Rs)" align="right" />}
+									{visibleCols.gender && <SortTh k="gender" label="Gender" />}
+									{visibleCols.age && <SortTh k="age" label="Age" />}
+									{visibleCols.serviceType && <SortTh k="serviceType" label="Service Type" />}
 									{visibleCols.payment && <SortTh k="payment" label="Payment Status" />}
+									{visibleCols.extra && <SortTh k="extra" label="Extra (Rs)" align="right" />}
+									{visibleCols.paymentDate && <SortTh k="paymentDate" label="Payment Date" />}
 								</tr>
 							</thead>
 							<tbody>
 								{loading ? (
-									<tr><td colSpan={14} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
-								) : filtered.length === 0 ? (
-									<tr><td colSpan={14} className="px-3 py-4 text-center text-sm text-gray-500">No appointments found</td></tr>
+									<tr><td colSpan={16} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
 								) : (
-									filtered.map((a) => {
-										const lab = labs.find(l => l.id === a.labId);
-										const vendor = (lab?.vendors?.find(v => v.id === a.vendorId)) || vendors.find(v => v.id === a.vendorId);
-										const ins = insurers.find(i => i.id === a.insuranceCompanyId);
-										const selected = selectedRowId === a.id;
+									(() => {
+										if (filtered.length === 0) {
+											return (
+												<tr>
+													<td colSpan={16} className="px-3 py-4 text-center text-sm text-gray-500">
+														No appointments found
+													</td>
+												</tr>
+											);
+										}
+										return filtered.map((a) => {
+											const lab = labs.find(l => l.id === a.labId);
+											const vendor = (lab?.vendors?.find(v => v.id === a.vendorId)) || vendors.find(v => v.id === a.vendorId);
+											const ins = insurers.find(i => i.id === a.insuranceCompanyId);
+											const selected = selectedRowId === a.id;
+											let visitTypeLabel = '';
+											if (a.visitType === 'CENTER') visitTypeLabel = 'Center';
+											else if (a.visitType === 'HOME') visitTypeLabel = 'Home';
 
-										return (
-											<tr
-												key={a.id}
-												className={`border-t hover:bg-gray-50 ${selected ? 'bg-brand/5' : ''} cursor-pointer`}
-												onClick={() => startEdit(a)}
-												title="Click row to edit"
-											>
-												{visibleCols.date && (
-													<td className="px-3 py-2 text-sm whitespace-nowrap">{formatDateOnly(a.apptAt)}</td>
-												)}
-												{visibleCols.lab && <td className="px-3 py-2 text-sm">{lab?.name ?? ''}</td>}
-												{visibleCols.tpa && <td className="px-3 py-2 text-sm">{vendor?.tpaName ?? ''}</td>}
-												{visibleCols.ins && <td className="px-3 py-2 text-sm">{ins?.address ?? ''}</td>}
-												{visibleCols.status && (
-													<td className="px-3 py-2 text-sm whitespace-nowrap">
-														<span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${statusClasses(a.status)}`}>
-															{a.status ?? ''}
-														</span>
-													</td>
-												)}
-												{visibleCols.client && <td className="px-3 py-2 text-sm">{a.clientName ?? ''}</td>}
-												{visibleCols.proposal && <td className="px-3 py-2 text-sm">{a.clientRef ?? ''}</td>}
-												{visibleCols.mobile && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.phone ?? ''}</td>}
-												{visibleCols.visit && (
-													<td className="px-3 py-2 text-sm">
-														{a.visitType === 'CENTER' ? 'Center' : a.visitType === 'HOME' ? 'Home' : ''}
-													</td>
-												)}
-												{visibleCols.location && <td className="px-3 py-2 text-sm">{a.location ?? ''}</td>}
-												{visibleCols.service && <td className="px-3 py-2 text-sm">{a.serviceType ?? ''}</td>}
-												{visibleCols.paydate && <td className="px-3 py-2 text-sm whitespace-nowrap">{formatDateOnly(a.paymentDate)}</td>}
-												{visibleCols.extra && <td className="px-3 py-2 text-sm text-right">{a.extraChargeRs ?? ''}</td>}
-												{visibleCols.payment && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.paymentStatus ?? ''}</td>}
-											</tr>
-										);
-									})
+											return (
+												<tr
+													key={a.id}
+													className={`border-t hover:bg-gray-50 ${selected ? 'bg-brand/5' : ''} cursor-pointer`}
+													onClick={() => startEdit(a)}
+													title="Click row to edit"
+													onMouseDown={() => setSelectedRowId(a.id)} // select row
+												>
+													{visibleCols.date && <td className="px-3 py-2 text-sm whitespace-nowrap">{formatDateOnly(a.apptAt)}</td>}
+													{visibleCols.lab && <td className="px-3 py-2 text-sm">{lab?.name ?? ''}</td>}
+													{visibleCols.tpa && <td className="px-3 py-2 text-sm">{vendor?.tpaName ?? ''}</td>}
+													{visibleCols.ins && <td className="px-3 py-2 text-sm">{ins?.name ?? ''}</td>}
+													{visibleCols.status && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">
+															<span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${statusClasses(a.status)}`}>{a.status ?? ''}</span>
+														</td>
+													)}
+													{visibleCols.client && <td className="px-3 py-2 text-sm">{a.clientName ?? ''}</td>}
+													{visibleCols.proposal && <td className="px-3 py-2 text-sm">{a.clientRef ?? ''}</td>}
+													{visibleCols.mobile && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.phone ?? ''}</td>}
+													{visibleCols.visit && <td className="px-3 py-2 text-sm">{visitTypeLabel}</td>}
+													{visibleCols.location && <td className="px-3 py-2 text-sm">{a.location ?? ''}</td>}
+													{visibleCols.gender && <td className="px-3 py-2 text-sm">{a.gender ?? ''}</td>}
+													{visibleCols.age && <td className="px-3 py-2 text-sm">{a.age ?? ''}</td>}
+													{visibleCols.serviceType && <td className="px-3 py-2 text-sm">{a.serviceType ?? ''}</td>}
+													{visibleCols.payment && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.paymentStatus ?? ''}</td>}
+													{visibleCols.extra && <td className="px-3 py-2 text-sm text-right">{a.extraChargeRs ?? ''}</td>}
+													{visibleCols.paymentDate && <td className="px-3 py-2 text-sm whitespace-nowrap">{formatDateOnly(a.paymentDate)}</td>}
+												</tr>
+											);
+										});
+									})()
 								)}
 							</tbody>
 						</table>
@@ -735,6 +827,67 @@ export default function AppointmentsPage() {
 
 				{listErr && <div className="mt-3 text-sm text-red-600">{listErr}</div>}
 			</div>
+
+			{/* Delete confirm modal */}
+			{delOpen && (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
+					<div className="bg-white rounded-xl shadow-lg w-full max-w-md">
+						<div className="flex items-center justify-between p-3 border-b">
+							<h3 className="font-semibold inline-flex items-center gap-2">
+								<AlertTriangle className="h-4 w-4 text-red-600" />
+								Delete Appointment
+							</h3>
+							<button className="p-1 rounded hover:bg-gray-100" onClick={() => setDelOpen(false)}><X className="h-5 w-5" /></button>
+						</div>
+						<div className="p-4 text-sm">
+							{delErr && <div className="mb-2 text-red-600">{delErr}</div>}
+							Are you sure you want to delete this appointment? This will mark it as <b>inactive</b>.
+						</div>
+						<div className="p-3 border-t flex justify-end gap-2">
+							<button className="rounded border px-3 py-1.5" onClick={() => setDelOpen(false)} disabled={delLoading}>Cancel</button>
+							<button
+								className="rounded bg-red-600 text-white px-3 py-1.5 disabled:opacity-60"
+								onClick={onDelete}
+								disabled={delLoading}
+							>
+								{delLoading ? 'Deleting…' : 'Delete'}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* Required fields modal (EXACT message) */}
+			{reqOpen && (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
+					<div className="bg-white rounded-xl shadow-lg w-full max-w-lg">
+						<div className="flex items-center justify-between p-3 border-b">
+							<h3 className="font-semibold inline-flex items-center gap-2">
+								<Info className="h-4 w-4 text-brand-600" />
+								Missing Information
+							</h3>
+							<button className="p-1 rounded hover:bg-gray-100" onClick={() => setReqOpen(false)}>
+								<X className="h-5 w-5" />
+							</button>
+						</div>
+						<div className="p-4 text-sm leading-relaxed">
+							{reqList.length > 0
+								? (
+									<span>
+										Please fill required fields: <b>{reqList.join(', ')}</b>.
+									</span>
+								)
+								: (
+									<span>Please fill required fields.</span>
+								)
+							}
+						</div>
+						<div className="p-3 border-t flex justify-end">
+							<button className="rounded bg-brand text-white px-4 py-1.5" onClick={() => setReqOpen(false)}>OK</button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -745,7 +898,7 @@ function DateRangeDropdown({
 	rangeOpen, setRangeOpen,
 	fDateFrom, fDateTo, setFDateFrom, setFDateTo,
 	rangeRef,
-}: {
+}: Readonly<{
 	rangeOpen: boolean;
 	setRangeOpen: (v: boolean) => void;
 	fDateFrom: string;
@@ -753,18 +906,24 @@ function DateRangeDropdown({
 	setFDateFrom: (v: string) => void;
 	setFDateTo: (v: string) => void;
 	rangeRef: React.RefObject<HTMLDivElement>;
-}) {
-	const rangeLabel = (!fDateFrom && !fDateTo)
-		? 'All dates'
-		: (fDateFrom && fDateTo) ? `${fDateFrom} → ${fDateTo}`
-			: fDateFrom ? `${fDateFrom} → …` : `… → ${fDateTo}`;
+}>) {
+	let rangeLabel = '';
+	if (!fDateFrom && !fDateTo) {
+		rangeLabel = 'All dates';
+	} else if (fDateFrom && fDateTo) {
+		rangeLabel = `${fDateFrom} → ${fDateTo}`;
+	} else if (fDateFrom) {
+		rangeLabel = `${fDateFrom} → …`;
+	} else {
+		rangeLabel = `… → ${fDateTo}`;
+	}
 
 	return (
 		<div ref={rangeRef} className="relative">
 			<label className="block text-xs text-gray-600 mb-1">Date range</label>
 			<button
 				type="button"
-				onClick={() => setRangeOpen(v => !v)}
+				onClick={() => setRangeOpen(!rangeOpen)}
 				className="inline-flex items-center gap-2 border rounded px-3 py-2"
 				title="Choose date range"
 			>
@@ -778,35 +937,17 @@ function DateRangeDropdown({
 					<div className="grid grid-cols-1 gap-2">
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">From</label>
-							<input
-								type="date"
-								className="w-full border rounded px-3 py-2"
-								value={fDateFrom}
-								onChange={(e) => setFDateFrom(e.target.value)}
-							/>
+							<input type="date" className="w-full border rounded px-3 py-2" value={fDateFrom} onChange={(e) => setFDateFrom(e.target.value)} />
 						</div>
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">To</label>
-							<input
-								type="date"
-								className="w-full border rounded px-3 py-2"
-								value={fDateTo}
-								onChange={(e) => setFDateTo(e.target.value)}
-							/>
+							<input type="date" className="w-full border rounded px-3 py-2" value={fDateTo} onChange={(e) => setFDateTo(e.target.value)} />
 						</div>
 						<div className="flex gap-2 pt-1">
-							<button
-								type="button"
-								className="border rounded px-3 py-1.5 text-sm"
-								onClick={() => { setFDateFrom(''); setFDateTo(''); setRangeOpen(false); }}
-							>
+							<button type="button" className="border rounded px-3 py-1.5 text-sm" onClick={() => { setFDateFrom(''); setFDateTo(''); setRangeOpen(false); }}>
 								Clear
 							</button>
-							<button
-								type="button"
-								className="ml-auto bg-brand text-white rounded px-3 py-1.5 text-sm"
-								onClick={() => setRangeOpen(false)}
-							>
+							<button type="button" className="ml-auto bg-brand text-white rounded px-3 py-1.5 text-sm" onClick={() => setRangeOpen(false)}>
 								Apply
 							</button>
 						</div>
@@ -819,25 +960,27 @@ function DateRangeDropdown({
 
 function ColumnsDropdown({
 	colsOpen, setColsOpen, colsRef, visibleCols, toggleCol,
-}: {
+}: Readonly<{
 	colsOpen: boolean;
 	setColsOpen: (v: boolean) => void;
 	colsRef: React.RefObject<HTMLDivElement>;
-	visibleCols: Record<'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal' | 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment' | 'service' | 'paydate', boolean>;
+	visibleCols: Record<'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal' | 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment' | 'gender' | 'age' | 'serviceType' | 'paymentDate', boolean>;
 	toggleCol: (k: any) => void;
-}) {
+}>) {
 	const items: [keyof typeof visibleCols, string][] = [
-		['date', 'Date'], ['lab', 'Lab'], ['tpa', 'TPA'], ['ins', 'Insurance'], ['client', 'Client'],
-		['proposal', 'Proposal No'], ['mobile', 'Mobile'], ['visit', 'Visit Type'],
-		['location', 'Location'], ['status', 'Status'], ['service', 'Service Type'], ['paydate', 'Payment Date'],
-		['extra', 'Extra Rs'], ['payment', 'Payment'],
+		['date', 'Date'], ['lab', 'Lab'], ['tpa', 'TPA'], ['ins', 'Insurance'],
+		['client', 'Client'], ['proposal', 'Proposal No'], ['status', 'Status'],
+		['visit', 'Visit Type'], ['location', 'Location'],
+		['gender', 'Gender'], ['age', 'Age'], ['mobile', 'Mobile'],
+		['serviceType', 'Service Type'], ['payment', 'Payment Status'],
+		['extra', 'Extra Rs'], ['paymentDate', 'Payment Date'],
 	];
 	return (
 		<div ref={colsRef} className="relative">
 			<label className="block text-xs text-gray-600 mb-1 invisible">Columns</label>
 			<button
 				type="button"
-				onClick={() => setColsOpen(v => !v)}
+				onClick={() => setColsOpen(!colsOpen)}
 				className="inline-flex items-center gap-2 border rounded px-3 py-2"
 				title="Show/Hide columns"
 			>
@@ -846,7 +989,7 @@ function ColumnsDropdown({
 			</button>
 
 			{colsOpen && (
-				<div className="absolute right-0 z-20 mt-1 w-[320px] rounded border bg-white shadow p-2">
+				<div className="absolute right-0 z-20 mt-1 w-[300px] rounded border bg-white shadow p-2">
 					<div className="grid grid-cols-2 gap-1 text-sm">
 						{items.map(([k, label]) => (
 							<label key={k} className="inline-flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer">
