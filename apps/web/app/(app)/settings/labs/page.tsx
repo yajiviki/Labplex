@@ -3,25 +3,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Building2, ChevronDown, ChevronUp, Search, Trash2, Check, X } from 'lucide-react';
 
-type Vendor = { id: string; vendorId: string; tpaName: string };
+type Vendor = { id: string; vendorId: string; tpaName: string; nickName?: string | null };
 
 type LabRow = {
 	id: string;
 	labCode: string;
 	name: string;
+	nickName: string | null;
 	address: string | null;
 	phone: string;
 	email: string | null;
 	createdAt: string;
-	// server returns linked vendors for table & edit prefill
 	vendors?: Vendor[];
-	tpa?: string; // joined text (fallback)
+	tpa?: string;
 };
 
-type SortKey = keyof Pick<LabRow, 'labCode' | 'name' | 'phone' | 'createdAt'>;
+type SortKey = 'labCode' | 'name' | 'nickName' | 'createdAt';
 type SortDir = 'asc' | 'desc';
 
-/** Preview only: compute next available Lab Code (LB01, LB02, ...) from current rows */
 function getNextLabCode(rows: { labCode: string }[]): string {
 	const prefix = 'LB';
 	let max = 0;
@@ -42,6 +41,7 @@ export default function ManageLabsPage() {
 	// form
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [name, setName] = useState('');
+	const [nickName, setNickName] = useState('');
 	const [address, setAddress] = useState('');
 	const [phone, setPhone] = useState('');
 	const [email, setEmail] = useState('');
@@ -66,12 +66,9 @@ export default function ManageLabsPage() {
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const anySelected = selected.size > 0;
 
-	// close dropdown on outside click
 	useEffect(() => {
 		const onDocClick = (e: MouseEvent) => {
-			if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-				setTpaOpen(false);
-			}
+			if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setTpaOpen(false);
 		};
 		if (tpaOpen) document.addEventListener('mousedown', onDocClick);
 		return () => document.removeEventListener('mousedown', onDocClick);
@@ -96,7 +93,7 @@ export default function ManageLabsPage() {
 			setRows(Array.isArray(labsJson) ? labsJson : []);
 			setVendors(
 				Array.isArray(vendorsJson)
-					? vendorsJson.map((v: any) => ({ id: v.id, vendorId: v.vendorId, tpaName: v.tpaName }))
+					? vendorsJson.map((v: any) => ({ id: v.id, vendorId: v.vendorId, tpaName: v.tpaName, nickName: v.nickName ?? null }))
 					: []
 			);
 		} catch (e: any) {
@@ -110,7 +107,7 @@ export default function ManageLabsPage() {
 
 	function resetForm() {
 		setEditingId(null);
-		setName(''); setAddress(''); setPhone(''); setEmail('');
+		setName(''); setNickName(''); setAddress(''); setPhone(''); setEmail('');
 		setSelectedVendorIds([]);
 		setFormErr(null); setFormOk(null);
 	}
@@ -131,6 +128,7 @@ export default function ManageLabsPage() {
 
 		const payload = {
 			name: name.trim(),
+			nickName: nickName.trim() || null,
 			address: address.trim() || null,
 			phone: normalizedPhone,
 			email: email.trim() || null,
@@ -159,6 +157,7 @@ export default function ManageLabsPage() {
 	function startEdit(l: LabRow) {
 		setEditingId(l.id);
 		setName(l.name);
+		setNickName(l.nickName || '');
 		setAddress(l.address || '');
 		setPhone(l.phone);
 		setEmail(l.email || '');
@@ -175,14 +174,14 @@ export default function ManageLabsPage() {
 		const term = q.trim().toLowerCase();
 		const base = term
 			? rows.filter((r) =>
-				[r.labCode, r.name, r.phone, r.address, r.email, r.tpa]
+				[r.labCode, r.name, r.nickName, r.phone, r.address, r.email, r.tpa]
 					.filter(Boolean).some(v => String(v).toLowerCase().includes(term))
 			)
 			: rows;
 
 		const sorted = [...base].sort((a, b) => {
-			const va = (a[sortKey] ?? '') as any;
-			const vb = (b[sortKey] ?? '') as any;
+			const va = (a[sortKey] as any) ?? '';
+			const vb = (b[sortKey] as any) ?? '';
 			if (va === vb) return 0;
 			if (sortDir === 'asc') return va > vb ? 1 : -1;
 			return va < vb ? 1 : -1;
@@ -230,13 +229,13 @@ export default function ManageLabsPage() {
 		);
 	};
 
-	const nextLabCode = useMemo(() => getNextLabCode(rows), [rows]);
+	const nextCode = useMemo(() => getNextLabCode(rows), [rows]);
 
 	const tpaFiltered = useMemo(() => {
 		const q = tpaQuery.trim().toLowerCase();
 		if (!q) return vendors;
 		return vendors.filter(v =>
-			[v.tpaName, v.vendorId]
+			[v.tpaName, v.vendorId, v.nickName]
 				.filter(Boolean)
 				.some(s => String(s).toLowerCase().includes(q))
 		);
@@ -258,7 +257,7 @@ export default function ManageLabsPage() {
 				<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Manage Labs</h1>
 			</div>
 
-			{/* FORM (full width) */}
+			{/* FORM */}
 			<div className="rounded-xl border bg-white p-4 shadow-sm">
 				<div className="flex items-center justify-between mb-3">
 					<h2 className="text-base font-semibold">{editingId ? 'Update Lab' : 'Add New Lab'}</h2>
@@ -269,52 +268,39 @@ export default function ManageLabsPage() {
 				{formOk && <div className="mb-3 text-sm text-green-600">{formOk}</div>}
 
 				<form onSubmit={onSubmit} className="space-y-3">
-					{/* Row 1: Lab Code, Name, Mobile, Email */}
-					<div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+					{/* Row 1 */}
+					<div className="grid grid-cols-1 md:grid-cols-5 gap-3">
 						<div>
 							<label className="block text-sm mb-1">Lab Code</label>
 							<input
 								className="w-full border rounded px-3 py-2 bg-gray-50"
-								value={editingId ? (rows.find(r => r.id === editingId)?.labCode || '') : nextLabCode}
+								value={editingId ? (rows.find(r => r.id === editingId)?.labCode || '') : nextCode}
 								readOnly
 							/>
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Name *</label>
-							<input
-								className="w-full border rounded px-3 py-2"
-								value={name}
-								onChange={(e) => setName(e.target.value)}
-							/>
+							<input className="w-full border rounded px-3 py-2" value={name} onChange={(e) => setName(e.target.value)} />
+						</div>
+						<div>
+							<label className="block text-sm mb-1">Nick Name</label>
+							<input className="w-full border rounded px-3 py-2" value={nickName} onChange={(e) => setNickName(e.target.value)} />
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Mobile *</label>
-							<input
-								className="w-full border rounded px-3 py-2"
-								value={phone}
-								onChange={(e) => setPhone(e.target.value)}
-							/>
+							<input className="w-full border rounded px-3 py-2" value={phone} onChange={(e) => setPhone(e.target.value)} />
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Email</label>
-							<input
-								type="email"
-								className="w-full border rounded px-3 py-2"
-								value={email}
-								onChange={(e) => setEmail(e.target.value)}
-							/>
+							<input type="email" className="w-full border rounded px-3 py-2" value={email} onChange={(e) => setEmail(e.target.value)} />
 						</div>
 					</div>
 
-					{/* Row 2: Address + TPA searchable multi-select */}
+					{/* Row 2 */}
 					<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
 						<div>
 							<label className="block text-sm mb-1">Address</label>
-							<input
-								className="w-full border rounded px-3 py-2"
-								value={address}
-								onChange={(e) => setAddress(e.target.value)}
-							/>
+							<input className="w-full border rounded px-3 py-2" value={address} onChange={(e) => setAddress(e.target.value)} />
 						</div>
 
 						<div ref={dropdownRef} className="relative">
@@ -325,9 +311,7 @@ export default function ManageLabsPage() {
 								className="w-full border rounded px-3 py-2 text-left flex items-center justify-between"
 							>
 								<span className="truncate">
-									{selectedVendorIds.length
-										? `${selectedVendorIds.length} selected`
-										: 'Search and select TPAs'}
+									{selectedVendorIds.length ? `${selectedVendorIds.length} selected` : 'Search and select TPAs'}
 								</span>
 								<ChevronDown className="h-4 w-4 text-gray-500" />
 							</button>
@@ -342,7 +326,7 @@ export default function ManageLabsPage() {
 												autoFocus
 												value={tpaQuery}
 												onChange={(e) => setTpaQuery(e.target.value)}
-												placeholder="Search TPA by name or code…"
+												placeholder="Search TPA by name, code, or nick…"
 												className="w-full pl-8 pr-7 py-2 border rounded"
 											/>
 											{!!tpaQuery && (
@@ -388,13 +372,10 @@ export default function ManageLabsPage() {
 												return (
 													<li key={v.id}>
 														<label className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer">
-															<input
-																type="checkbox"
-																checked={checked}
-																onChange={() => toggleVendor(v.id)}
-															/>
+															<input type="checkbox" checked={checked} onChange={() => toggleVendor(v.id)} />
 															<span className="text-sm">
 																<span className="font-mono text-gray-600">{v.vendorId}</span> — {v.tpaName}
+																{v.nickName ? <span className="text-gray-500"> ({v.nickName})</span> : null}
 															</span>
 															{checked && <Check className="h-4 w-4 text-green-600 ml-auto" />}
 														</label>
@@ -421,7 +402,7 @@ export default function ManageLabsPage() {
 			</div>
 
 			{/* TABLE */}
-			<div className="rounded-xl border bg-white p-4 shadow-sm overflow-x-auto overflow-y-auto max-h-[400px] rounded border">
+			<div className="rounded-xl border bg-white p-4 shadow-sm overflow-x-auto overflow-y-auto max-h-[420px]">
 				<div className="flex flex-wrap items-center gap-2 justify-between mb-3">
 					<h2 className="text-base font-semibold">Lab Information</h2>
 
@@ -463,21 +444,21 @@ export default function ManageLabsPage() {
 								</th>
 								<Col k="labCode" label="Lab Code" />
 								<Col k="name" label="Name" />
-								{/* <Col k="phone" label="Mobile" /> */}
+								<Col k="nickName" label="Nick Name" />
 								<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">TPA list</th>
 							</tr>
 						</thead>
 						<tbody>
 							{loading ? (
-								<tr><td colSpan={7} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
+								<tr><td colSpan={8} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
 							) : filtered.length === 0 ? (
-								<tr><td colSpan={7} className="px-3 py-4 text-center text-sm text-gray-500">No labs found</td></tr>
+								<tr><td colSpan={8} className="px-3 py-4 text-center text-sm text-gray-500">No labs found</td></tr>
 							) : (
 								filtered.map((l) => {
 									const isChecked = selected.has(l.id);
 									const tpaText =
 										l.vendors?.length
-											? l.vendors.map(v => `${v.tpaName}`).join(', ')
+											? l.vendors.map(v => v.nickName ? `${v.tpaName} (${v.nickName})` : v.tpaName).join(', ')
 											: (l.tpa || '');
 									return (
 										<tr key={l.id} className="border-t hover:bg-gray-50">
@@ -488,7 +469,7 @@ export default function ManageLabsPage() {
 											<td className="px-3 py-2 text-sm whitespace-nowrap">
 												<button className="underline underline-offset-2" onClick={() => startEdit(l)}>{l.name}</button>
 											</td>
-											{/* <td className="px-3 py-2 text-sm">{l.phone}</td> */}
+											<td className="px-3 py-2 text-sm">{l.nickName ?? ''}</td>
 											<td className="px-3 py-2 text-sm">{tpaText}</td>
 										</tr>
 									);

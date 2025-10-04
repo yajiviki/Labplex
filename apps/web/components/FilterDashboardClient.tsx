@@ -69,7 +69,7 @@ function endOfToday() { const d = new Date(); d.setHours(23, 59, 59, 999); retur
 function startOfWeekMonday(d = new Date()) { const x = new Date(d); const dow = (x.getDay() + 6) % 7; x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - dow); return x; }
 function endOfWeekFromStart(s: Date) { const e = new Date(s); e.setDate(s.getDate() + 6); e.setHours(23, 59, 59, 999); return e; }
 
-type PresetKey = 'today' | 'yesterday' | 'prev-week' | 'prev-7' | 'prev-30' | 'prev-month' | 'prev-3m' | 'prev-12m';
+type PresetKey = 'today' | 'yesterday' | 'prev-week' | 'prev-7' | 'prev-30' | 'this-month' | 'prev-month' | 'prev-3m' | 'prev-12m';
 
 // ---------- Modal table helpers ----------
 type DetailRow = {
@@ -88,12 +88,12 @@ type DetailKind = 'today' | 'upcoming' | 'uploadPending';
 export default function FilterDashboardClient({
 	role, labs, initialLabId, initialFrom, initialTo, initialMetrics,
 }: {
-	role: string;
-	labs: LabLite[];
-	initialLabId: string | null;
-	initialFrom: string;
-	initialTo: string;
-	initialMetrics: MetricsPayload | any;
+	readonly role: string;
+	readonly labs: readonly LabLite[];
+	readonly initialLabId: string | null;
+	readonly initialFrom: string;
+	readonly initialTo: string;
+	readonly initialMetrics: MetricsPayload | any;
 }) {
 	const [labId, setLabId] = useState<string>(initialLabId ?? '');
 	const [from, setFrom] = useState<string>(isoToDateOnly(initialFrom));
@@ -153,6 +153,12 @@ export default function FilterDashboardClient({
 			}
 			case 'prev-7': { t = endOfToday(); f = new Date(t); f.setDate(t.getDate() - 6); f.setHours(0, 0, 0, 0); break; }
 			case 'prev-30': { t = endOfToday(); f = new Date(t); f.setDate(t.getDate() - 29); f.setHours(0, 0, 0, 0); break; }
+			case 'this-month': {
+				const y = now.getFullYear(), m = now.getMonth();
+				f = new Date(y, m, 1, 0, 0, 0, 0);
+				t = new Date(y, m + 1, 0, 23, 59, 59, 999);
+				break;
+			}
 			case 'prev-month': {
 				const y = now.getFullYear(), m = now.getMonth();
 				f = new Date(y, m - 1, 1, 0, 0, 0, 0);
@@ -273,6 +279,7 @@ export default function FilterDashboardClient({
 								<option value="prev-week">Previous week</option>
 								<option value="prev-7">Previous 7 days</option>
 								<option value="prev-30">Previous 30 days</option>
+								<option value="this-month">This month</option>
 								<option value="prev-month">Previous month</option>
 								<option value="prev-3m">Previous 3 months</option>
 								<option value="prev-12m">Previous 12 months</option>
@@ -301,21 +308,21 @@ export default function FilterDashboardClient({
 					value={safeTotals.todays}
 					icon={<CalendarDays className="h-5 w-5" />}
 					tone="indigo"
-					onClick={() => openDetails('today', 'Today’s Appointments')}
+					onClick={() => safeTotals.todays > 0 ? openDetails('today', 'Today’s Appointments') : null}
 				/>
 				<Tile
 					title="Upcoming Appointments"
 					value={safeTotals.upcoming}
 					icon={<Clock className="h-5 w-5" />}
 					tone="sky"
-					onClick={() => openDetails('upcoming', 'Upcoming Appointments')}
+					onClick={() => safeTotals.upcoming > 0 ? openDetails('upcoming', 'Upcoming Appointments') : null}
 				/>
 				<Tile
 					title="Report Upload Pending"
 					value={safeTotals.uploadPending}
 					icon={<FileWarning className="h-5 w-5" />}
 					tone="amber"
-					onClick={() => openDetails('uploadPending', 'Report Upload Pending')}
+					onClick={() => safeTotals.uploadPending > 0 ? openDetails('uploadPending', 'Report Upload Pending') : null}
 				/>
 				<Tile
 					title="Out Of TAT"

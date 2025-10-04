@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../lib/db';
 
-
 // Helper to compute next TPA code from DB, e.g. TPA01, TPA02...
 async function nextVendorIdFromDb() {
 	const prefix = 'TPA';
@@ -29,6 +28,7 @@ export async function GET() {
 				id: true,
 				vendorId: true,
 				tpaName: true,
+				nickName: true,   // ← added
 				address: true,
 				phone: true,
 				email: true,
@@ -54,20 +54,20 @@ export async function POST(req: Request) {
 		const phone = (String(body?.phone || '') || '').replace(/\D+/g, '') || null;
 		const address = (String(body?.address || '') || '').trim() || null;
 		const email = (String(body?.email || '') || '').trim() || null;
+		const nickName = (String(body?.nickName || '') || '').trim() || null; // ← added
 
-		// ensure vendorId uniqueness
-		// (schema has @@unique([vendorId]) – this will throw if conflict)
 		const created = await prisma.vendor.create({
 			data: {
 				vendorId,
 				tpaName,
+				nickName,  // ← added
 				address,
 				phone,
 				email,
 				isActive: 1,
 			},
 			select: {
-				id: true, vendorId: true, tpaName: true, address: true, phone: true, email: true, createdAt: true,
+				id: true, vendorId: true, tpaName: true, nickName: true, address: true, phone: true, email: true, createdAt: true,
 			},
 		});
 

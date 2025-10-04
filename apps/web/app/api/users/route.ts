@@ -6,10 +6,6 @@ import { auth } from '../../../lib/auth';
 
 export const dynamic = 'force-dynamic';
 
-/* ============================================
-   Utilities
-============================================ */
-
 const ROLE_WHITELIST = new Set(['USER', 'ADMIN', 'SUPER_ADMIN']);
 
 function parseSuffix(id: string | null | undefined, prefix: string): number {
@@ -25,10 +21,10 @@ function generatePassword(length = 12) {
 	return pwd;
 }
 
-/** Compute the next Uxxxx for THIS lab inside a transaction. */
-async function nextUserIdForLab(tx: Prisma.TransactionClient, labId: string): Promise<string> {
+/** 👇 GLOBAL allocator: next Uxxxx across ALL users (not per-lab) */
+async function nextGlobalUserId(tx: Prisma.TransactionClient): Promise<string> {
 	const last = await tx.user.findFirst({
-		where: { labId, userId: { startsWith: 'U' } },
+		where: { userId: { startsWith: 'U' } },
 		orderBy: { userId: 'desc' },
 		select: { userId: true },
 	});
@@ -36,9 +32,7 @@ async function nextUserIdForLab(tx: Prisma.TransactionClient, labId: string): Pr
 	return `U${String(lastN + 1).padStart(4, '0')}`;
 }
 
-/* ============================================
-   GET /api/users  -> list active users (all labs)
-============================================ */
+/* ================= GET /api/users ================= */
 export async function GET() {
 	try {
 		const session = await auth();
@@ -68,10 +62,8 @@ export async function GET() {
 	}
 }
 
-/* ============================================
-   POST /api/users  -> create user (uses labCode)
-   Body: { name, phone, role, dob?, address?, email?, labCode }
-============================================ */
+/* ================= POST /api/users ================= */
+/** Body: { name, phone, role, dob?, address?, email?, labCode } */
 export async function POST(req: Request) {
 	try {
 		const session = await auth();
@@ -80,7 +72,6 @@ export async function POST(req: Request) {
 		const body = await req.json().catch(() => ({}));
 		const { name, phone, role, dob, address, email, labCode } = body;
 
-		// Validate labCode
 		if (!labCode?.trim()) {
 			return NextResponse.json({ error: 'Please select a Lab.' }, { status: 400 });
 		}
@@ -93,7 +84,6 @@ export async function POST(req: Request) {
 			return NextResponse.json({ error: 'Selected Lab Code does not exist.' }, { status: 400 });
 		}
 
-		// Normalize + validate phone
 		const phoneDigits = String(phone || '').replace(/\D+/g, '');
 		if (!name?.trim() || !phoneDigits || !role) {
 			return NextResponse.json({ error: 'Please fill Name, Mobile and Role.' }, { status: 400 });
@@ -108,18 +98,16 @@ export async function POST(req: Request) {
 		const rawPassword = generatePassword(12);
 		const passwordHash = await bcrypt.hash(rawPassword, 10);
 
-		// Retry a few times in case of collision on @@unique([labId, userId])
-		let attempts = 0;
-		while (attempts < 5) {
-			attempts++;
+		// Retry a few times if userId collides (unique on userId)
+		for (let attempts = 0; attempts < 5; attempts++) {
 			try {
 				const created = await prisma.$transaction(async (tx) => {
-					const nextId = await nextUserIdForLab(tx, lab.id);
+					const nextId = await nextGlobalUserId(tx); // 👈 GLOBAL
 
 					const user = await tx.user.create({
 						data: {
-							labId: lab.id,                 // resolved from labCode
-							userId: nextId,                // U0001...
+							labId: lab.id,
+							userId: nextId, // U0001... (global)
 							name: name.trim(),
 							phone: phoneDigits,
 							role,
@@ -144,15 +132,15 @@ export async function POST(req: Request) {
 					return user;
 				});
 
-				// Return default password once (for your clipboard modal)
 				return NextResponse.json({ ...created, defaultPassword: rawPassword }, { status: 201 });
 			} catch (e: any) {
 				if (
 					e instanceof Prisma.PrismaClientKnownRequestError &&
 					e.code === 'P2002' &&
-					String(e.meta?.target || '').includes('labId_userId')
+					String(e.meta?.target || '').includes('userId')
 				) {
-					continue; // try next number
+					// try again with next number
+					continue;
 				}
 				throw e;
 			}

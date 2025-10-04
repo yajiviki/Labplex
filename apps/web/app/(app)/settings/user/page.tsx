@@ -258,7 +258,7 @@ export default function ManageUsersPage() {
 							<select className="w-full border rounded px-3 py-2" value={labCode} onChange={(e) => setLabCode(e.target.value)}>
 								<option value="">Select Lab</option>
 								{labs.map((lab) => (
-									<option key={lab.labCode} value={lab.labCode}>{lab.labCode} — {lab.name}</option>
+									<option key={lab.labCode} value={lab.labCode}>{lab.name}</option>
 								))}
 							</select>
 						</div>
@@ -334,7 +334,6 @@ export default function ManageUsersPage() {
 									<Col k="phone" label="Mobile" />
 									<Col k="role" label="Role" />
 									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Lab Code</th>
-									<Col k="createdAt" label="Created" />
 								</tr>
 							</thead>
 							<tbody>
@@ -358,8 +357,7 @@ export default function ManageUsersPage() {
 												</td>
 												<td className="px-3 py-2 text-sm">{u.phone}</td>
 												<td className="px-3 py-2 text-sm">{u.role}</td>
-												<td className="px-3 py-2 text-sm">{u.lab?.labCode || ''}</td>
-												<td className="px-3 py-2 text-sm">{new Date(u.createdAt).toLocaleDateString()}</td>
+												<td className="px-3 py-2 text-sm">{u.lab?.name || ''}</td>
 											</tr>
 										);
 									})

@@ -21,15 +21,15 @@ async function nextLabCode() {
 	return `LB${String(n).padStart(2, '0')}`;
 }
 
-// Temporary GET: works even if Lab model has no 'labVendors' field,
-// BUT your schema still needs the LabVendor model in Prisma to query it.
+// GET labs + vendors
 export async function GET() {
 	try {
 		const labs = await prisma.lab.findMany({
 			where: { isActive: 1 },
 			orderBy: { createdAt: 'desc' },
 			select: {
-				id: true, labCode: true, name: true, address: true, phone: true, email: true, createdAt: true,
+				id: true, labCode: true, name: true, nickName: true,
+				address: true, phone: true, email: true, createdAt: true,
 			},
 		});
 
@@ -38,11 +38,11 @@ export async function GET() {
 			where: { labId: { in: labs.map(l => l.id) } },
 			select: {
 				labId: true,
-				vendor: { select: { id: true, vendorId: true, tpaName: true } },
+				vendor: { select: { id: true, vendorId: true, tpaName: true, nickName: true } },
 			},
 		});
 
-		const byLab = new Map<string, { id: string; vendorId: string; tpaName: string }[]>();
+		const byLab = new Map<string, { id: string; vendorId: string; tpaName: string; nickName: string | null }[]>();
 		for (const lv of links) {
 			const arr = byLab.get(lv.labId) || [];
 			arr.push(lv.vendor);
@@ -64,7 +64,6 @@ export async function GET() {
 	}
 }
 
-
 /** POST /api/labs : create lab + map TPAs */
 export async function POST(req: Request) {
 	try {
@@ -72,7 +71,7 @@ export async function POST(req: Request) {
 		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
 		const body = await req.json().catch(() => ({}));
-		const { labCode, name, address, phone, email, vendorIds } = body || {};
+		const { labCode, name, nickName, address, phone, email, vendorIds } = body || {};
 
 		const phoneDigits = String(phone || '').replace(/\D+/g, '');
 		if (!name?.trim() || !phoneDigits) {
@@ -85,12 +84,15 @@ export async function POST(req: Request) {
 				data: {
 					labCode: code,
 					name: name.trim(),
+					nickName: nickName?.trim() || null,
 					address: address?.trim() || null,
 					phone: phoneDigits,
 					email: email?.trim() || null,
 					isActive: 1,
 				},
-				select: { id: true, labCode: true, name: true, address: true, phone: true, email: true, createdAt: true },
+				select: {
+					id: true, labCode: true, name: true, nickName: true, address: true, phone: true, email: true, createdAt: true
+				},
 			});
 
 			if (Array.isArray(vendorIds) && vendorIds.length) {

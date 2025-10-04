@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../lib/db';
 
-
 export const dynamic = 'force-dynamic';
 
 function parseInsNum(code?: string | null) {
@@ -11,7 +10,6 @@ function parseInsNum(code?: string | null) {
 }
 
 async function nextInsCode(): Promise<string> {
-	// Take the lexicographically largest existing code (works with zero-padding)
 	const latest = await prisma.insuranceCompany.findFirst({
 		where: { isActive: 1 },
 		orderBy: { code: 'desc' },
@@ -22,7 +20,7 @@ async function nextInsCode(): Promise<string> {
 		? (parseInsNum(latest!.code) as number)
 		: 0;
 
-	return `INS${String(lastN + 1).padStart(2, '0')}`; // INS01..INS99..INS100...
+	return `INS${String(lastN + 1).padStart(2, '0')}`;
 }
 
 export async function GET() {
@@ -34,6 +32,7 @@ export async function GET() {
 				id: true,
 				code: true,
 				name: true,
+				nickName: true, // <— added
 				address: true,
 				phone: true,
 				isActive: true,
@@ -59,13 +58,12 @@ export async function POST(req: Request) {
 			return NextResponse.json({ error: 'Insurance name is required.' }, { status: 400 });
 		}
 
-		// If caller passed a code use it; else auto-generate
 		let code: string =
 			typeof body?.code === 'string' && body.code.trim()
 				? body.code.trim()
 				: await nextInsCode();
 
-		// Ensure unique code (simple retry loop in case of race)
+		// simple ensure-unique
 		for (let i = 0; i < 5; i++) {
 			const exists = await prisma.insuranceCompany.findUnique({ where: { code } });
 			if (!exists) break;
@@ -76,6 +74,7 @@ export async function POST(req: Request) {
 			data: {
 				code,
 				name,
+				nickName: (body?.nickName ?? null) || null, // <— added
 				address: (body?.address ?? null) || null,
 				phone: (body?.phone ?? null) || null,
 				isActive: 1,
@@ -84,6 +83,7 @@ export async function POST(req: Request) {
 				id: true,
 				code: true,
 				name: true,
+				nickName: true,
 				address: true,
 				phone: true,
 				isActive: true,

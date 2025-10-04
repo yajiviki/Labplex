@@ -9,6 +9,7 @@ type VendorRow = {
 	id: string;
 	vendorId: string;        // TPA01…
 	tpaName: string;
+	nickName: string | null; // ← added
 	address: string | null;
 	phone: string | null;
 	email: string | null;
@@ -16,7 +17,7 @@ type VendorRow = {
 	createdAt: string;
 };
 
-type SortKey = keyof Pick<VendorRow, 'vendorId' | 'tpaName' | 'phone' | 'email' | 'createdAt'>;
+type SortKey = keyof Pick<VendorRow, 'vendorId' | 'tpaName' | 'nickName' | 'phone' | 'email' | 'createdAt'>;
 type SortDir = 'asc' | 'desc';
 
 function nextVendorId(rows: { vendorId?: string }[]) {
@@ -79,6 +80,7 @@ export default function VendorsPage() {
 	// form (left)
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [tpaName, setTpaName] = useState('');
+	const [nickName, setNickName] = useState(''); // ← added
 	const [address, setAddress] = useState('');
 	const [phone, setPhone] = useState('');
 	const [email, setEmail] = useState('');
@@ -123,6 +125,7 @@ export default function VendorsPage() {
 					id: v.id,
 					vendorId: v.vendorId,
 					tpaName: v.tpaName,
+					nickName: v.nickName ?? null, // ← added
 					address: v.address ?? null,
 					phone: v.phone ?? null,
 					email: v.email ?? null,
@@ -141,7 +144,7 @@ export default function VendorsPage() {
 
 	function resetForm() {
 		setEditingId(null);
-		setTpaName(''); setAddress(''); setPhone(''); setEmail('');
+		setTpaName(''); setNickName(''); setAddress(''); setPhone(''); setEmail('');
 		setFormErr(null); setFormOk(null);
 	}
 
@@ -155,6 +158,7 @@ export default function VendorsPage() {
 		const payload = {
 			vendorId: editingId ? undefined : nextId, // assign only when creating
 			tpaName: tpaName.trim(),
+			nickName: nickName.trim() || null,       // ← added
 			address: address.trim() || null,
 			phone: normalizedPhone,
 			email: (email || '').trim() || null,
@@ -185,6 +189,7 @@ export default function VendorsPage() {
 	function startEdit(v: VendorRow) {
 		setEditingId(v.id);
 		setTpaName(v.tpaName || '');
+		setNickName(v.nickName || ''); // ← added
 		setAddress(v.address || '');
 		setPhone(v.phone || '');
 		setEmail(v.email || '');
@@ -200,7 +205,7 @@ export default function VendorsPage() {
 		const term = q.trim().toLowerCase();
 		const base = term
 			? rows.filter(r =>
-				[r.vendorId, r.tpaName, r.phone, r.email, r.address]
+				[r.vendorId, r.tpaName, r.nickName, r.phone, r.email, r.address]
 					.filter(Boolean).some(v => String(v).toLowerCase().includes(term)))
 			: rows;
 
@@ -277,6 +282,7 @@ export default function VendorsPage() {
 				const idx = (name: string) => headers.findIndex(h => h === name.toLowerCase());
 				const iVendorId = idx('vendorid'); // optional
 				const iTpaName = idx('tpaname');  // required
+				const iNickName = idx('nickname'); // optional  ← NEW
 				const iAddress = idx('address');
 				const iPhone = idx('phone');
 				const iEmail = idx('email');
@@ -287,6 +293,7 @@ export default function VendorsPage() {
 					rowsForServer.push({
 						vendorId: iVendorId >= 0 ? (r[iVendorId] || '').trim() : null,
 						tpaName,
+						nickName: iNickName >= 0 ? (r[iNickName] || '').trim() : null, // ← NEW
 						address: iAddress >= 0 ? (r[iAddress] || '').trim() : null,
 						phone: iPhone >= 0 ? (r[iPhone] || '').trim() : null,
 						email: iEmail >= 0 ? (r[iEmail] || '').trim() : null,
@@ -300,6 +307,7 @@ export default function VendorsPage() {
 					rowsForServer.push({
 						vendorId: r.vendorId ?? null,
 						tpaName: String(r.tpaName),
+						nickName: r.nickName ?? null, // ← NEW
 						address: r.address ?? null,
 						phone: r.phone ?? null,
 						email: r.email ?? null,
@@ -319,7 +327,7 @@ export default function VendorsPage() {
 				showDialog('Import failed', data?.error || 'Please check file format.');
 				return;
 			}
-			showDialog('Import completed', `Inserted: ${data?.inserted || 0}\nUpdated: ${data?.upserted || 0}`);
+			showDialog('Import completed', `Inserted: ${data?.inserted || 0}\nUpdated: ${data?.upserted || 0}\nSkipped: ${data?.skipped || 0}`);
 			await load();
 		} catch (e: any) {
 			showDialog('Import error', e?.message || 'Failed to import file.');
@@ -383,6 +391,10 @@ export default function VendorsPage() {
 							<input className="w-full border rounded px-3 py-2" value={tpaName} onChange={(e) => setTpaName(e.target.value)} />
 						</div>
 						<div>
+							<label className="block text-sm mb-1">Nick Name</label>
+							<input className="w-full border rounded px-3 py-2" value={nickName} onChange={(e) => setNickName(e.target.value)} />
+						</div>
+						<div>
 							<label className="block text-sm mb-1">Email</label>
 							<input type="email" className="w-full border rounded px-3 py-2" value={email} onChange={(e) => setEmail(e.target.value)} />
 						</div>
@@ -443,16 +455,16 @@ export default function VendorsPage() {
 									</th>
 									<Col k="vendorId" label="TPA Code" />
 									<Col k="tpaName" label="TPA Name" />
+									<Col k="nickName" label="Nick Name" />
 									<Col k="phone" label="Mobile" />
 									<Col k="email" label="Email" />
-									<Col k="createdAt" label="Created" />
 								</tr>
 							</thead>
 							<tbody>
 								{loading ? (
-									<tr><td colSpan={7} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
+									<tr><td colSpan={8} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
 								) : filtered.length === 0 ? (
-									<tr><td colSpan={7} className="px-3 py-4 text-center text-sm text-gray-500">No TPAs found</td></tr>
+									<tr><td colSpan={8} className="px-3 py-4 text-center text-sm text-gray-500">No TPAs found</td></tr>
 								) : (
 									filtered.map((v) => {
 										const isChecked = selected.has(v.id);
@@ -465,9 +477,9 @@ export default function VendorsPage() {
 												<td className="px-3 py-2 text-sm whitespace-nowrap">
 													<button className="underline underline-offset-2" onClick={() => startEdit(v)}>{v.tpaName}</button>
 												</td>
+												<td className="px-3 py-2 text-sm whitespace-nowrap">{v.nickName || ''}</td>
 												<td className="px-3 py-2 text-sm whitespace-nowrap">{v.phone || ''}</td>
 												<td className="px-3 py-2 text-sm">{v.email || ''}</td>
-												<td className="px-3 py-2 text-sm whitespace-nowrap">{new Date(v.createdAt).toLocaleDateString()}</td>
 											</tr>
 										);
 									})

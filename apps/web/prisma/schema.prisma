@@ -16,6 +16,7 @@ model Lab {
   id        String   @id @default(cuid())
   labCode   String   @unique // e.g. LB01
   name      String
+  nickName  String? 
   address   String?
   phone     String?
   email     String?
@@ -83,6 +84,7 @@ model Vendor {
   id        String   @id @default(cuid())
   vendorId  String
   tpaName   String
+  nickName  String? 
   address   String?
   phone     String?
   email     String?
@@ -113,6 +115,7 @@ model InsuranceCompany {
   id        String   @id @default(cuid())
   code      String?  @unique
   name      String
+  nickName  String? 
   address   String? // ← make sure this exists
   phone     String?
   isActive  Int      @default(1)
@@ -196,7 +199,7 @@ model Appointment {
   // Medical/report/payment
   status String?
 
-  extraChargeRs Int?
+  extraChargeRs Decimal? @db.Decimal(12, 2)
   paymentStatus String?
 
   // Bookkeeping

@@ -49,12 +49,13 @@ type InsRow = {
 	id: string;
 	code: string | null;
 	name: string;
+	nickName: string | null;   // <— added
 	address: string | null;
 	phone: string | null;
 	createdAt: string;
 };
 
-type SortKey = keyof Pick<InsRow, 'name' | 'code' | 'createdAt'>;
+type SortKey = keyof Pick<InsRow, 'name' | 'code' | 'createdAt' | 'nickName'>;
 type SortDir = 'asc' | 'desc';
 
 function getNextInsCode(rows: { code: string | null }[]): string {
@@ -78,6 +79,7 @@ export default function InsurersPage() {
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [code, setCode] = useState('');
 	const [name, setName] = useState('');
+	const [nickName, setNickName] = useState(''); // <— added
 	const [address, setAddress] = useState('');
 	const [phone, setPhone] = useState('');
 
@@ -114,7 +116,7 @@ export default function InsurersPage() {
 
 	function resetForm() {
 		setEditingId(null);
-		setCode(''); setName(''); setAddress(''); setPhone('');
+		setCode(''); setName(''); setNickName(''); setAddress(''); setPhone('');
 	}
 
 	async function onSubmit(e: React.FormEvent) {
@@ -127,6 +129,7 @@ export default function InsurersPage() {
 		const payload = {
 			code: effectiveCode,
 			name: name.trim(),
+			nickName: nickName.trim() || null, // <— added
 			address: address.trim() || null,
 			phone: normalizedPhone || null,
 		};
@@ -151,6 +154,7 @@ export default function InsurersPage() {
 		setEditingId(x.id);
 		setCode(x.code || '');
 		setName(x.name || '');
+		setNickName(x.nickName || ''); // <— added
 		setAddress(x.address || '');
 		setPhone(x.phone || '');
 	}
@@ -164,13 +168,12 @@ export default function InsurersPage() {
 		const term = q.trim().toLowerCase();
 		const base = term
 			? rows.filter((r) =>
-				[r.code, r.name, r.address, r.phone]
+				[r.code, r.name, r.nickName, r.address, r.phone]
 					.filter(Boolean).some(v => String(v).toLowerCase().includes(term))
 			)
 			: rows;
 
 		const sorted = [...base].sort((a, b) => {
-			// Null-safe compare (treat null/empty as '')
 			const va = ((a[sortKey] ?? '') as any);
 			const vb = ((b[sortKey] ?? '') as any);
 			if (va === vb) return 0;
@@ -209,7 +212,7 @@ export default function InsurersPage() {
 		);
 	};
 
-	// inside onImportFile (in page.tsx)
+	// CSV parser
 	function parseCsv(text: string): string[][] {
 		const rows: string[][] = [];
 		let cur = '';
@@ -221,7 +224,6 @@ export default function InsurersPage() {
 
 			if (ch === '"') {
 				if (inQuotes && text[i + 1] === '"') {
-					// escaped quote
 					cur += '"';
 					i++;
 				} else {
@@ -245,7 +247,7 @@ export default function InsurersPage() {
 			row.push(cur.trim());
 			rows.push(row);
 		}
-		return rows.filter(r => r.some(c => c.length)); // drop empty
+		return rows.filter(r => r.some(c => c.length));
 	}
 
 	async function onImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -265,8 +267,9 @@ export default function InsurersPage() {
 				const dataRows = rows.slice(1);
 
 				const idx = (name: string) => headers.findIndex(h => h === name.toLowerCase());
-				const iCode = idx('code');     // optional
-				const iName = idx('name');     // required
+				const iCode = idx('code');       // optional
+				const iName = idx('name');       // required
+				const iNick = idx('nickname');   // optional (Nick Name)
 				const iAddress = idx('address');
 				const iPhone = idx('phone');
 
@@ -276,6 +279,7 @@ export default function InsurersPage() {
 					rowsForServer.push({
 						code: iCode >= 0 ? (r[iCode] || '').trim() : null,
 						name,
+						nickName: iNick >= 0 ? (r[iNick] || '').trim() : null,
 						address: iAddress >= 0 ? (r[iAddress] || '').trim() : null,
 						phone: iPhone >= 0 ? (r[iPhone] || '').trim() : null,
 					});
@@ -288,6 +292,7 @@ export default function InsurersPage() {
 					rowsForServer.push({
 						code: r.code ?? null,
 						name: String(r.name),
+						nickName: r.nickName ?? null,
 						address: r.address ?? null,
 						phone: r.phone ?? null,
 					});
@@ -295,9 +300,7 @@ export default function InsurersPage() {
 			}
 
 			if (!rowsForServer.length) {
-				// show your dialog method here
 				showDialog('Import', 'No valid rows found.');
-				//alert('No valid rows found.');
 				return;
 			}
 
@@ -310,19 +313,15 @@ export default function InsurersPage() {
 
 			if (!res.ok) {
 				showDialog('Import failed', data?.error || 'Please check file format.');
-				//alert(`Import failed: ${data?.error || 'Please check file format.'}`);
 				return;
 			}
 
 			showDialog('Import completed', `Inserted: ${data?.inserted || 0}\nUpdated: ${data?.upserted || 0}`);
-			//alert(`Import completed\nInserted: ${data?.inserted || 0}\nUpserted: ${data?.upserted || 0}`);
 			await load();
 		} catch (e: any) {
 			showDialog('Import error', e?.message || 'Failed to import file.');
-			//alert(`Import error: ${e?.message || 'Failed to import file.'}`);
 		}
 	}
-
 
 	return (
 		<div className="space-y-4">
@@ -372,11 +371,15 @@ export default function InsurersPage() {
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Nick Name</label>
-							<input className="w-full border rounded px-3 py-2" value={address} onChange={(e) => setAddress(e.target.value)} />
+							<input className="w-full border rounded px-3 py-2" value={nickName} onChange={(e) => setNickName(e.target.value)} />
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Phone</label>
 							<input className="w-full border rounded px-3 py-2" value={phone} onChange={(e) => setPhone(e.target.value)} />
+						</div>
+						<div>
+							<label className="block text-sm mb-1">Address</label>
+							<input className="w-full border rounded px-3 py-2" value={address} onChange={(e) => setAddress(e.target.value)} />
 						</div>
 
 						<div className="flex gap-2 mt-1">
@@ -414,12 +417,16 @@ export default function InsurersPage() {
 							<thead className="bg-gray-50">
 								<tr>
 									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">
-										<input type="checkbox" aria-label="Select all visible" checked={filtered.length > 0 && filtered.every(r => selected.has(r.id))} onChange={(e) => selectAllVisible(e.target.checked)} />
+										<input
+											type="checkbox"
+											aria-label="Select all visible"
+											checked={filtered.length > 0 && filtered.every(r => selected.has(r.id))}
+											onChange={(e) => selectAllVisible(e.target.checked)}
+										/>
 									</th>
-									{/* CODE first, NAME second */}
 									<Col k="code" label="Code" />
 									<Col k="name" label="Name" />
-									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Nick Name</th>
+									<Col k="nickName" label="Nick Name" />
 									<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Phone</th>
 								</tr>
 							</thead>
@@ -440,7 +447,7 @@ export default function InsurersPage() {
 												<td className="px-3 py-2 text-sm">
 													<button className="underline underline-offset-2" onClick={() => startEdit(x)}>{x.name}</button>
 												</td>
-												<td className="px-3 py-2 text-sm">{x.address || ''}</td>
+												<td className="px-3 py-2 text-sm">{x.nickName || ''}</td>
 												<td className="px-3 py-2 text-sm">{x.phone || ''}</td>
 											</tr>
 										);

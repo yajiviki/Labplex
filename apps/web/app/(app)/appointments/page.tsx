@@ -5,12 +5,15 @@ import {
 	CalendarPlus, Search, ChevronDown, ChevronUp, SlidersHorizontal,
 	Trash2, X, AlertTriangle, Info
 } from 'lucide-react';
+import {
+	ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip,
+} from 'recharts';
 
 /* ========= Types ========= */
 
-type Vendor = { id: string; vendorId: string; tpaName: string };
-type Lab = { id: string; labCode: string; name: string; vendors?: Vendor[] };
-type Insurance = { id: string; code: string | null; name: string; address: string | null };
+type Vendor = { id: string; vendorId: string; tpaName: string; nickName: string; };
+type Lab = { id: string; labCode: string; name: string; vendors?: Vendor[]; nickName: string; };
+type Insurance = { id: string; code: string | null; name: string; address: string | null; nickName: string; };
 
 type Appointment = {
 	id: string;
@@ -95,6 +98,31 @@ function statusClasses(s?: string | null) {
 	}
 }
 
+/** Build daily trend counts from appointments; works for All Labs on first load */
+function buildTrend(
+	appts: Appointment[],
+	opts: { labId: string; from: string; to: string }
+) {
+	const byDay = new Map<string, number>();
+
+	let f = opts.from || '';
+	let t = opts.to || '';
+	if (f && t && f > t) [f, t] = [t, f];
+
+	for (const r of appts) {
+		if (opts.labId && r.labId !== opts.labId) continue; // if filtered lab, enforce
+		const ymd = formatDateOnly(r.apptAt);
+		if (!ymd) continue;
+		if (f && ymd < f) continue;
+		if (t && ymd > t) continue;
+		byDay.set(ymd, (byDay.get(ymd) ?? 0) + 1);
+	}
+
+	return Array.from(byDay.entries())
+		.sort((a, b) => (a[0] < b[0] ? -1 : 1))
+		.map(([date, count]) => ({ date, count }));
+}
+
 /* ========= Page ========= */
 
 export default function AppointmentsPage() {
@@ -139,7 +167,7 @@ export default function AppointmentsPage() {
 	const [fDateFrom, setFDateFrom] = useState<string>(monthFrom);
 	const [fDateTo, setFDateTo] = useState<string>(monthTo);
 	const [fStatus, setFStatus] = useState<string>('');
-	const [fLabId, setFLabId] = useState<string>('');
+	const [fLabId, setFLabId] = useState<string>(''); // empty = All Labs
 
 	// sorting
 	type TableSortKey =
@@ -151,7 +179,7 @@ export default function AppointmentsPage() {
 	const [sortKey, setSortKey] = useState<TableSortKey>('date');
 	const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-	// columns (hidden by default per request)
+	// columns
 	type ColKey =
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
 		| 'status' | 'visit' | 'location'
@@ -167,8 +195,7 @@ export default function AppointmentsPage() {
 		proposal: true,
 		status: true,
 		visit: true,
-		location: true,
-		// hidden by default:
+		location: false,
 		gender: false,
 		age: false,
 		mobile: false,
@@ -287,7 +314,6 @@ export default function AppointmentsPage() {
 		if (!paymentStatus) missing.push('Payment Status');
 
 		if (missing.length) {
-			// Open dialog with the exact sentence you requested
 			const ordered = ['Lab Name', 'Client Name', 'Client ID / Proposal No', 'Gender', 'Service Type'];
 			const display = ordered.filter(x => missing.includes(x));
 			setReqList(display);
@@ -326,7 +352,6 @@ export default function AppointmentsPage() {
 			});
 			const data = await res.json().catch(() => ({}));
 			if (!res.ok) {
-				// show as dialog too, so the UX is consistent
 				setReqList([data?.error || 'Save failed']);
 				setReqOpen(true);
 				return;
@@ -377,7 +402,7 @@ export default function AppointmentsPage() {
 		return true;
 	}
 
-	const getSortVal = (r: Appointment, key: TableSortKey): string | number => {
+	const getSortVal = (r: Appointment, key: any): string | number => {
 		switch (key) {
 			case 'date': { const ymd = formatDateOnly(r.apptAt); return ymd ? Number(ymd.replaceAll('-', '')) : 0; }
 			case 'lab': { const lab = labs.find(l => l.id === r.labId); return (lab?.name || '').toLowerCase(); }
@@ -425,6 +450,12 @@ export default function AppointmentsPage() {
 		});
 		return sorted;
 	}, [rows, q, sortKey, sortDir, fDateFrom, fDateTo, fStatus, fLabId, labs, vendors, insurers]);
+
+	/** Trend data (recomputes on first load + any filter change; works for All Labs) */
+	const trendData = useMemo(
+		() => buildTrend(rows, { labId: fLabId, from: fDateFrom, to: fDateTo }),
+		[rows, fLabId, fDateFrom, fDateTo]
+	);
 
 	function sortBy(k: TableSortKey) {
 		if (k === sortKey) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -475,7 +506,7 @@ export default function AppointmentsPage() {
 				<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Appointment Management</h1>
 			</div>
 
-			{/* ===== FORM (3 rows, table-like separators) ===== */}
+			{/* ===== FORM ===== */}
 			<div className="rounded-xl border bg-white shadow-sm">
 				<div className="flex items-center justify-between p-4">
 					<h2 className="text-base font-semibold">{editingId ? 'Update Appointment' : 'New Appointment'}</h2>
@@ -485,7 +516,7 @@ export default function AppointmentsPage() {
 				{formOk && <div className="px-4 -mt-2 text-sm text-green-600">{formOk}</div>}
 
 				<form onSubmit={onSubmit}>
-					{/* Row 1: Appointment Date, Lab, TPA (optional), Insurance (optional) */}
+					{/* Row 1 */}
 					<div className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 pb-4 border-b">
 						<div className="md:col-span-3">
 							<label className="block text-sm mb-1">Appointment Date</label>
@@ -529,7 +560,7 @@ export default function AppointmentsPage() {
 						</div>
 					</div>
 
-					{/* Row 2: Client Name, Proposal, Status, Visit, Location */}
+					{/* Row 2 */}
 					<div className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 py-4 border-b">
 						<div className="md:col-span-3">
 							<label className="block text-sm mb-1">Client Name</label>
@@ -562,89 +593,43 @@ export default function AppointmentsPage() {
 						</div>
 					</div>
 
-					{/* Row 3 — exact widths (130px 90px 170px 180px 160px 120px 170px) */}
+					{/* Row 3 */}
 					<div className="grid grid-cols-1 md:grid-cols-[130px_90px_170px_180px_160px_120px_170px] gap-3 px-4 py-4">
-						{/* Gender (130px) */}
 						<div>
 							<label className="block text-sm mb-1">Gender</label>
-							<select
-								className="w-full border rounded px-3 py-2"
-								value={gender}
-								onChange={(e) => setGender(e.target.value)}
-							>
+							<select className="w-full border rounded px-3 py-2" value={gender} onChange={(e) => setGender(e.target.value)}>
 								<option value="">-- Select --</option>
 								{GENDER_OPTS.map(g => <option key={g} value={g}>{g}</option>)}
 							</select>
 						</div>
-
-						{/* Age (90px) */}
 						<div>
 							<label className="block text-sm mb-1">Age</label>
-							<input
-								type="number"
-								min={0}
-								className="w-full border rounded px-3 py-2"
-								value={age}
-								onChange={(e) => setAge(e.target.value)}
-							/>
+							<input type="number" min={0} className="w-full border rounded px-3 py-2" value={age} onChange={(e) => setAge(e.target.value)} />
 						</div>
-
-						{/* Mobile No (170px) */}
 						<div>
 							<label className="block text-sm mb-1">Mobile No</label>
-							<input
-								className="w-full border rounded px-3 py-2"
-								value={phone}
-								onChange={(e) => setPhone(e.target.value)}
-							/>
+							<input className="w-full border rounded px-3 py-2" value={phone} onChange={(e) => setPhone(e.target.value)} />
 						</div>
-
-						{/* Service Type (180px) */}
 						<div>
 							<label className="block text-sm mb-1">Service Type</label>
-							<select
-								className="w-full border rounded px-3 py-2"
-								value={serviceType}
-								onChange={(e) => setServiceType(e.target.value)}
-							>
+							<select className="w-full border rounded px-3 py-2" value={serviceType} onChange={(e) => setServiceType(e.target.value)}>
 								<option value="">-- Select --</option>
 								{SERVICE_TYPE_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
 							</select>
 						</div>
-
-						{/* Payment Status (160px) */}
 						<div>
 							<label className="block text-sm mb-1">Payment Status</label>
-							<select
-								className="w-full border rounded px-3 py-2"
-								value={paymentStatus}
-								onChange={(e) => setPaymentStatus(e.target.value)}
-							>
+							<select className="w-full border rounded px-3 py-2" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
 								{PAYMENT_STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
 							</select>
 						</div>
-
-						{/* Extra Charge (Rs) (120px) */}
 						<div>
 							<label className="block text-sm mb-1">Extra Charge (Rs)</label>
-							<input
-								type="number"
-								min={0}
-								className="w-full border rounded px-3 py-2"
-								value={extraChargeRs}
-								onChange={(e) => setExtraChargeRs(e.target.value)}
-							/>
+							<input type="number" min={0} className="w-full border rounded px-3 py-2" value={extraChargeRs} onChange={(e) => setExtraChargeRs(e.target.value)} />
 						</div>
-
-						{/* Payment Date (170px) */}
 						<div>
 							<label className="block text-sm mb-1">Payment Date</label>
-							<input
-								type="date"
-								className="w-full border rounded px-3 py-2"
-								value={paymentDate}
-								onChange={(e) => setPaymentDate(e.target.value)}
-							/>
+							<input type="date" className="w-full border rounded px-3 py-2" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
 						</div>
 					</div>
 
@@ -720,7 +705,7 @@ export default function AppointmentsPage() {
 					</div>
 				</div>
 
-				{/* Table Toolbar (Delete on selection) */}
+				{/* Table Toolbar */}
 				<div className="flex items-center justify-between px-1 pb-2">
 					<div className="text-sm text-gray-600">
 						{selectedRowId ? '1 row selected' : ''}
@@ -748,8 +733,8 @@ export default function AppointmentsPage() {
 								<tr>
 									{visibleCols.date && <SortTh k="date" label="Date" />}
 									{visibleCols.lab && <SortTh k="lab" label="Lab Name" />}
-									{/* {visibleCols.tpa && <SortTh k="tpa" label="TPA Name" />} */}
-									{/* {visibleCols.ins && <SortTh k="ins" label="Insurance" />} */}
+									{visibleCols.tpa && <SortTh k="tpa" label="TPA Name" />}
+									{visibleCols.ins && <SortTh k="ins" label="Insurance" />}
 									{visibleCols.status && <SortTh k="status" label="Status" />}
 									{visibleCols.client && <SortTh k="client" label="Client Name" />}
 									{visibleCols.proposal && <SortTh k="proposal" label="Proposal No" />}
@@ -793,12 +778,12 @@ export default function AppointmentsPage() {
 													className={`border-t hover:bg-gray-50 ${selected ? 'bg-brand/5' : ''} cursor-pointer`}
 													onClick={() => startEdit(a)}
 													title="Click row to edit"
-													onMouseDown={() => setSelectedRowId(a.id)} // select row
+													onMouseDown={() => setSelectedRowId(a.id)}
 												>
 													{visibleCols.date && <td className="px-3 py-2 text-sm whitespace-nowrap">{formatDateOnly(a.apptAt)}</td>}
-													{visibleCols.lab && <td className="px-3 py-2 text-sm">{lab?.name ?? ''}</td>}
+													{visibleCols.lab && <td className="px-3 py-2 text-sm">{lab?.nickName ?? ''}</td>}
 													{visibleCols.tpa && <td className="px-3 py-2 text-sm">{vendor?.tpaName ?? ''}</td>}
-													{visibleCols.ins && <td className="px-3 py-2 text-sm">{ins?.name ?? ''}</td>}
+													{visibleCols.ins && <td className="px-3 py-2 text-sm">{ins?.nickName ?? ''}</td>}
 													{visibleCols.status && (
 														<td className="px-3 py-2 text-sm whitespace-nowrap">
 															<span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${statusClasses(a.status)}`}>{a.status ?? ''}</span>
@@ -857,7 +842,7 @@ export default function AppointmentsPage() {
 				</div>
 			)}
 
-			{/* Required fields modal (EXACT message) */}
+			{/* Required fields modal */}
 			{reqOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
 					<div className="bg-white rounded-xl shadow-lg w-full max-w-lg">
@@ -872,15 +857,8 @@ export default function AppointmentsPage() {
 						</div>
 						<div className="p-4 text-sm leading-relaxed">
 							{reqList.length > 0
-								? (
-									<span>
-										Please fill required fields: <b>{reqList.join(', ')}</b>.
-									</span>
-								)
-								: (
-									<span>Please fill required fields.</span>
-								)
-							}
+								? <span>Please fill required fields: <b>{reqList.join(', ')}</b>.</span>
+								: <span>Please fill required fields.</span>}
 						</div>
 						<div className="p-3 border-t flex justify-end">
 							<button className="rounded bg-brand text-white px-4 py-1.5" onClick={() => setReqOpen(false)}>OK</button>
@@ -944,10 +922,18 @@ function DateRangeDropdown({
 							<input type="date" className="w-full border rounded px-3 py-2" value={fDateTo} onChange={(e) => setFDateTo(e.target.value)} />
 						</div>
 						<div className="flex gap-2 pt-1">
-							<button type="button" className="border rounded px-3 py-1.5 text-sm" onClick={() => { setFDateFrom(''); setFDateTo(''); setRangeOpen(false); }}>
+							<button
+								type="button"
+								className="border rounded px-3 py-1.5 text-sm"
+								onClick={() => { setFDateFrom(''); setFDateTo(''); setRangeOpen(false); }}
+							>
 								Clear
 							</button>
-							<button type="button" className="ml-auto bg-brand text-white rounded px-3 py-1.5 text-sm" onClick={() => setRangeOpen(false)}>
+							<button
+								type="button"
+								className="ml-auto bg-brand text-white rounded px-3 py-1.5 text-sm"
+								onClick={() => setRangeOpen(false)}
+							>
 								Apply
 							</button>
 						</div>

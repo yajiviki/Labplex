@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../../lib/db';
 
-
 // Generate next vendorId (TPAxx) from DB
 async function nextVendorIdFromDb() {
 	const prefix = 'TPA';
@@ -41,35 +40,34 @@ export async function POST(req: Request) {
 		let upserted = 0;
 		let skipped = 0;
 
-		// Process sequentially to keep nextVendorId monotonic if many new rows have no vendorId
 		for (const r of rows) {
 			const tpaName = normStr(r?.tpaName);
 			if (!tpaName) { skipped++; continue; }
 
 			let vendorId = normStr(r?.vendorId); // may be null
+			const nickName = normStr(r?.nickName); // ← added
 			const address = normStr(r?.address);
 			const phone = normPhone(r?.phone);
 			const email = normStr(r?.email);
 
-			// If vendorId present -> upsert by vendorId (unique)
 			if (vendorId) {
 				const existing = await prisma.vendor.findUnique({ where: { vendorId } });
 				if (existing) {
 					await prisma.vendor.update({
 						where: { vendorId },
-						data: { tpaName, address, phone, email, isActive: 1 },
+						data: { tpaName, nickName, address, phone, email, isActive: 1 }, // ← nickName
 					});
 					upserted++;
 				} else {
 					await prisma.vendor.create({
-						data: { vendorId, tpaName, address, phone, email, isActive: 1 },
+						data: { vendorId, tpaName, nickName, address, phone, email, isActive: 1 }, // ← nickName
 					});
 					inserted++;
 				}
 				continue;
 			}
 
-			// No vendorId => try match by tpaName (case-insensitive) to avoid duplicates
+			// No vendorId => try match by tpaName (case-insensitive)
 			const byName = await prisma.vendor.findFirst({
 				where: { tpaName: { equals: tpaName, mode: 'insensitive' } },
 			});
@@ -77,14 +75,13 @@ export async function POST(req: Request) {
 			if (byName) {
 				await prisma.vendor.update({
 					where: { id: byName.id },
-					data: { tpaName, address, phone, email, isActive: 1 },
+					data: { tpaName, nickName, address, phone, email, isActive: 1 }, // ← nickName
 				});
 				upserted++;
 			} else {
-				// brand new; assign next code
 				const nextCode = await nextVendorIdFromDb();
 				await prisma.vendor.create({
-					data: { vendorId: nextCode, tpaName, address, phone, email, isActive: 1 },
+					data: { vendorId: nextCode, tpaName, nickName, address, phone, email, isActive: 1 }, // ← nickName
 				});
 				inserted++;
 			}

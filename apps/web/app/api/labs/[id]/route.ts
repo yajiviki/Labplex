@@ -12,7 +12,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
 		const id = params.id;
 		const body = await req.json().catch(() => ({}));
-		const { name, address, phone, email, vendorIds } = body || {};
+		const { name, nickName, address, phone, email, vendorIds } = body || {};
 
 		const phoneDigits = String(phone || '').replace(/\D+/g, '');
 		if (!name?.trim() || !phoneDigits) {
@@ -24,6 +24,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 				where: { id },
 				data: {
 					name: name.trim(),
+					nickName: nickName?.trim() || null,
 					address: address?.trim() || null,
 					phone: phoneDigits,
 					email: email?.trim() || null,
@@ -32,14 +33,12 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 			});
 
 			if (Array.isArray(vendorIds)) {
-				// remove links not present anymore
 				await tx.labVendor.deleteMany({
 					where: {
 						labId: lab.id,
 						NOT: { vendorId: { in: vendorIds } },
 					},
 				});
-				// add missing links
 				await tx.labVendor.createMany({
 					data: vendorIds.map((vid: string) => ({ labId: lab.id, vendorId: vid })),
 					skipDuplicates: true,
@@ -55,13 +54,12 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 	}
 }
 
-/** DELETE /api/labs/[id] : soft delete or hard delete */
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+/** DELETE /api/labs/[id] : hard delete */
+export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
 	try {
 		const session = await auth();
 		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-		// Hard delete + cascade join rows (if you set onDelete: Cascade on LabVendor.lab)
 		await prisma.lab.delete({ where: { id: params.id } });
 
 		return NextResponse.json({ ok: true });

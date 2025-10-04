@@ -1,10 +1,10 @@
-// app/api/insurance/import/route.ts
 import { NextResponse } from 'next/server';
-import { prisma } from '../../../../lib/db'; // <- adjust if your db export path differs
+import { prisma } from '../../../../lib/db';
 
 type IncomingRow = {
 	code?: string | null;
 	name?: string | null;
+	nickName?: string | null; // <— added
 	address?: string | null;
 	phone?: string | null;
 };
@@ -34,7 +34,6 @@ export async function POST(req: Request) {
 			return NextResponse.json({ error: 'No rows provided', inserted: 0, upserted: 0 }, { status: 400 });
 		}
 
-		// Pull all existing once to minimize round-trips
 		const existing = await prisma.insuranceCompany.findMany({
 			where: { isActive: 1 },
 			select: { id: true, code: true, name: true },
@@ -58,6 +57,7 @@ export async function POST(req: Request) {
 		for (const r of rows) {
 			const name = (r?.name || '').trim();
 			let code = (r?.code || '').trim();
+			const nickName = (r?.nickName || '')?.trim() || null; // <— added
 			const address = (r?.address || '')?.trim() || null;
 			const phone = (r?.phone || '')?.replace(/\D+/g, '') || null;
 
@@ -66,9 +66,7 @@ export async function POST(req: Request) {
 				continue;
 			}
 
-			// Assign a new code if missing
 			if (!code) {
-				// If an insurance with same name exists, reuse its code/update it
 				const existsByName = existingByName.get(name.toLowerCase());
 				if (existsByName && existsByName.code) {
 					code = existsByName.code;
@@ -82,32 +80,27 @@ export async function POST(req: Request) {
 			const existingByThisName = existingByName.get(name.toLowerCase());
 
 			if (existingByThisCode) {
-				// Update by unique code
 				await prisma.insuranceCompany.update({
 					where: { id: existingByThisCode.id },
-					data: { name, address, phone, isActive: 1 },
+					data: { name, nickName, address, phone, isActive: 1 },
 				});
 				upserted += 1;
 			} else if (existingByThisName) {
-				// No code match but name exists -> update that record and set/overwrite code (if you want)
 				await prisma.insuranceCompany.update({
 					where: { id: existingByThisName.id },
-					data: { code, address, phone, isActive: 1 },
+					data: { code, nickName, address, phone, isActive: 1 },
 				});
 				upserted += 1;
 
-				// Keep maps in sync for subsequent rows
 				existingByCode.set(codeKey, { id: existingByThisName.id, code, name });
 				existingByName.set(name.toLowerCase(), { id: existingByThisName.id, code, name });
 			} else {
-				// Create new
 				const created = await prisma.insuranceCompany.create({
-					data: { code, name, address, phone, isActive: 1 },
+					data: { code, name, nickName, address, phone, isActive: 1 },
 					select: { id: true, code: true, name: true },
 				});
 				inserted += 1;
 
-				// Update in-memory indexes
 				existingByCode.set(codeKey, created);
 				existingByName.set(name.toLowerCase(), created);
 			}

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../../lib/db';
 
-
 export const dynamic = 'force-dynamic';
 
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
@@ -15,11 +14,11 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
 		const data: any = {
 			name,
+			nickName: (body?.nickName ?? null) || null, // <— added
 			address: (body?.address ?? null) || null,
 			phone: (body?.phone ?? null) || null,
 		};
 
-		// Optional code update (must remain unique if provided)
 		if (typeof body?.code === 'string' && body.code.trim()) {
 			data.code = body.code.trim();
 		}
@@ -31,6 +30,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 				id: true,
 				code: true,
 				name: true,
+				nickName: true,
 				address: true,
 				phone: true,
 				isActive: true,
@@ -48,7 +48,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 	}
 }
 
-// Soft delete (avoid FK errors with appointments)
+// Soft delete
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
 	try {
 		await prisma.insuranceCompany.update({
@@ -57,8 +57,6 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
 		});
 		return NextResponse.json({ ok: true });
 	} catch (e: any) {
-		// If you truly want hard delete, you can switch to delete() here,
-		// but it may fail if appointments exist.
 		return NextResponse.json(
 			{ error: e?.message || 'Delete failed' },
 			{ status: 500 }
