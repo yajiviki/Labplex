@@ -7,7 +7,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 type LabLite = { id: string; name: string };
 type VendorLite = { id: string; tpaName: string };
 
-// === updated: include nick names + missing count ===
+// === include nick names + missing count ===
 type TableRow = {
 	labId: string | null;
 	labName: string;
@@ -16,7 +16,7 @@ type TableRow = {
 	tpaName: string;
 	tpaNickName?: string | null;
 	totalExtra: number;
-	missingExtraCount: number; // new
+	missingExtraCount: number;
 };
 type TrendRow = { date: string; amount: number };
 
@@ -331,6 +331,59 @@ export default function AccountsReportClient({
 
 	const overallMissingCount = useMemo(() => table.reduce((s, r) => s + (r.missingExtraCount || 0), 0), [table]);
 
+	// ====== SUMMARY TABLE SORTING ======
+	type SummarySortKey = 'tpa' | 'lab' | 'amount' | 'missing';
+	const [sSortKey, setSSortKey] = useState<SummarySortKey>('tpa');
+	const [sSortDir, setSSortDir] = useState<'asc' | 'desc'>('asc');
+
+	function toggleSummarySort(k: SummarySortKey) {
+		if (k === sSortKey) setSSortDir(prev => (prev === 'asc' ? 'desc' : 'asc'));
+		else { setSSortKey(k); setSSortDir('asc'); }
+	}
+
+	const sortedTable: TableRow[] = useMemo(() => {
+		const arr = [...table];
+		const safeStr = (v: string | null | undefined) => (v ?? '').toString().toLowerCase();
+		arr.sort((a, b) => {
+			let cmp = 0;
+			if (sSortKey === 'tpa') {
+				const av = safeStr(a.tpaNickName ?? a.tpaName);
+				const bv = safeStr(b.tpaNickName ?? b.tpaName);
+				cmp = av > bv ? 1 : av < bv ? -1 : 0;
+			} else if (sSortKey === 'lab') {
+				const av = safeStr(a.labNickName ?? a.labName);
+				const bv = safeStr(b.labNickName ?? b.labName);
+				cmp = av > bv ? 1 : av < bv ? -1 : 0;
+			} else if (sSortKey === 'amount') {
+				const av = a.totalExtra ?? 0;
+				const bv = b.totalExtra ?? 0;
+				cmp = av - bv;
+			} else if (sSortKey === 'missing') {
+				const av = a.missingExtraCount ?? 0;
+				const bv = b.missingExtraCount ?? 0;
+				cmp = av - bv;
+			}
+			return sSortDir === 'asc' ? cmp : -cmp;
+		});
+		return arr;
+	}, [table, sSortKey, sSortDir]);
+
+	const SummarySortHdr = ({ k, align = 'left', children }: { k: SummarySortKey; align?: 'left' | 'right'; children: React.ReactNode }) => {
+		const active = sSortKey === k;
+		return (
+			<th
+				className={`px-3 py-2 text-${align} font-semibold cursor-pointer select-none`}
+				onClick={() => toggleSummarySort(k)}
+				title="Sort"
+			>
+				<div className={`inline-flex items-center gap-1 ${align === 'right' ? 'justify-end w-full' : ''}`}>
+					<span>{children}</span>
+					{active ? (sSortDir === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />) : null}
+				</div>
+			</th>
+		);
+	};
+
 	const SortHdr = ({ k, children }: { k: DetailSortKey; children: React.ReactNode }) => {
 		const active = dSortKey === k;
 		return (
@@ -439,24 +492,24 @@ export default function AccountsReportClient({
 						</button>
 					</div>
 					<div className="overflow-x-auto">
-						<div className="border rounded max-h-80 overflow-y-auto">
+						<div className="border rounded max-h-60 overflow-y-auto">
 							<table className="min-w-full text-sm">
 								<thead className="bg-gray-50 sticky top-0 z-10">
 									<tr>
-										{/* TPA first, then Lab; show NickName if available */}
-										<th className="px-3 py-2 text-left font-semibold">TPA</th>
-										<th className="px-3 py-2 text-left font-semibold">Lab</th>
-										<th className="px-3 py-2 text-right font-semibold">Amount (₹)</th>
-										<th className="px-3 py-2 text-right font-semibold">Missing Count</th>
+										{/* Sortable headers */}
+										<SummarySortHdr k="tpa">TPA</SummarySortHdr>
+										<SummarySortHdr k="lab">Lab</SummarySortHdr>
+										<SummarySortHdr k="amount" align="right">Amount (₹)</SummarySortHdr>
+										<SummarySortHdr k="missing" align="right">Missing Cnt</SummarySortHdr>
 									</tr>
 								</thead>
 								<tbody>
 									{loading ? (
 										<tr><td className="px-3 py-4 text-center" colSpan={4}>Loading…</td></tr>
-									) : table.length === 0 ? (
+									) : sortedTable.length === 0 ? (
 										<tr><td className="px-3 py-4 text-center text-gray-500" colSpan={4}>No data</td></tr>
 									) : (
-										table.map((r, idx) => (
+										sortedTable.map((r, idx) => (
 											<tr
 												key={`${r.vendorId ?? 'all'}-${r.labId ?? 'all'}-${idx}`}
 												className="border-t hover:bg-gray-50"
@@ -468,8 +521,6 @@ export default function AccountsReportClient({
 													{r.labNickName ?? r.labName}
 												</td>
 												<td className="px-3 py-2 text-right">₹{(r.totalExtra ?? 0).toLocaleString()}</td>
-
-												{/* clickable 'no extra' count */}
 												<td
 													className="px-3 py-2 text-right cursor-pointer hover:underline"
 													title="Show details without extra amount"
@@ -488,7 +539,7 @@ export default function AccountsReportClient({
 							</table>
 						</div>
 					</div>
-					<div className="mt-2 text-xs text-gray-600">
+					<div className="mt-2 text-xs text-gray-800 mb-3">
 						Overall Missing: <span className="font-semibold">{overallMissingCount.toLocaleString()}</span>
 					</div>
 				</div>
@@ -512,7 +563,7 @@ export default function AccountsReportClient({
 								<YAxis allowDecimals={false} />
 								<Tooltip formatter={(v: any) => `₹${Number(v).toLocaleString()}`} />
 								<Legend />
-								<Area type="monotone" dataKey="amount" name="Amount (Rs)" stroke="#0EA5E9" fill="#0EA5E9" fillOpacity={0.2} />
+								<Area type="monotone" dataKey="amount" name="Amount" stroke="#0EA5E9" fill="#0EA5E9" fillOpacity={0.2} fontSize={8} />
 							</AreaChart>
 						</ResponsiveContainer>
 					</div>
@@ -522,7 +573,7 @@ export default function AccountsReportClient({
 			{/* ---------- PIVOT (counts) — with multi-select Labs filter on header ---------- */}
 			<div className="rounded-xl border bg-white p-4 shadow-sm">
 				<div className="flex items-center justify-between mb-3">
-					<h3 className="text-base font-semibold">Appointments Pivot (Counts)</h3>
+					<h3 className="text-base font-semibold">Appointments Informations</h3>
 
 					{/* Pivot Lab multi-select */}
 					<div className="relative">

@@ -517,7 +517,7 @@ export default function AppointmentsPage() {
 
 				<form onSubmit={onSubmit}>
 					{/* Row 1 */}
-					<div className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 pb-4 border-b">
+					<div className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 pb-2">
 						<div className="md:col-span-3">
 							<label className="block text-sm mb-1">Appointment Date</label>
 							<input
@@ -561,7 +561,7 @@ export default function AppointmentsPage() {
 					</div>
 
 					{/* Row 2 */}
-					<div className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 py-4 border-b">
+					<div className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 py-2">
 						<div className="md:col-span-3">
 							<label className="block text-sm mb-1">Client Name</label>
 							<input className="w-full border rounded px-3 py-2" value={clientName} onChange={(e) => setClientName(e.target.value)} />
@@ -594,7 +594,7 @@ export default function AppointmentsPage() {
 					</div>
 
 					{/* Row 3 */}
-					<div className="grid grid-cols-1 md:grid-cols-[130px_90px_170px_180px_160px_120px_170px] gap-3 px-4 py-4">
+					<div className="grid grid-cols-1 md:grid-cols-[130px_90px_170px_180px_160px_120px_170px] gap-3 px-4 py-2">
 						<div>
 							<label className="block text-sm mb-1">Gender</label>
 							<select className="w-full border rounded px-3 py-2" value={gender} onChange={(e) => setGender(e.target.value)}>
@@ -633,7 +633,7 @@ export default function AppointmentsPage() {
 						</div>
 					</div>
 
-					<div className="px-4 pb-4">
+					<div className="px-3 pb-3 py-2">
 						<div className="flex gap-2">
 							<button className="rounded bg-brand text-white px-4 py-2">{editingId ? 'Update' : 'Create'}</button>
 							<button type="button" className="rounded border px-4 py-2" onClick={resetForm}>Reset</button>
@@ -728,7 +728,7 @@ export default function AppointmentsPage() {
 				{/* Table */}
 				<div className="w-full overflow-x-auto">
 					<div className="max-h-[560px] overflow-y-auto">
-						<table className="w-full min-w-[1400px] border rounded">
+						<table className="w-full min-w-[1200px] border rounded">
 							<thead className="sticky top-0 z-10 bg-white">
 								<tr>
 									{visibleCols.date && <SortTh k="date" label="Date" />}
