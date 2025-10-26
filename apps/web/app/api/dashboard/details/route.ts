@@ -58,7 +58,7 @@ export async function POST(req: Request) {
 			where = {
 				...whereBase,
 				apptAt: { gte: fromDate, lte: toDate },
-				status: { in: SUBMITTED },
+				status: { in: [...SUBMITTED, "Medical Done"] },
 			};
 		} else {
 			return NextResponse.json({ error: 'Unknown kind' }, { status: 400 });

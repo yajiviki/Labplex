@@ -6,7 +6,7 @@ type InRow = {
 	apptAt?: string | null;            // 'YYYY-MM-DD HH:mm:ss' or ISO
 	typeOfVisit?: 'CENTER' | 'HOME' | string | null;
 	tpaName?: string | null;           // Vendor.tpaName
-	insuranceName?: string | null;     // InsuranceCompany.name (under that TPA)
+	insuranceName?: string | null;     // InsuranceCompany.name
 	labName?: string | null;           // Lab.name or Lab.labCode
 	clientName?: string | null;
 	clientRef?: string | null;
@@ -97,17 +97,21 @@ export async function POST(req: NextRequest) {
 				}
 			}
 
-			// resolve Insurance under that Vendor
+			// resolve Insurance (no vendorId in InsuranceCompany schema anymore)
 			let insuranceCompanyId: string | null = null;
-			if (r.insuranceName && vendorId) {
+			if (r.insuranceName) {
 				const ic = await prisma.insuranceCompany.findFirst({
-					where: { vendorId, name: r.insuranceName.trim(), isActive: 1 },
+					where: {
+						name: { equals: r.insuranceName.trim(), mode: 'insensitive' as const },
+						isActive: 1,
+					},
 					select: { id: true },
 				});
-				if (ic) insuranceCompanyId = ic.id;
-				else if (createMissing) {
+				if (ic) {
+					insuranceCompanyId = ic.id;
+				} else if (createMissing) {
 					const createdIC = await prisma.insuranceCompany.create({
-						data: { vendorId, name: r.insuranceName.trim(), isActive: 1 },
+						data: { name: r.insuranceName.trim(), isActive: 1 },
 						select: { id: true },
 					});
 					insuranceCompanyId = createdIC.id;
@@ -132,8 +136,8 @@ export async function POST(req: NextRequest) {
 			const data = {
 				apptAt: when,
 				visitType: r.typeOfVisit || null,
-				vendorId,
-				insuranceCompanyId,
+				vendorId,                 // still saved on Appointment
+				insuranceCompanyId,       // resolved without vendor relation
 				labId,
 				clientName: r.clientName || null,
 				clientRef: r.clientRef || null,

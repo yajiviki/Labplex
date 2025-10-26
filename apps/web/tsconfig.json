@@ -6,6 +6,9 @@
       "esnext"
     ],
     "allowJs": true,
+    "types": [
+      "next-auth"
+    ],
     "skipLibCheck": true,
     "strict": false,
     "noEmit": true,

@@ -1,28 +1,31 @@
-import NextAuth, { NextAuthOptions } from 'next-auth';
-import Credentials from 'next-auth/providers/credentials';
-import bcrypt from 'bcryptjs';
-import { prisma } from './db';
+// lib/auth.ts
+import NextAuth from "next-auth";
+import Credentials from "next-auth/providers/credentials";
+import bcrypt from "bcryptjs";
+import { prisma } from "./db";
 
-export const authOptions: NextAuthOptions = {
-	session: { strategy: 'jwt' },
+export const { handlers, auth, signIn, signOut } = NextAuth({
+	trustHost: true,
+	session: { strategy: "jwt" },
 	pages: {
-		signIn: '/login',
-		error: '/login',
+		signIn: "/login",
+		error: "/login",
 	},
 	providers: [
 		Credentials({
-			name: 'Credentials',
+			name: "Credentials",
 			credentials: {
-				userId: { label: 'User ID', type: 'text' },
-				password: { label: 'Password', type: 'password' },
+				userId: { label: "User ID", type: "text" },
+				password: { label: "Password", type: "password" },
 			},
 			async authorize(creds) {
-				const userId = (creds?.userId || '').trim().toUpperCase();
-				const password = creds?.password || '';
+				const { userId: rawUserId, password: rawPassword } =
+					(creds ?? {}) as { userId?: string; password?: string };
 
-				if (!userId || !password) throw new Error('Please enter User ID and Password.');
+				const userId = (rawUserId ?? "").toString().trim().toUpperCase();
+				const password = (rawPassword ?? "").toString();
+				if (!userId || !password) throw new Error("Please enter User ID and Password.");
 
-				// userId must be UNIQUE in your schema
 				const user = await prisma.user.findUnique({
 					where: { userId },
 					select: {
@@ -32,9 +35,9 @@ export const authOptions: NextAuthOptions = {
 					},
 				});
 
-				if (!user || user.isActive !== 1) throw new Error('Invalid credentials.');
+				if (!user || user.isActive !== 1) throw new Error("Invalid credentials.");
 				const ok = await bcrypt.compare(password, user.password);
-				if (!ok) throw new Error('Invalid credentials.');
+				if (!ok) throw new Error("Invalid credentials.");
 
 				return {
 					id: user.id,
@@ -71,8 +74,5 @@ export const authOptions: NextAuthOptions = {
 			return session;
 		},
 	},
-	debug: process.env.NODE_ENV !== 'production',
-};
-
-// v5 app-router helpers
-export const { handlers, auth, signIn, signOut } = NextAuth(authOptions);
+	debug: process.env.NODE_ENV !== "production",
+});

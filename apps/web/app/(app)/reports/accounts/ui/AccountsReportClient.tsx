@@ -20,7 +20,7 @@ type TableRow = {
 };
 type TrendRow = { date: string; amount: number };
 
-// ---------- PIVOT TYPES ----------
+// ---------- PIVOT TYPES (gender removed) ----------
 type PivotRow = {
 	vendorId: string | null;
 	tpaName: string;
@@ -29,17 +29,16 @@ type PivotRow = {
 	localTotal: number;
 	outerTotal: number;
 	rowTotal: number;
-	cells: Record<string, number>; // key = `${serviceType}__${visitType}__${gender}`
+	cells: Record<string, number>; // key = `${serviceType}__${visitType}`
 };
 type PivotPayload = {
 	serviceTypes: string[];
 	visits: string[];
-	genders: string[];
 	rows: PivotRow[];
 	totalLocal: number;
 	totalOuter: number;
 	grandTotal: number;
-	columnTotals: Record<string, number>;
+	columnTotals: Record<string, number>; // keys = st__vt
 };
 
 type PresetKey =
@@ -119,7 +118,6 @@ export default function AccountsReportClient({
 		tpaName: string | null;
 		insuranceNickName: string | null; // new
 		clientName: string | null;
-		gender: string | null;
 		status: string | null;
 		visitType: string | null;
 		serviceType: string | null;
@@ -132,7 +130,7 @@ export default function AccountsReportClient({
 	const [detailErr, setDetailErr] = useState<string | null>(null);
 	type DetailSortKey =
 		| 'apptAt' | 'labName' | 'tpaName' | 'insuranceNickName'
-		| 'clientName' | 'gender' | 'status' | 'visitType' | 'serviceType' | 'extraChargeRs';
+		| 'clientName' | 'status' | 'visitType' | 'serviceType' | 'extraChargeRs';
 	const [dSortKey, setDSortKey] = useState<DetailSortKey>('apptAt');
 	const [dSortDir, setDSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -213,8 +211,10 @@ export default function AccountsReportClient({
 	const pivotKeysDetailed: string[] = useMemo(() => {
 		if (!pivot) return [];
 		const keys: string[] = [];
-		for (const st of pivot.serviceTypes) for (const vt of pivot.visits) for (const g of pivot.genders) {
-			keys.push(`${st}__${vt}__${g}`);
+		for (const st of pivot.serviceTypes) {
+			for (const vt of pivot.visits) {
+				keys.push(`${st}__${vt}`);
+			}
 		}
 		return keys;
 	}, [pivot]);
@@ -225,7 +225,6 @@ export default function AccountsReportClient({
 		vendorId?: string | null;
 		serviceType?: string | null;
 		visitType?: string | null;
-		gender?: string | null;
 		extraMissing?: boolean; // new
 	}) {
 		setDetailTitle(title);
@@ -272,7 +271,6 @@ export default function AccountsReportClient({
 	// Export ALL missing-extra rows (based on current toolbar filters) from the summary card icon
 	async function exportAllMissingCSV() {
 		try {
-			// honor current toolbar filters; ignore focused state to export the whole filtered slice
 			const effLabId = labId || null;
 			const effVenId = vendorId || null;
 			const res = await fetch('/api/reports/accounts/details', {
@@ -307,7 +305,7 @@ export default function AccountsReportClient({
 		}
 	}
 
-	// Detail modal CSV (kept for when you open a slice)
+	// Detail modal CSV (for the opened slice)
 	function downloadCSV() {
 		const headers = [
 			{ key: 'apptAt', label: 'App. Date' },
@@ -343,16 +341,16 @@ export default function AccountsReportClient({
 
 	const sortedTable: TableRow[] = useMemo(() => {
 		const arr = [...table];
-		const safeStr = (v: string | null | undefined) => (v ?? '').toString().toLowerCase();
+		const safe = (v: string | null | undefined) => (v ?? '').toString().toLowerCase();
 		arr.sort((a, b) => {
 			let cmp = 0;
 			if (sSortKey === 'tpa') {
-				const av = safeStr(a.tpaNickName ?? a.tpaName);
-				const bv = safeStr(b.tpaNickName ?? b.tpaName);
+				const av = safe(a.tpaNickName ?? a.tpaName);
+				const bv = safe(b.tpaNickName ?? b.tpaName);
 				cmp = av > bv ? 1 : av < bv ? -1 : 0;
 			} else if (sSortKey === 'lab') {
-				const av = safeStr(a.labNickName ?? a.labName);
-				const bv = safeStr(b.labNickName ?? b.labName);
+				const av = safe(a.labNickName ?? a.labName);
+				const bv = safe(b.labNickName ?? b.labName);
 				cmp = av > bv ? 1 : av < bv ? -1 : 0;
 			} else if (sSortKey === 'amount') {
 				const av = a.totalExtra ?? 0;
@@ -480,7 +478,7 @@ export default function AccountsReportClient({
 				<div className="rounded-xl border bg-white p-4 shadow-sm lg:col-span-1">
 					<div className="flex items-center justify-between mb-3">
 						<h3 className="font-semibold">Extra Amount Summary</h3>
-						{/* Download ALL missing as CSV (based on current toolbar filters) */}
+						{/* Download ALL missing as CSV */}
 						<button
 							type="button"
 							onClick={exportAllMissingCSV}
@@ -496,7 +494,6 @@ export default function AccountsReportClient({
 							<table className="min-w-full text-sm">
 								<thead className="bg-gray-50 sticky top-0 z-10">
 									<tr>
-										{/* Sortable headers */}
 										<SummarySortHdr k="tpa">TPA</SummarySortHdr>
 										<SummarySortHdr k="lab">Lab</SummarySortHdr>
 										<SummarySortHdr k="amount" align="right">Amount (₹)</SummarySortHdr>
@@ -535,7 +532,6 @@ export default function AccountsReportClient({
 										))
 									)}
 								</tbody>
-								{/* no totals row per request */}
 							</table>
 						</div>
 					</div>
@@ -624,7 +620,7 @@ export default function AccountsReportClient({
 				) : (
 					<div className="w-full overflow-x-auto">
 						<div className="max-h-[520px] overflow-y-auto border rounded">
-							<table className="min-w-[1200px] text-sm">
+							<table className="min-w-[1000px] text-sm">
 								<thead className="bg-gray-50 sticky top-0 z-10">
 									<tr>
 										<th className="px-3 py-2 text-left font-semibold">TPA NAME</th>
@@ -632,28 +628,12 @@ export default function AccountsReportClient({
 										<th className="px-3 py-2 text-right font-semibold">Local</th>
 										<th className="px-3 py-2 text-right font-semibold">Outer</th>
 										<th className="px-3 py-2 text-right font-semibold">Total cases (Local + Outer)</th>
-										{pivot.serviceTypes.map(st => (
+										{pivot.serviceTypes.map(st =>
 											pivot.visits.map(vt => (
-												<th key={`${st}__${vt}`} className="px-3 py-2 text-center font-semibold" colSpan={pivot.genders.length}>
+												<th key={`${st}__${vt}`} className="px-3 py-2 text-center font-semibold">
 													{st} Cases ({visitLabel(vt)})
 												</th>
 											))
-										))}
-									</tr>
-									<tr className="bg-gray-50 sticky top-[33px] z-10">
-										<th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Gender</th>
-										<th className="px-3 py-2 text-left text-xs font-medium text-gray-600" />
-										<th className="px-3 py-2 text-right text-xs font-medium text-gray-600" />
-										<th className="px-3 py-2 text-right text-xs font-medium text-gray-600" />
-										<th className="px-3 py-2 text-right text-xs font-medium text-gray-600" />
-										{pivot.serviceTypes.flatMap(st =>
-											pivot.visits.flatMap(vt =>
-												pivot.genders.map(g => (
-													<th key={`${st}__${vt}__${g}`} className="px-3 py-1.5 text-center text-xs font-medium text-gray-600">
-														{g}
-													</th>
-												))
-											)
 										)}
 									</tr>
 								</thead>
@@ -693,20 +673,19 @@ export default function AccountsReportClient({
 													{r.rowTotal.toLocaleString()}
 												</td>
 
-												{/* Detailed gender cells (clickable) */}
+												{/* Detailed cells by ServiceType × VisitType */}
 												{pivotKeysDetailed.map((k) => {
-													const [st, vt, g] = k.split('__');
+													const [st, vt] = k.split('__');
 													return (
 														<td
 															key={k}
 															className="px-3 py-2 text-center cursor-pointer hover:underline"
 															title="Show details"
-															onClick={() => openDetails(`${r.tpaName} → ${r.labName} • ${st} • ${visitLabel(vt)} • ${g}`, {
+															onClick={() => openDetails(`${r.tpaName} → ${r.labName} • ${st} • ${visitLabel(vt)}`, {
 																vendorId: r.vendorId,
 																labId: r.labId,
 																serviceType: st,
 																visitType: vt,
-																gender: g,
 															})}
 														>
 															{(r.cells[k] ?? 0).toLocaleString()}

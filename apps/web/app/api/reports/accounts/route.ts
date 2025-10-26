@@ -6,9 +6,9 @@ export const dynamic = 'force-dynamic';
 
 function parseDateFlexible(s?: string) {
 	if (!s) return null;
-	let m = s.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+	let m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
 	if (m) return new Date(+m[1], +m[2] - 1, +m[3], 0, 0, 0, 0);
-	m = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+	m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(s);
 	if (m) return new Date(+m[3], +m[2] - 1, +m[1], 0, 0, 0, 0);
 	return null;
 }
@@ -51,15 +51,15 @@ export async function POST(req: Request) {
 		const missingMap = new Map<string, number>();
 		for (const m of missing) missingMap.set(keyOf(m.labId, m.vendorId), Number(m._count._all || 0));
 
-		const allKeys = new Set<string>([...sumMap.keys(), ...missingMap.keys()]);
+		const allKeys = new Set<string>([...Array.from(sumMap.keys()), ...Array.from(missingMap.keys())]);
 		const ids = Array.from(allKeys).map(k => {
 			const [l, v] = k.split('__');
 			return { labId: l || null, vendorId: v || null };
 		});
 
 		// names + nick names
-		const labIds = Array.from(new Set(ids.map(x => x.labId).filter(Boolean))) as string[];
-		const venIds = Array.from(new Set(ids.map(x => x.vendorId).filter(Boolean))) as string[];
+		const labIds = Array.from(new Set(ids.map(x => x.labId).filter(Boolean)));
+		const venIds = Array.from(new Set(ids.map(x => x.vendorId).filter(Boolean)));
 		const [labs, vendors] = await Promise.all([
 			labIds.length ? prisma.lab.findMany({ where: { id: { in: labIds } }, select: { id: true, name: true, nickName: true } }) : Promise.resolve([]),
 			venIds.length ? prisma.vendor.findMany({ where: { id: { in: venIds } }, select: { id: true, tpaName: true, nickName: true } }) : Promise.resolve([]),
@@ -119,8 +119,8 @@ export async function POST(req: Request) {
 			select: { labId: true, vendorId: true, serviceType: true, visitType: true, gender: true },
 		});
 
-		const plabIds = Array.from(new Set(raw.map(r => r.labId).filter(Boolean))) as string[];
-		const pvenIds = Array.from(new Set(raw.map(r => r.vendorId).filter(Boolean))) as string[];
+		const plabIds = Array.from(new Set(raw.map(r => r.labId).filter(Boolean)));
+		const pvenIds = Array.from(new Set(raw.map(r => r.vendorId).filter(Boolean)));
 		const [plabs, pvens] = await Promise.all([
 			plabIds.length ? prisma.lab.findMany({ where: { id: { in: plabIds } }, select: { id: true, name: true } }) : Promise.resolve([]),
 			pvenIds.length ? prisma.vendor.findMany({ where: { id: { in: pvenIds } }, select: { id: true, tpaName: true } }) : Promise.resolve([]),
@@ -128,10 +128,9 @@ export async function POST(req: Request) {
 		const pLabName = new Map(plabs.map(l => [l.id, l.name]));
 		const pVenName = new Map(pvens.map(v => [v.id, v.tpaName]));
 
-		type K = string;
-		const key = (v: string | null, l: string | null, st: string | null, vt: string | null, g: string | null): K =>
+		const key = (v: string | null, l: string | null, st: string | null, vt: string | null, g: string | null): string =>
 			`${v ?? ''}__${l ?? ''}__${st ?? ''}__${vt ?? ''}__${g ?? ''}`;
-		const counts = new Map<K, number>();
+		const counts = new Map<string, number>();
 		const rowPairs = new Set<string>();
 
 		for (const r of raw) {
@@ -142,7 +141,7 @@ export async function POST(req: Request) {
 		}
 
 		const rows: any[] = [];
-		for (const pair of rowPairs) {
+		for (const pair of Array.from(rowPairs)) {
 			const [vId, lId] = pair.split('__');
 			const vendorIdStr = vId || null;
 			const labIdStr = lId || null;

@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { auth } from '../../../lib/auth';
 import { prisma } from '../../../lib/db';
 
-
 function nextPatientIdFromExisting(ids: string[]) {
 	const prefix = 'OP';
 	let max = 0;
@@ -27,9 +26,8 @@ export async function GET() {
 				id: true, patientId: true, name: true,
 				address: true, phone: true, doctorName: true,
 				// canonical relations (preferred in UI)
-				vendorId: true, insuranceCompanyId: true,
-				vendor: { select: { id: true, tpaName: true, vendorId: true } },
-				insuranceCompany: { select: { id: true, name: true } },
+				//insuranceCompanyId: true,
+				//insuranceCompany: { select: { id: true, name: true } },
 				// legacy display if you need it
 				tpaName: true, insuranceName: true,
 				createdAt: true,
@@ -47,7 +45,8 @@ export async function POST(req: Request) {
 		if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
 		const body = await req.json().catch(() => ({}));
-		const { name, address, phone, doctorName, vendorId, insuranceCompanyId } = body;
+		// vendorId accepted but ignored (no longer in schema)
+		const { name, address, phone, doctorName } = body;
 
 		const normalizedPhone = (phone || '').toString().replace(/\D+/g, '');
 		if (!name?.trim() || !normalizedPhone) {
@@ -65,15 +64,16 @@ export async function POST(req: Request) {
 				address: address || null,
 				phone: normalizedPhone,
 				doctorName: doctorName || null,
-				vendorId: vendorId || null,
-				insuranceCompanyId: insuranceCompanyId || null,
+				// vendorId removed
+				//insuranceCompanyId: insuranceCompanyId || null,
 				isActive: 1,
+				lab: body.lab || null, // Add this line, adjust as needed for your schema
 			},
 			select: {
 				id: true, patientId: true, name: true, address: true, phone: true, doctorName: true,
-				vendorId: true, insuranceCompanyId: true,
-				vendor: { select: { id: true, tpaName: true, vendorId: true } },
-				insuranceCompany: { select: { id: true, name: true } },
+				// vendorId removed
+				//insuranceCompanyId: true,
+				//insuranceCompany: { select: { id: true, name: true } },
 				createdAt: true,
 			},
 		});

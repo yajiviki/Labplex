@@ -40,7 +40,7 @@ export default function ClientLoginForm() {
 
 		//debugger;
 		const res = await signIn('credentials', {
-			redirect: true,
+			redirect: false,
 			userId: uid,
 			password: pwd,
 			callbackUrl: '/dashboard',
@@ -53,7 +53,9 @@ export default function ClientLoginForm() {
 		}
 
 		// success
-		window.location.href = '/dashboard';
+		if (res?.url) {
+			window.location.href = res.url;
+		}
 	}
 
 	return (
@@ -66,8 +68,9 @@ export default function ClientLoginForm() {
 					<form onSubmit={onSubmit} className="space-y-4">
 						{/* User ID */}
 						<div>
-							<label className="block text-sm font-medium mb-1">User ID</label>
+							<label htmlFor="userId" className="block text-sm font-medium mb-1">User ID</label>
 							<input
+								id="userId"
 								type="text"
 								placeholder="Enter User ID (e.g., U0001-LB01 or OP0001)"
 								value={userId}
@@ -79,7 +82,7 @@ export default function ClientLoginForm() {
 
 						{/* Password */}
 						<div>
-							<label className="block text-sm font-medium mb-1">Password</label>
+							<label htmlFor="password" className="block text-sm font-medium mb-1">Password</label>
 							<input
 								type="password"
 								placeholder="Enter Password"

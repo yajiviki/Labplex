@@ -129,6 +129,7 @@ export default function FilterDashboardClient({
 			});
 			const raw = await res.json();
 			if (!res.ok) throw new Error(raw?.error || 'Failed to load metrics');
+			//debugger;
 			setMetrics(normalizeMetrics(raw));
 		} catch (e: any) {
 			setErr(e?.message || 'Network error');
@@ -376,8 +377,8 @@ export default function FilterDashboardClient({
 
 			{/* Modal */}
 			{modalOpen && (
-				<div className="fixed inset-0 z-50 flex items-start md:items-center justify-center bg-black/40 p-3">
-					<div className="bg-white rounded-xl shadow-lg w-full max-w-6xl">
+				<div className="fixed inset-0 z-50 flex items-start md:items-center justify-center bg-black/40 p-3 ">
+					<div className="bg-white rounded-xl shadow-lg w-full max-w-6xl ">
 						<div className="flex items-center justify-between p-3 border-b bg-blue-300">
 							<h3 className="font-semibold">{modalTitle}</h3>
 							<button className="p-1 rounded hover:bg-gray-100" onClick={() => setModalOpen(false)}><X className="h-5 w-5" /></button>
@@ -397,7 +398,7 @@ export default function FilterDashboardClient({
 								</div>
 							</div>
 
-							<div className="overflow-x-auto border rounded">
+							<div className="overflow-x-auto border rounded max-h-[360px] overflow-y-auto">
 								<table className="min-w-full text-sm">
 									<thead className="bg-gray-50">
 										<tr>

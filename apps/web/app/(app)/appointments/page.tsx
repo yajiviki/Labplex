@@ -47,7 +47,7 @@ const VISIT_TYPE_OPTS = [
 ] as const;
 const STATUS_OPTS = [
 	'TBI', 'On hold', 'Waiting for response', 'Not Responding', 'Rescheduled', 'Need Confirmation',
-	'Sample Collected', 'Medical Done', 'Cancelled', 'Report - InProgress', 'Report - Completed', 'Report - Submitted',
+	'Sample Collected', 'Medical Done', 'Cancelled', 'Report - InProgress', 'Report - Completed'
 ] as const;
 const PAYMENT_STATUS_OPTS = ['TBI', 'Paid', 'On Account'] as const;
 const SERVICE_TYPE_OPTS = ['Local', 'Outer Area', 'Others'] as const;

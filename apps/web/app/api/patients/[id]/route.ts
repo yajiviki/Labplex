@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { auth } from '../../../../lib/auth';
 import { prisma } from '../../../../lib/db';
 
-
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
 	try {
 		const session = await auth();
@@ -10,7 +9,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
 		const id = params.id;
 		const body = await req.json().catch(() => ({}));
-		const { name, address, phone, doctorName, vendorId, insuranceCompanyId } = body;
+		const { name, address, phone, doctorName } = body; // vendorId accepted but ignored
 
 		const normalizedPhone = (phone || '').toString().replace(/\D+/g, '');
 		if (!name?.trim() || !normalizedPhone) {
@@ -24,17 +23,24 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 				address: address || null,
 				phone: normalizedPhone,
 				doctorName: doctorName || null,
-				vendorId: vendorId || null,
-				insuranceCompanyId: insuranceCompanyId || null,
+				// vendorId removed (no longer in schema)
+				//insuranceCompanyId: insuranceCompanyId || null,
 			},
 			select: {
-				id: true, patientId: true, name: true, address: true, phone: true, doctorName: true,
-				vendorId: true, insuranceCompanyId: true,
-				vendor: { select: { id: true, tpaName: true, vendorId: true } },
-				insuranceCompany: { select: { id: true, name: true } },
+				id: true,
+				patientId: true,
+				name: true,
+				address: true,
+				phone: true,
+				doctorName: true,
+				// vendorId removed from select
+				//insuranceCompanyId: true,
+				// vendor relation removed
+				//insuranceCompany: { select: { id: true, name: true } },
 				createdAt: true,
 			},
 		});
+
 		return NextResponse.json(updated);
 	} catch (e: any) {
 		return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });

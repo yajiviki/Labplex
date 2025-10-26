@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: Welc0me@123
-      POSTGRES_DB: labplex_db
+      POSTGRES_DB: labplux_db
     ports:
       - "5432"
     volumes:

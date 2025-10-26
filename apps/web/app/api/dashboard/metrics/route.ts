@@ -97,7 +97,7 @@ export async function POST(req: Request) {
 				'submittedInRange',
 			),
 			safeCount(
-				{ ...whereBase, apptAt: { gte: fromDate, lte: toDate }, status: { in: SUBMITTED } },
+				{ ...whereBase, apptAt: { gte: fromDate, lte: toDate }, status: { in: [...SUBMITTED, "Medical Done"] } },
 				'uploadPending',
 			),
 		]);
@@ -107,7 +107,7 @@ export async function POST(req: Request) {
 			upcoming,
 			uploadPending,
 			outOfTat: 0,
-			totalInRange: `${submittedInRange} / ${totalInRange}`,
+			totalInRange: `${closed} / ${totalInRange}`,
 			closed,
 		};
 

@@ -19,7 +19,8 @@ export default async function DashboardPage() {
 		orderBy: { name: 'asc' },
 	});
 
-	const visibleLabs = (role === 'LAB_ADMIN' && userLabId)
+	//debugger;
+	const visibleLabs = (role === 'Super Admin' && userLabId)
 		? labs.filter(l => l.id === userLabId)
 		: labs;
 
@@ -53,7 +54,7 @@ export default async function DashboardPage() {
 				role={role}
 				labs={visibleLabs}
 				// default to “All Labs” on first load
-				initialLabId={'cmg3dgnge0000nmg4yz7cfy5r'}
+				initialLabId={''}
 				initialFrom={from.toISOString()}
 				initialTo={to.toISOString()}
 				initialMetrics={initialMetrics}

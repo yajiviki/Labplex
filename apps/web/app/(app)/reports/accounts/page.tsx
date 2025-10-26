@@ -18,7 +18,7 @@ export default async function AccountsPage() {
 	const from = toYmd(startOfMonth());
 	const to = toYmd(endOfMonth());
 
-	debugger;
+	//debugger;
 	// initial data for "All Labs + All TPA"
 
 	const res = await fetch('/api/reports/accounts', {
