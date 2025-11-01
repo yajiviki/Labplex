@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../../lib/db';
 
-// Generate next vendorId (TPAxx) from DB
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 async function nextVendorIdFromDb() {
 	const prefix = 'TPA';
 	const all = await prisma.vendor.findMany({
@@ -19,77 +21,53 @@ async function nextVendorIdFromDb() {
 	return `${prefix}${String(max + 1).padStart(2, '0')}`;
 }
 
-function normPhone(v: any) {
-	const s = String(v ?? '').replace(/\D+/g, '');
-	return s ? s : null;
-}
-function normStr(v: any) {
-	const s = String(v ?? '').trim();
-	return s ? s : null;
-}
-
 export async function POST(req: Request) {
 	try {
 		const body = await req.json().catch(() => ({}));
-		const rows = Array.isArray(body?.rows) ? body.rows : [];
+		const rows: Array<{
+			vendorId?: string | null;
+			tpaName: string;
+			nickName?: string | null;
+			address?: string | null;
+			phone?: string | null;
+			email?: string | null;
+		}> = Array.isArray(body?.rows) ? body.rows : [];
+
 		if (!rows.length) {
-			return NextResponse.json({ error: 'No rows provided', inserted: 0, upserted: 0, skipped: 0, total: 0 }, { status: 400 });
+			return NextResponse.json({ error: 'No rows provided' }, { status: 400 });
 		}
 
-		let inserted = 0;
-		let upserted = 0;
-		let skipped = 0;
+		let inserted = 0, upserted = 0, skipped = 0;
 
 		for (const r of rows) {
-			const tpaName = normStr(r?.tpaName);
+			const tpaName = String(r.tpaName || '').trim();
 			if (!tpaName) { skipped++; continue; }
 
-			let vendorId = normStr(r?.vendorId); // may be null
-			const nickName = normStr(r?.nickName); // ← added
-			const address = normStr(r?.address);
-			const phone = normPhone(r?.phone);
-			const email = normStr(r?.email);
+			const nickName = (r.nickName ? String(r.nickName).trim() : null) || null;
+			const address = (r.address ? String(r.address).trim() : null) || null;
+			const phone = ((r.phone ? String(r.phone) : '').replace(/\D+/g, '') || null);
+			const email = (r.email ? String(r.email).trim() : null) || null;
 
-			if (vendorId) {
-				const existing = await prisma.vendor.findUnique({ where: { vendorId } });
-				if (existing) {
-					await prisma.vendor.update({
-						where: { vendorId },
-						data: { tpaName, nickName, address, phone, email, isActive: 1 }, // ← nickName
-					});
-					upserted++;
-				} else {
-					await prisma.vendor.create({
-						data: { vendorId, tpaName, nickName, address, phone, email, isActive: 1 }, // ← nickName
-					});
-					inserted++;
-				}
-				continue;
-			}
+			let vendorId = r.vendorId ? String(r.vendorId).trim() : null;
+			if (!vendorId) vendorId = await nextVendorIdFromDb();
 
-			// No vendorId => try match by tpaName (case-insensitive)
-			const byName = await prisma.vendor.findFirst({
-				where: { tpaName: { equals: tpaName, mode: 'insensitive' } },
-			});
+			const existing = await prisma.vendor.findUnique({ where: { vendorId } });
 
-			if (byName) {
+			if (existing) {
 				await prisma.vendor.update({
-					where: { id: byName.id },
-					data: { tpaName, nickName, address, phone, email, isActive: 1 }, // ← nickName
+					where: { vendorId },
+					data: { tpaName, nickName, address, phone, email, isActive: 1 },
 				});
 				upserted++;
 			} else {
-				const nextCode = await nextVendorIdFromDb();
 				await prisma.vendor.create({
-					data: { vendorId: nextCode, tpaName, nickName, address, phone, email, isActive: 1 }, // ← nickName
+					data: { vendorId, tpaName, nickName, address, phone, email, isActive: 1 },
 				});
 				inserted++;
 			}
 		}
 
-		return NextResponse.json({
-			inserted, upserted, skipped, total: rows.length,
-		});
+		return NextResponse.json({ inserted, upserted, skipped });
 	} catch (e: any) {
 		return NextResponse.json({ error: e?.message || 'Import failed' }, { status: 500 });
 	}

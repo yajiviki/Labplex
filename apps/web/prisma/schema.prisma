@@ -5,6 +5,11 @@ datasource db {
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
+enum BillingStatus {
+  Paid
+  NotPaid
+}
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -16,7 +21,7 @@ model Lab {
   id        String   @id @default(cuid())
   labCode   String   @unique // e.g. LB01
   name      String
-  nickName  String? 
+  nickName  String?
   address   String?
   phone     String?
   email     String?
@@ -29,6 +34,7 @@ model Lab {
   appointments Appointment[]
   labVendors   LabVendor[]
   Patient      Patient[]
+  Billing      Billing[]
 }
 
 // ===========================================================
@@ -84,7 +90,7 @@ model Vendor {
   id        String   @id @default(cuid())
   vendorId  String
   tpaName   String
-  nickName  String? 
+  nickName  String?
   address   String?
   phone     String?
   email     String?
@@ -95,6 +101,7 @@ model Vendor {
   // Back-relations  
   appointments Appointment[] // appointments that reference this TPA
   labVendors   LabVendor[]
+  Billing      Billing[]
 
   @@unique([vendorId]) // strongly recommended so TPA01/TPA02 are unique
   @@index([tpaName])
@@ -115,7 +122,7 @@ model InsuranceCompany {
   id        String   @id @default(cuid())
   code      String?  @unique
   name      String
-  nickName  String? 
+  nickName  String?
   address   String? // ← make sure this exists
   phone     String?
   isActive  Int      @default(1)
@@ -209,8 +216,8 @@ model Appointment {
   //Patient   Patient? @relation(fields: [patientId], references: [id])
   //patientId String?
 
-  serviceType         String?   // e.g. 'Outer Area', 'Local', 'Walk-in'
-  paymentDate         DateTime? // when payment was made (if any)
+  serviceType String? // e.g. 'Outer Area', 'Local', 'Walk-in'
+  paymentDate DateTime? // when payment was made (if any)
 
   @@unique([clientRef, apptAt])
   @@index([apptAt])
@@ -218,4 +225,22 @@ model Appointment {
   @@index([vendorId])
   @@index([labId])
   @@index([insuranceCompanyId])
+}
+
+model Billing {
+  id       String        @id @default(cuid())
+  labId    String
+  vendorId String
+  paidDate DateTime
+  amount   Decimal       @db.Decimal(12, 2)
+  status   BillingStatus
+  remarks  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lab    Lab    @relation(fields: [labId], references: [id])
+  vendor Vendor @relation(fields: [vendorId], references: [id])
+
+  @@index([labId, vendorId, paidDate])
 }

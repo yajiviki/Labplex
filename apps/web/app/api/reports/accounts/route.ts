@@ -4,6 +4,20 @@ import { prisma } from '../../../../lib/db';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// --- Normalizers ---
+function normalizeServiceType(s?: string | null): 'Local' | 'Outer' | null {
+	const v = (s || '').trim().toLowerCase();
+	if (v === 'local' || v === 'l') return 'Local';
+	if (v === 'outer' || v === 'o') return 'Outer';
+	return null;
+}
+function normalizeVisitType(s?: string | null): 'HOME' | 'CENTER' | null {
+	const v = (s || '').trim().toLowerCase();
+	if (v === 'home' || v === 'h' || v === 'home visit') return 'HOME';
+	if (v === 'center' || v === 'centre' || v === 'c' || v === 'center visit' || v === 'centre visit') return 'CENTER';
+	return null;
+}
+
 function parseDateFlexible(s?: string) {
 	if (!s) return null;
 	let m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
@@ -14,6 +28,9 @@ function parseDateFlexible(s?: string) {
 }
 function endOfDay(d: Date) { return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999); }
 function toYmd(d: Date) { const pad = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+
+// We consider these statuses as "report completed"
+const COMPLETED_STATUSES = ['Report - Completed', 'Completed'];
 
 export async function POST(req: Request) {
 	try {
@@ -103,24 +120,26 @@ export async function POST(req: Request) {
       LEFT JOIN base b ON b.d = d.d
       ORDER BY d.d;`;
 
-		// ===== PIVOT (counts) with multi-lab filter (same as before) =====
-		const serviceTypes = ['Local', 'Outer'];
-		const visits = ['HOME', 'CENTER'];
-		const genders = ['Male', 'Female'];
+		// ===== PIVOT (only Report Completed) — normalized, no gender =====
+		const serviceTypes: ('Local' | 'Outer')[] = ['Local', 'Outer'];
+		const visits: ('HOME' | 'CENTER')[] = ['HOME', 'CENTER'];
 
 		const pivotWhere: any = {
 			isActive: 1,
 			apptAt: { gte: fromDate, lte: toDate },
+			status: { in: COMPLETED_STATUSES },            // <<<<<<<<<< ONLY completed
 			...(Array.isArray(pivotLabIds) && pivotLabIds.length ? { labId: { in: pivotLabIds } } : {}),
+			...(labId ? { labId } : {}),
+			...(vendorId ? { vendorId } : {}),
 		};
 
 		const raw = await prisma.appointment.findMany({
 			where: pivotWhere,
-			select: { labId: true, vendorId: true, serviceType: true, visitType: true, gender: true },
+			select: { labId: true, vendorId: true, serviceType: true, visitType: true },
 		});
 
-		const plabIds = Array.from(new Set(raw.map(r => r.labId).filter(Boolean)));
-		const pvenIds = Array.from(new Set(raw.map(r => r.vendorId).filter(Boolean)));
+		const plabIds = Array.from(new Set(raw.map(r => r.labId).filter(Boolean) as string[]));
+		const pvenIds = Array.from(new Set(raw.map(r => r.vendorId).filter(Boolean) as string[]));
 		const [plabs, pvens] = await Promise.all([
 			plabIds.length ? prisma.lab.findMany({ where: { id: { in: plabIds } }, select: { id: true, name: true } }) : Promise.resolve([]),
 			pvenIds.length ? prisma.vendor.findMany({ where: { id: { in: pvenIds } }, select: { id: true, tpaName: true } }) : Promise.resolve([]),
@@ -128,59 +147,69 @@ export async function POST(req: Request) {
 		const pLabName = new Map(plabs.map(l => [l.id, l.name]));
 		const pVenName = new Map(pvens.map(v => [v.id, v.tpaName]));
 
-		const key = (v: string | null, l: string | null, st: string | null, vt: string | null, g: string | null): string =>
-			`${v ?? ''}__${l ?? ''}__${st ?? ''}__${vt ?? ''}__${g ?? ''}`;
-		const counts = new Map<string, number>();
-		const rowPairs = new Set<string>();
+		type PivotRowInternal = {
+			vendorId: string | null;
+			labId: string | null;
+			tpaName: string;
+			labName: string;
+			localTotal: number;
+			outerTotal: number;
+			rowTotal: number;
+			cells: Record<string, number>;
+		};
+
+		const rowsMap = new Map<string, PivotRowInternal>();
+		const columnTotals: Record<string, number> = {};
+
+		const ensureRow = (vendorIdVal: string | null, labIdVal: string | null): PivotRowInternal => {
+			const key = `${vendorIdVal ?? ''}__${labIdVal ?? ''}`;
+			if (!rowsMap.has(key)) {
+				const cells: Record<string, number> = {};
+				for (const st of serviceTypes) for (const vt of visits) cells[`${st}__${vt}`] = 0;
+				rowsMap.set(key, {
+					vendorId: vendorIdVal,
+					labId: labIdVal,
+					tpaName: vendorIdVal ? (pVenName.get(vendorIdVal) || '-') : '—',
+					labName: labIdVal ? (pLabName.get(labIdVal) || '-') : '—',
+					localTotal: 0,
+					outerTotal: 0,
+					rowTotal: 0,
+					cells,
+				});
+			}
+			return rowsMap.get(key)!;
+		};
 
 		for (const r of raw) {
-			rowPairs.add(`${r.vendorId ?? ''}__${r.labId ?? ''}`);
-			if (!r.serviceType || !r.visitType || !r.gender) continue;
-			const k = key(r.vendorId, r.labId, r.serviceType, r.visitType, r.gender);
-			counts.set(k, (counts.get(k) || 0) + 1);
-		}
+			const st = normalizeServiceType(r.serviceType);
+			const vt = normalizeVisitType(r.visitType);
 
-		const rows: any[] = [];
-		for (const pair of Array.from(rowPairs)) {
-			const [vId, lId] = pair.split('__');
-			const vendorIdStr = vId || null;
-			const labIdStr = lId || null;
+			const row = ensureRow(r.vendorId ?? null, r.labId ?? null);
 
-			const cells: Record<string, number> = {};
-			let localTotal = 0, outerTotal = 0;
-
-			for (const st of serviceTypes) for (const vt of visits) for (const g of genders) {
-				const c = counts.get(key(vendorIdStr, labIdStr, st, vt, g)) || 0;
-				cells[`${st}__${vt}__${g}`] = c;
-				if (st === 'Local') localTotal += c;
-				else if (st === 'Outer') outerTotal += c;
+			if (st && vt) {
+				const k = `${st}__${vt}`;
+				row.cells[k] = (row.cells[k] ?? 0) + 1;
+				columnTotals[k] = (columnTotals[k] ?? 0) + 1;
+				if (st === 'Local') row.localTotal += 1;
+				if (st === 'Outer') row.outerTotal += 1;
 			}
-
-			rows.push({
-				vendorId: vendorIdStr,
-				tpaName: vendorIdStr ? (pVenName.get(vendorIdStr) || '-') : '—',
-				labId: labIdStr,
-				labName: labIdStr ? (pLabName.get(labIdStr) || '-') : '—',
-				localTotal,
-				outerTotal,
-				rowTotal: localTotal + outerTotal,
-				cells,
-			});
+			row.rowTotal += 1;
 		}
 
-		const columnTotals: Record<string, number> = {};
-		for (const st of serviceTypes) for (const vt of visits) for (const g of genders) {
-			const colKey = `${st}__${vt}__${g}`;
-			columnTotals[colKey] = rows.reduce((s, r) => s + (r.cells[colKey] || 0), 0);
+		for (const st of serviceTypes) for (const vt of visits) {
+			const k = `${st}__${vt}`;
+			if (!(k in columnTotals)) columnTotals[k] = 0;
 		}
-		const totalLocal = rows.reduce((s, r) => s + (r.localTotal || 0), 0);
-		const totalOuter = rows.reduce((s, r) => s + (r.outerTotal || 0), 0);
+
+		const rows = Array.from(rowsMap.values());
+		const totalLocal = rows.reduce((s, r) => s + r.localTotal, 0);
+		const totalOuter = rows.reduce((s, r) => s + r.outerTotal, 0);
 		const grandTotal = totalLocal + totalOuter;
 
 		return NextResponse.json({
 			table,
 			trend: trend.map(r => ({ date: toYmd(new Date(r.d)), amount: Number(r.amt) })),
-			pivot: { serviceTypes, visits, genders, rows, totalLocal, totalOuter, grandTotal, columnTotals },
+			pivot: { serviceTypes, visits, rows, totalLocal, totalOuter, grandTotal, columnTotals },
 		});
 	} catch (e: any) {
 		console.error('[reports/accounts] fatal:', e?.message, e?.stack);

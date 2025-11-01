@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../../lib/db';
 
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 export async function PUT(
 	req: Request,
 	{ params }: { params: { id: string } }
@@ -12,23 +15,21 @@ export async function PUT(
 		const tpaName = String(body?.tpaName || '').trim();
 		if (!tpaName) return NextResponse.json({ error: 'TPA Name is required.' }, { status: 400 });
 
-		const phone = (String(body?.phone || '') || '').replace(/\D+/g, '') || null;
-		const address = (String(body?.address || '') || '').trim() || null;
-		const email = (String(body?.email || '') || '').trim() || null;
-		const nickName = (String(body?.nickName || '') || '').trim() || null; // ← added
+		const data: any = {
+			tpaName,
+			nickName: (String(body?.nickName || '').trim() || null),
+			address: (String(body?.address || '').trim() || null),
+			phone: ((String(body?.phone || '')).replace(/\D+/g, '') || null),
+			email: (String(body?.email || '').trim() || null),
+		};
 
-		// Do NOT change vendorId here (keep code stable)
+		// vendorId stays immutable here; if you want to allow edits, add it with validation.
+
 		const updated = await prisma.vendor.update({
 			where: { id },
-			data: {
-				tpaName,
-				nickName, // ← added
-				address,
-				phone,
-				email,
-			},
+			data,
 			select: {
-				id: true, vendorId: true, tpaName: true, nickName: true, address: true, phone: true, email: true, createdAt: true,
+				id: true, vendorId: true, tpaName: true, nickName: true, address: true, phone: true, email: true, isActive: true, createdAt: true,
 			},
 		});
 
@@ -44,8 +45,15 @@ export async function DELETE(
 ) {
 	try {
 		const id = params.id;
-		await prisma.vendor.delete({ where: { id } });
-		return NextResponse.json({ ok: true });
+
+		// Soft delete (preferred so Lab mappings don’t explode)
+		const out = await prisma.vendor.update({
+			where: { id },
+			data: { isActive: 0 },
+			select: { id: true },
+		});
+
+		return NextResponse.json({ ok: true, id: out.id });
 	} catch (e: any) {
 		return NextResponse.json({ error: e?.message || 'Delete failed' }, { status: 500 });
 	}

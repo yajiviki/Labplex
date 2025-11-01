@@ -1,7 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Building2, Workflow, CalendarRange, Undo2, X, ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+	Building2, Workflow, CalendarRange, Undo2, X,
+	ChevronDown, ChevronUp, Download, Image as ImageIcon, FileDown
+} from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts';
 
 type LabLite = { id: string; name: string };
@@ -20,7 +23,7 @@ type TableRow = {
 };
 type TrendRow = { date: string; amount: number };
 
-// ---------- PIVOT TYPES (gender removed) ----------
+// ---------- PIVOT TYPES ----------
 type PivotRow = {
 	vendorId: string | null;
 	tpaName: string;
@@ -38,7 +41,7 @@ type PivotPayload = {
 	totalLocal: number;
 	totalOuter: number;
 	grandTotal: number;
-	columnTotals: Record<string, number>; // keys = st__vt
+	columnTotals: Record<string, number>;
 };
 
 type PresetKey =
@@ -116,12 +119,12 @@ export default function AccountsReportClient({
 		apptAt: string;
 		labName: string | null;
 		tpaName: string | null;
-		insuranceNickName: string | null; // new
+		insuranceNickName: string | null;
 		clientName: string | null;
 		status: string | null;
 		visitType: string | null;
 		serviceType: string | null;
-		extraChargeRs: number | null; // new
+		extraChargeRs: number | null;
 	};
 	const [detailOpen, setDetailOpen] = useState(false);
 	const [detailTitle, setDetailTitle] = useState('');
@@ -211,21 +214,20 @@ export default function AccountsReportClient({
 	const pivotKeysDetailed: string[] = useMemo(() => {
 		if (!pivot) return [];
 		const keys: string[] = [];
-		for (const st of pivot.serviceTypes) {
-			for (const vt of pivot.visits) {
-				keys.push(`${st}__${vt}`);
-			}
+		for (const st of pivot.serviceTypes) for (const vt of pivot.visits) {
+			keys.push(`${st}__${vt}`);
 		}
 		return keys;
 	}, [pivot]);
 
-	// ---------- DETAIL MODAL loader (supports extraMissing) ----------
+	// ---------- DETAIL MODAL loader (with reportCompletedOnly=true for pivot clicks) ----------
 	async function openDetails(title: string, filters: {
 		labId?: string | null;
 		vendorId?: string | null;
 		serviceType?: string | null;
 		visitType?: string | null;
-		extraMissing?: boolean; // new
+		extraMissing?: boolean;
+		reportCompletedOnly?: boolean; // default true for pivot
 	}) {
 		setDetailTitle(title);
 		setDetailOpen(true);
@@ -268,7 +270,6 @@ export default function AccountsReportClient({
 		setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
 	}
 
-	// Export ALL missing-extra rows (based on current toolbar filters) from the summary card icon
 	async function exportAllMissingCSV() {
 		try {
 			const effLabId = labId || null;
@@ -305,7 +306,6 @@ export default function AccountsReportClient({
 		}
 	}
 
-	// Detail modal CSV (for the opened slice)
 	function downloadCSV() {
 		const headers = [
 			{ key: 'apptAt', label: 'App. Date' },
@@ -341,16 +341,16 @@ export default function AccountsReportClient({
 
 	const sortedTable: TableRow[] = useMemo(() => {
 		const arr = [...table];
-		const safe = (v: string | null | undefined) => (v ?? '').toString().toLowerCase();
+		const safeStr = (v: string | null | undefined) => (v ?? '').toString().toLowerCase();
 		arr.sort((a, b) => {
 			let cmp = 0;
 			if (sSortKey === 'tpa') {
-				const av = safe(a.tpaNickName ?? a.tpaName);
-				const bv = safe(b.tpaNickName ?? b.tpaName);
+				const av = safeStr(a.tpaNickName ?? a.tpaName);
+				const bv = safeStr(b.tpaNickName ?? b.tpaName);
 				cmp = av > bv ? 1 : av < bv ? -1 : 0;
 			} else if (sSortKey === 'lab') {
-				const av = safe(a.labNickName ?? a.labName);
-				const bv = safe(b.labNickName ?? b.labName);
+				const av = safeStr(a.labNickName ?? a.labName);
+				const bv = safeStr(b.labNickName ?? b.labName);
 				cmp = av > bv ? 1 : av < bv ? -1 : 0;
 			} else if (sSortKey === 'amount') {
 				const av = a.totalExtra ?? 0;
@@ -382,12 +382,12 @@ export default function AccountsReportClient({
 		);
 	};
 
-	const SortHdr = ({ k, children }: { k: DetailSortKey; children: React.ReactNode }) => {
+	const SortHdr = ({ k, children }: { k: any; children: React.ReactNode }) => {
 		const active = dSortKey === k;
 		return (
 			<th
 				className="px-3 py-2 text-left text-sm font-semibold text-gray-700 cursor-pointer select-none whitespace-nowrap"
-				onClick={() => toggleDSort(k)}
+				onClick={() => { if (k === dSortKey) setDSortDir(dSortDir === 'asc' ? 'desc' : 'asc'); else { setDSortKey(k); setDSortDir('asc'); } }}
 				title="Sort"
 			>
 				<div className="inline-flex items-center gap-1">
@@ -397,6 +397,100 @@ export default function AccountsReportClient({
 			</th>
 		);
 	};
+
+	// ====== EXPORT PNG/PDF (whole pivot, not just visible viewport) ======
+	const pivotRef = useRef<HTMLDivElement | null>(null);
+
+	async function withPivotExpanded<T>(fn: () => Promise<T>): Promise<T> {
+		if (!pivotRef.current) return fn();
+		// The scroll container we use in JSX below
+		const scroller = pivotRef.current.querySelector<HTMLElement>('[data-pivot-scroll]');
+		// Any sticky header rows
+		const stickies = Array.from(pivotRef.current.querySelectorAll<HTMLElement>('[data-sticky]'));
+
+		// Save inline styles to restore later
+		const restore: Array<[HTMLElement, Partial<CSSStyleDeclaration>]> = [];
+		if (scroller) {
+			restore.push([scroller, { maxHeight: scroller.style.maxHeight, overflowY: scroller.style.overflowY }]);
+			scroller.style.maxHeight = 'unset';
+			scroller.style.overflowY = 'visible';
+		}
+		stickies.forEach(el => {
+			restore.push([el, { position: el.style.position, top: el.style.top, zIndex: el.style.zIndex, background: el.style.background }]);
+			el.style.position = 'static';
+			el.style.top = 'auto';
+			el.style.zIndex = 'auto';
+			el.style.background = 'transparent';
+		});
+
+		// Wait a tick for layout to settle
+		await new Promise(r => setTimeout(r, 0));
+
+		try {
+			return await fn();
+		} finally {
+			// restore styles
+			restore.forEach(([el, st]) => {
+				if ('maxHeight' in st && st.maxHeight !== undefined) el.style.maxHeight = st.maxHeight as string;
+				if ('overflowY' in st && st.overflowY !== undefined) el.style.overflowY = st.overflowY as string;
+				if ('position' in st && st.position !== undefined) el.style.position = st.position as string;
+				if ('top' in st && st.top !== undefined) el.style.top = st.top as string;
+				if ('zIndex' in st && st.zIndex !== undefined) el.style.zIndex = st.zIndex as string;
+				if ('background' in st && st.background !== undefined) el.style.background = st.background as string;
+			});
+		}
+	}
+
+	async function exportPivotPNG() {
+		if (!pivotRef.current) return;
+		const html2canvas = (await import('html2canvas')).default;
+
+		await withPivotExpanded(async () => {
+			const canvas = await html2canvas(pivotRef.current!, {
+				scale: 2,
+				useCORS: true,
+				backgroundColor: '#ffffff',
+				scrollY: -window.scrollY, // avoid offset
+			});
+			const dataUrl = canvas.toDataURL('image/png');
+			const a = document.createElement('a');
+			a.href = dataUrl;
+			a.download = `appointments-pivot-${from}_to_${to}.png`;
+			document.body.appendChild(a); a.click(); a.remove();
+		});
+	}
+
+	async function exportPivotPDF() {
+		if (!pivotRef.current) return;
+		const html2canvas = (await import('html2canvas')).default;
+		const { jsPDF } = await import('jspdf');
+
+		await withPivotExpanded(async () => {
+			const canvas = await html2canvas(pivotRef.current!, {
+				scale: 2,
+				useCORS: true,
+				backgroundColor: '#ffffff',
+				scrollY: -window.scrollY,
+			});
+			const imgData = canvas.toDataURL('image/png');
+
+			const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+			const pageWidth = pdf.internal.pageSize.getWidth();
+			const pageHeight = pdf.internal.pageSize.getHeight();
+
+			const imgW = canvas.width;
+			const imgH = canvas.height;
+			const ratio = Math.min(pageWidth / imgW, pageHeight / imgH);
+			const w = imgW * ratio;
+			const h = imgH * ratio;
+			const x = (pageWidth - w) / 2;
+			const y = (pageHeight - h) / 2;
+
+			pdf.text(`Appointments Informations (Report Completed) — ${from} to ${to}`, 36, 36);
+			pdf.addImage(imgData, 'PNG', x, y, w, h);
+			pdf.save(`appointments-pivot-${from}_to_${to}.pdf`);
+		});
+	}
 
 	return (
 		<div className="space-y-4">
@@ -478,7 +572,6 @@ export default function AccountsReportClient({
 				<div className="rounded-xl border bg-white p-4 shadow-sm lg:col-span-1">
 					<div className="flex items-center justify-between mb-3">
 						<h3 className="font-semibold">Extra Amount Summary</h3>
-						{/* Download ALL missing as CSV */}
 						<button
 							type="button"
 							onClick={exportAllMissingCSV}
@@ -566,46 +659,68 @@ export default function AccountsReportClient({
 				</div>
 			</div>
 
-			{/* ---------- PIVOT (counts) — with multi-select Labs filter on header ---------- */}
-			<div className="rounded-xl border bg-white p-4 shadow-sm">
+			{/* ---------- PIVOT (only Report Completed) ---------- */}
+			<div className="rounded-xl border bg-white p-4 shadow-sm" ref={pivotRef}>
 				<div className="flex items-center justify-between mb-3">
-					<h3 className="text-base font-semibold">Appointments Informations</h3>
+					<h3 className="text-base font-semibold">Appointments Informations <span className="text-gray-500 text-sm">(Report Completed)</span></h3>
 
-					{/* Pivot Lab multi-select */}
-					<div className="relative">
+					<div className="flex items-center gap-2">
+						{/* Export buttons */}
 						<button
 							type="button"
+							onClick={exportPivotPNG}
 							className="inline-flex items-center gap-2 border rounded px-3 py-1.5 text-sm"
-							onClick={() => setPivotLabOpen(v => !v)}
-							title="Filter labs for Pivot table"
+							title="Export as PNG image"
 						>
-							<Building2 className="h-4 w-4" />
-							Labs: {pivotSelectedLabel}
-							<ChevronDown className="h-4 w-4 opacity-70" />
+							<ImageIcon className="h-4 w-4" />
+							PNG
+						</button>
+						<button
+							type="button"
+							onClick={exportPivotPDF}
+							className="inline-flex items-center gap-2 border rounded px-3 py-1.5 text-sm"
+							title="Export as PDF"
+						>
+							<FileDown className="h-4 w-4" />
+							PDF
 						</button>
 
-						{pivotLabOpen && (
-							<div className="absolute right-0 z-20 mt-1 w-72 rounded border bg-white shadow p-2">
-								<div className="flex items-center justify-between px-2 py-1">
-									<button className="text-xs underline" onClick={() => toggleAllPivotLabs(true)}>Select all</button>
-									<button className="text-xs underline" onClick={() => toggleAllPivotLabs(false)}>Clear</button>
+						{/* Pivot Lab multi-select */}
+						<div className="relative">
+							<button
+								type="button"
+								className="inline-flex items-center gap-2 border rounded px-3 py-1.5 text-sm"
+								onClick={() => setPivotLabOpen(v => !v)}
+								title="Filter labs for Pivot table"
+							>
+								<Building2 className="h-4 w-4" />
+								Labs: {pivotSelectedLabel}
+								<ChevronDown className="h-4 w-4 opacity-70" />
+							</button>
+
+							{pivotLabOpen && (
+								<div className="absolute right-0 z-20 mt-1 w-72 rounded border bg-white shadow p-2">
+									<div className="flex items-center justify-between px-2 py-1">
+										<button className="text-xs underline" onClick={() => toggleAllPivotLabs(true)}>Select all</button>
+										<button className="text-xs underline" onClick={() => toggleAllPivotLabs(false)}>Clear</button>
+									</div>
+									<div className="max-h-64 overflow-y-auto pr-1">
+										{labs.map(l => {
+											const checked = pivotLabIds.includes(l.id);
+											return (
+												<label key={l.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer">
+													<input type="checkbox" checked={checked} onChange={(e) => togglePivotLab(l.id, e.target.checked)} />
+													<span className="text-sm">{l.name}</span>
+												</label>
+											);
+										})}
+									</div>
+									<div className="pt-2 flex justify-end gap-2">
+										<button className="border rounded px-3 py-1.5 text-sm" onClick={() => setPivotLabOpen(false)}>Close</button>
+									</div>
 								</div>
-								<div className="max-h-64 overflow-y-auto pr-1">
-									{labs.map(l => {
-										const checked = pivotLabIds.includes(l.id);
-										return (
-											<label key={l.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer">
-												<input type="checkbox" checked={checked} onChange={(e) => togglePivotLab(l.id, e.target.checked)} />
-												<span className="text-sm">{l.name}</span>
-											</label>
-										);
-									})}
-								</div>
-								<div className="pt-2 flex justify-end gap-2">
-									<button className="border rounded px-3 py-1.5 text-sm" onClick={() => setPivotLabOpen(false)}>Close</button>
-								</div>
-							</div>
-						)}
+							)}
+						</div>
 					</div>
 				</div>
 
@@ -619,22 +734,23 @@ export default function AccountsReportClient({
 					<div className="text-sm text-gray-500">No data</div>
 				) : (
 					<div className="w-full overflow-x-auto">
-						<div className="max-h-[520px] overflow-y-auto border rounded">
-							<table className="min-w-[1000px] text-sm">
-								<thead className="bg-gray-50 sticky top-0 z-10">
+						{/* NOTE: this is the vertical scroller we temporarily disable during export */}
+						<div className="max-h-[520px] overflow-y-auto border rounded" data-pivot-scroll>
+							<table className="min-w-[1200px] text-sm">
+								<thead className="bg-gray-50 sticky top-0 z-10" data-sticky>
 									<tr>
 										<th className="px-3 py-2 text-left font-semibold">TPA NAME</th>
 										<th className="px-3 py-2 text-left font-semibold">LAB NAME</th>
 										<th className="px-3 py-2 text-right font-semibold">Local</th>
 										<th className="px-3 py-2 text-right font-semibold">Outer</th>
 										<th className="px-3 py-2 text-right font-semibold">Total cases (Local + Outer)</th>
-										{pivot.serviceTypes.map(st =>
+										{pivot.serviceTypes.map(st => (
 											pivot.visits.map(vt => (
 												<th key={`${st}__${vt}`} className="px-3 py-2 text-center font-semibold">
 													{st} Cases ({visitLabel(vt)})
 												</th>
 											))
-										)}
+										))}
 									</tr>
 								</thead>
 								<tbody>
@@ -650,7 +766,9 @@ export default function AccountsReportClient({
 												<td
 													className="px-3 py-2 text-right cursor-pointer hover:underline"
 													title="Show details"
-													onClick={() => openDetails(`${r.tpaName} → ${r.labName} • Local`, { vendorId: r.vendorId, labId: r.labId, serviceType: 'Local' })}
+													onClick={() => openDetails(`${r.tpaName} → ${r.labName} • Local`, {
+														vendorId: r.vendorId, labId: r.labId, serviceType: 'Local', reportCompletedOnly: true
+													})}
 												>
 													{r.localTotal.toLocaleString()}
 												</td>
@@ -659,7 +777,9 @@ export default function AccountsReportClient({
 												<td
 													className="px-3 py-2 text-right cursor-pointer hover:underline"
 													title="Show details"
-													onClick={() => openDetails(`${r.tpaName} → ${r.labName} • Outer`, { vendorId: r.vendorId, labId: r.labId, serviceType: 'Outer' })}
+													onClick={() => openDetails(`${r.tpaName} → ${r.labName} • Outer`, {
+														vendorId: r.vendorId, labId: r.labId, serviceType: 'Outer', reportCompletedOnly: true
+													})}
 												>
 													{r.outerTotal.toLocaleString()}
 												</td>
@@ -668,12 +788,14 @@ export default function AccountsReportClient({
 												<td
 													className="px-3 py-2 text-right font-medium cursor-pointer hover:underline"
 													title="Show details"
-													onClick={() => openDetails(`${r.tpaName} → ${r.labName} • Total`, { vendorId: r.vendorId, labId: r.labId })}
+													onClick={() => openDetails(`${r.tpaName} → ${r.labName} • Total`, {
+														vendorId: r.vendorId, labId: r.labId, reportCompletedOnly: true
+													})}
 												>
 													{r.rowTotal.toLocaleString()}
 												</td>
 
-												{/* Detailed cells by ServiceType × VisitType */}
+												{/* Detailed cells */}
 												{pivotKeysDetailed.map((k) => {
 													const [st, vt] = k.split('__');
 													return (
@@ -682,10 +804,7 @@ export default function AccountsReportClient({
 															className="px-3 py-2 text-center cursor-pointer hover:underline"
 															title="Show details"
 															onClick={() => openDetails(`${r.tpaName} → ${r.labName} • ${st} • ${visitLabel(vt)}`, {
-																vendorId: r.vendorId,
-																labId: r.labId,
-																serviceType: st,
-																visitType: vt,
+																vendorId: r.vendorId, labId: r.labId, serviceType: st, visitType: vt, reportCompletedOnly: true
 															})}
 														>
 															{(r.cells[k] ?? 0).toLocaleString()}
@@ -697,7 +816,7 @@ export default function AccountsReportClient({
 									)}
 								</tbody>
 								{pivot.rows.length > 0 && (
-									<tfoot>
+									<tfoot data-sticky /* also disable stickiness on export */>
 										<tr className="border-t bg-gray-50">
 											<td className="px-3 py-2 font-semibold">Over all Cases</td>
 											<td className="px-3 py-2" />
@@ -748,15 +867,15 @@ export default function AccountsReportClient({
 											<thead className="bg-gray-50 sticky top-0 z-10">
 												<tr>
 													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 w-16">S.No</th>
-													<SortHdr k="apptAt">App. Date</SortHdr>
-													<SortHdr k="tpaName">TPA Name</SortHdr>
-													<SortHdr k="labName">Lab Name</SortHdr>
-													<SortHdr k="insuranceNickName">Insurance Nick name</SortHdr>
-													<SortHdr k="clientName">Client Name</SortHdr>
-													<SortHdr k="status">Status</SortHdr>
-													<SortHdr k="visitType">Visit Type</SortHdr>
-													<SortHdr k="serviceType">Service Type</SortHdr>
-													<SortHdr k="extraChargeRs">Extra Amount</SortHdr>
+													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">App. Date</th>
+													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">TPA Name</th>
+													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Lab Name</th>
+													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Insurance Nick name</th>
+													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Client Name</th>
+													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Status</th>
+													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Visit Type</th>
+													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Service Type</th>
+													<th className="px-3 py-2 text-right text-sm font-semibold text-gray-700">Extra Amount</th>
 												</tr>
 											</thead>
 											<tbody>

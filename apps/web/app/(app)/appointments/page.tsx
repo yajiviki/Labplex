@@ -50,7 +50,7 @@ const STATUS_OPTS = [
 	'Sample Collected', 'Medical Done', 'Cancelled', 'Report - InProgress', 'Report - Completed'
 ] as const;
 const PAYMENT_STATUS_OPTS = ['TBI', 'Paid', 'On Account'] as const;
-const SERVICE_TYPE_OPTS = ['Local', 'Outer Area', 'Others'] as const;
+const SERVICE_TYPE_OPTS = ['Local', 'Outer', 'Others'] as const;
 
 /* ========= Helpers ========= */
 

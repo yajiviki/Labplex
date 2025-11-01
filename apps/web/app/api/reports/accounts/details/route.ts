@@ -13,11 +13,25 @@ function parseDateFlexible(s?: string) {
 	return null;
 }
 function endOfDay(d: Date) { return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999); }
+function normalizeServiceType(s?: string | null): 'Local' | 'Outer' | null {
+	const v = (s || '').trim().toLowerCase();
+	if (v === 'local' || v === 'l') return 'Local';
+	if (v === 'outer' || v === 'o') return 'Outer';
+	return null;
+}
+function normalizeVisitType(s?: string | null): 'HOME' | 'CENTER' | null {
+	const v = (s || '').trim().toLowerCase();
+	if (v === 'home' || v === 'h' || v === 'home visit') return 'HOME';
+	if (v === 'center' || v === 'centre' || v === 'c' || v === 'center visit' || v === 'centre visit') return 'CENTER';
+	return null;
+}
+
+const COMPLETED_STATUSES = ['Report - Completed', 'Completed'];
 
 export async function POST(req: Request) {
 	try {
 		const body = await req.json();
-		const { from, to, labId, vendorId, serviceType, visitType, gender, extraMissing } = body || {};
+		const { from, to, labId, vendorId, serviceType, visitType, extraMissing, reportCompletedOnly } = body || {};
 
 		const fromDate = parseDateFlexible(from);
 		const toStart = parseDateFlexible(to);
@@ -27,16 +41,11 @@ export async function POST(req: Request) {
 		const where: any = {
 			isActive: 1,
 			apptAt: { gte: fromDate, lte: toDate },
+			...(labId ? { labId } : {}),
+			...(vendorId ? { vendorId } : {}),
+			...(reportCompletedOnly ? { status: { in: COMPLETED_STATUSES } } : {}), // default true in client for pivot clicks
+			...(extraMissing ? { OR: [{ extraChargeRs: null }, { extraChargeRs: 0 }] } : {}),
 		};
-		if (labId) where.labId = labId;
-		if (vendorId) where.vendorId = vendorId;
-		if (serviceType) where.serviceType = serviceType;
-		if (visitType) where.visitType = visitType;
-		if (gender) where.gender = gender;
-		if (extraMissing) {
-			// treat null OR 0 as missing amount
-			where.OR = [{ extraChargeRs: null }, { extraChargeRs: 0 }];
-		}
 
 		const rows = await prisma.appointment.findMany({
 			where,
@@ -45,7 +54,6 @@ export async function POST(req: Request) {
 				id: true,
 				apptAt: true,
 				clientName: true,
-				gender: true,
 				status: true,
 				visitType: true,
 				serviceType: true,
@@ -56,20 +64,28 @@ export async function POST(req: Request) {
 			},
 		});
 
-		// shape for client
-		const shaped = rows.map(r => ({
-			id: r.id,
-			apptAt: r.apptAt.toISOString(),
-			labName: r.lab?.nickName ?? r.lab?.name ?? null,
-			tpaName: r.vendor?.nickName ?? r.vendor?.tpaName ?? null,
-			insuranceNickName: r.insuranceCompany?.nickName ?? r.insuranceCompany?.name ?? null,
-			clientName: r.clientName ?? null,
-			gender: r.gender ?? null,
-			status: r.status ?? null,
-			visitType: r.visitType ?? null,
-			serviceType: r.serviceType ?? null,
-			extraChargeRs: r.extraChargeRs ?? null,
-		}));
+		const wantST = normalizeServiceType(serviceType ?? null);
+		const wantVT = normalizeVisitType(visitType ?? null);
+
+		const shaped = rows
+			.map(r => {
+				const st = normalizeServiceType(r.serviceType);
+				const vt = normalizeVisitType(r.visitType);
+				return {
+					id: r.id,
+					apptAt: r.apptAt.toISOString(),
+					labName: r.lab?.nickName ?? r.lab?.name ?? null,
+					tpaName: r.vendor?.nickName ?? r.vendor?.tpaName ?? null,
+					insuranceNickName: r.insuranceCompany?.nickName ?? r.insuranceCompany?.name ?? null,
+					clientName: r.clientName ?? null,
+					status: r.status ?? null,
+					visitType: vt,
+					serviceType: st,
+					extraChargeRs: r.extraChargeRs ?? null,
+				};
+			})
+			.filter(r => (wantST ? r.serviceType === wantST : true))
+			.filter(r => (wantVT ? r.visitType === wantVT : true));
 
 		return NextResponse.json({ rows: shaped });
 	} catch (e: any) {
