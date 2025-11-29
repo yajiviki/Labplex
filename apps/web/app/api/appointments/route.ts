@@ -30,6 +30,7 @@ function parseISOOrNull(v?: string | null) {
  */
 export async function GET(req: Request) {
 	try {
+		// debugger;
 		const session = await auth();
 		const sessionLabId = (session as any)?.labId as string | undefined;
 
@@ -60,6 +61,7 @@ export async function GET(req: Request) {
 				{ clientRef: { contains: q, mode: 'insensitive' } },
 				{ phone: { contains: q, mode: 'insensitive' } },
 				{ location: { contains: q, mode: 'insensitive' } },
+				{ vendor: { contains: q, mode: 'insensitive' } },
 			];
 		}
 		if (status) where.status = status;

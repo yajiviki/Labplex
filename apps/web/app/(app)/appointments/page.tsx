@@ -430,15 +430,34 @@ export default function AppointmentsPage() {
 
 	const filtered = useMemo(() => {
 		const term = q.trim().toLowerCase();
+
 		const base = rows.filter(r => {
-			const textOk = term
-				? [r.clientName, r.clientRef, r.phone, r.location, r.serviceType].filter(Boolean)
-					.some(v => String(v).toLowerCase().includes(term))
-				: true;
+			// date, status, lab filters
 			const dateOk = inDateRangeDateOnly(r.apptAt, fDateFrom, fDateTo);
 			const stOk = fStatus ? (r.status === fStatus) : true;
 			const labOk = fLabId ? (r.labId === fLabId) : true;
-			return textOk && dateOk && stOk && labOk;
+			if (!(dateOk && stOk && labOk)) return false;
+
+			// free-text search over client/phone/etc + LAB + TPA(VENDOR)
+			if (!term) return true;
+
+			const lab = labs.find(l => l.id === r.labId);
+			const vendor =
+				lab?.vendors?.find(v => v.id === r.vendorId) ||
+				vendors.find(v => v.id === r.vendorId);
+
+			const haystack = [
+				// existing fields
+				r.clientName, r.clientRef, r.phone, r.location, r.serviceType,
+				// LAB fields
+				lab?.name, lab?.nickName, lab?.labCode,
+				// TPA / Vendor fields
+				vendor?.tpaName, vendor?.nickName, vendor?.vendorId,
+			]
+				.filter(Boolean)
+				.map(s => String(s).toLowerCase());
+
+			return haystack.some(s => s.includes(term));
 		});
 
 		const sorted = [...base].sort((a, b) => {
@@ -448,6 +467,7 @@ export default function AppointmentsPage() {
 			const cmp = va > vb ? 1 : -1;
 			return sortDir === 'asc' ? cmp : -cmp;
 		});
+
 		return sorted;
 	}, [rows, q, sortKey, sortDir, fDateFrom, fDateTo, fStatus, fLabId, labs, vendors, insurers]);
 
@@ -712,17 +732,29 @@ export default function AppointmentsPage() {
 					</div>
 					<div className="flex items-center gap-2">
 						{selectedRowId && (
-							<button
-								type="button"
-								className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
-								onClick={() => { setDelErr(null); setDelOpen(true); }}
-								title="Delete (soft delete)"
-							>
-								<Trash2 className="h-4 w-4" />
-								Delete
-							</button>
+							<>
+								<button
+									type="button"
+									className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm hover:bg-gray-50"
+									onClick={() => window.open(`/appointments/receipt/${selectedRowId}`, '_blank', 'noopener')}
+									title="Print / Save Receipt"
+								>
+									Print
+								</button>
+
+								<button
+									type="button"
+									className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+									onClick={() => { setDelErr(null); setDelOpen(true); }}
+									title="Delete (soft delete)"
+								>
+									<Trash2 className="h-4 w-4" />
+									Delete
+								</button>
+							</>
 						)}
 					</div>
+
 				</div>
 
 				{/* Table */}
