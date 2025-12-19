@@ -85,6 +85,25 @@ type DetailRow = {
 
 type DetailKind = 'today' | 'upcoming' | 'uploadPending';
 
+// Convert date-only (YYYY-MM-DD) to full-day ISO boundaries in UTC (stable on server)
+function dayBoundsToISO(fromYmd?: string, toYmd?: string) {
+	const toISO = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString();
+	let fromISO: string | null = null;
+	let toISOEnd: string | null = null;
+
+	if (fromYmd) {
+		const [y, m, d] = fromYmd.split('-').map(Number);
+		const from = new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
+		fromISO = toISO(from);
+	}
+	if (toYmd) {
+		const [y, m, d] = toYmd.split('-').map(Number);
+		const to = new Date(y, (m ?? 1) - 1, d ?? 1, 23, 59, 59, 999);
+		toISOEnd = toISO(to);
+	}
+	return { fromISO, toISOEnd };
+}
+
 export default function FilterDashboardClient({
 	role, labs, initialLabId, initialFrom, initialTo, initialMetrics,
 }: {
@@ -129,7 +148,6 @@ export default function FilterDashboardClient({
 			});
 			const raw = await res.json();
 			if (!res.ok) throw new Error(raw?.error || 'Failed to load metrics');
-			//debugger;
 			setMetrics(normalizeMetrics(raw));
 		} catch (e: any) {
 			setErr(e?.message || 'Network error');
@@ -184,7 +202,14 @@ export default function FilterDashboardClient({
 		setTo(toYmd(t));
 	}
 
-	// ----- details loader -----
+	// helper (top of file, near other helpers)
+	function todayYmd() {
+		const d = new Date();
+		const pad = (n: number) => String(n).padStart(2, '0');
+		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+	}
+
+	// ----- details loader (updated) -----
 	async function openDetails(kind: DetailKind, title: string) {
 		setModalTitle(title);
 		setDetailKind(kind);
@@ -193,15 +218,64 @@ export default function FilterDashboardClient({
 		setDetailLoading(true);
 		setQ(''); setPage(1); setSortKey('apptAt'); setSortDir('desc');
 
+		// Most routes expect YMD; also force today range for "today"
+		const ymdFrom = kind === 'today' ? todayYmd() : (from || null);
+		const ymdTo = kind === 'today' ? todayYmd() : (to || null);
+
+		// 1) Try YMD (old contract)
+		const bodyYmd = {
+			kind,                       // 'today' | 'upcoming' | 'uploadPending'
+			labId: labId || null,
+			from: ymdFrom,              // e.g. "2025-11-29"
+			to: ymdTo,
+		};
+
+		// 2) ISO fallback (newer contract, if your API accepts)
+		const toISO = (d: string | null) => {
+			if (!d) return null;
+			const [y, m, dd] = d.split('-').map(Number);
+			const start = new Date(y, (m ?? 1) - 1, dd ?? 1, 0, 0, 0, 0);
+			const end = new Date(y, (m ?? 1) - 1, dd ?? 1, 23, 59, 59, 999);
+			return {
+				startISO: new Date(start.getTime() - start.getTimezoneOffset() * 60000).toISOString(),
+				endISO: new Date(end.getTime() - end.getTimezoneOffset() * 60000).toISOString()
+			};
+		};
+		const iso = toISO(ymdFrom && ymdTo ? ymdFrom : null);
+
 		try {
-			const res = await fetch('/api/dashboard/details', {
+			let res = await fetch('/api/dashboard/details', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ kind, labId: labId || null, from, to }),
+				body: JSON.stringify(bodyYmd),
 			});
+
+			// If the route was upgraded to expect ISO, retry once with ISO
+			if (!res.ok && res.status === 400 && iso) {
+				res = await fetch('/api/dashboard/details', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						kind,
+						labId: labId || null,
+						from: iso.startISO,
+						to: iso.endISO,
+					}),
+				});
+			}
+
 			const data = await res.json();
 			if (!res.ok) throw new Error(data?.error || 'Failed to load details');
-			setRows(Array.isArray(data?.items) ? data.items : []);
+
+			const items: any[] = Array.isArray(data?.items)
+				? data.items
+				: Array.isArray(data?.rows)
+					? data.rows
+					: Array.isArray(data?.data)
+						? data.data
+						: [];
+
+			setRows(items);
 		} catch (e: any) {
 			setDetailErr(e?.message || 'Network error');
 			setRows([]);
@@ -345,7 +419,6 @@ export default function FilterDashboardClient({
 				/>
 			</div>
 
-
 			{/* Charts */}
 			<div className="grid grid-cols-1 gap-4">
 				<ChartCard title="Appointment Trend (TBI / On hold / Medical Done / Cancelled)">
@@ -422,9 +495,9 @@ export default function FilterDashboardClient({
 									</thead>
 									<tbody>
 										{detailLoading ? (
-											<tr><td colSpan={6} className="px-3 py-6 text-center text-gray-500">Loading…</td></tr>
+											<tr><td colSpan={7} className="px-3 py-6 text-center text-gray-500">Loading…</td></tr>
 										) : visible.rows.length === 0 ? (
-											<tr><td colSpan={6} className="px-3 py-6 text-center text-gray-500">No data</td></tr>
+											<tr><td colSpan={7} className="px-3 py-6 text-center text-gray-500">No data</td></tr>
 										) : (
 											visible.rows.map(r => (
 												<tr key={r.id} className="border-t hover:bg-gray-50">
@@ -604,7 +677,6 @@ function Tile({
 		</button>
 	);
 }
-
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
 	return (

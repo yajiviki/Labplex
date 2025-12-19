@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../../lib/db';
 
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -19,8 +20,9 @@ const ACTIVE = { isActive: 1 } as const;
 
 const TBI = ['TBI'];
 const INPROGRESS = ['Waiting for response', 'Not Responding', 'Rescheduled', 'Need Confirmation', 'On hold'];
+const CONFIRMED = ['Appointment Confirmed', 'App. Confirmed']; // support both spellings
 const SUBMITTED = ['Submitted', 'Submited', 'Report - Submitted'];
-const REPORT_PHASE = ['Medical Done', 'OnProcess', 'Report - InProgress', 'Completed']; // <- used for uploadPending
+const REPORT_PHASE = ['Medical Done', 'OnProcess', 'Report - InProgress', 'Completed'];
 
 type Kind = 'today' | 'upcoming' | 'uploadPending';
 
@@ -51,21 +53,23 @@ export async function POST(req: Request) {
 			where = {
 				...whereBase,
 				apptAt: { gt: now },
-				OR: [{ status: null }, { status: '' }, { status: { in: [...TBI, ...INPROGRESS] } }],
+				OR: [
+					{ status: null },
+					{ status: '' },
+					{ status: { in: [...TBI, ...INPROGRESS, ...CONFIRMED] } },
+				],
 			};
 		} else if (kind === 'uploadPending') {
-			// ✅ Only “report upload pending”: in date range, status in report phase, and NOT submitted
+			// In range, in report phase, and NOT yet submitted
 			where = {
 				...whereBase,
 				apptAt: { gte: fromDate, lte: toDate },
-				status: { in: [...SUBMITTED, "Medical Done"] },
+				status: { in: REPORT_PHASE.filter(s => !SUBMITTED.includes(s)) },
 			};
 		} else {
 			return NextResponse.json({ error: 'Unknown kind' }, { status: 400 });
 		}
 
-
-		//debugger;
 		const rows = await prisma.appointment.findMany({
 			where,
 			orderBy: { apptAt: 'desc' },
@@ -75,6 +79,7 @@ export async function POST(req: Request) {
 				clientName: true,
 				clientRef: true,
 				status: true,
+				// ✅ relation names are lowercase
 				lab: { select: { name: true } },
 				vendor: { select: { tpaName: true } },
 				insuranceCompany: { select: { name: true } },
@@ -84,7 +89,7 @@ export async function POST(req: Request) {
 
 		const data = rows.map(r => ({
 			id: r.id,
-			apptAt: r.apptAt ? toYmd(new Date(r.apptAt)) : '',  // <-- date only
+			apptAt: r.apptAt ? toYmd(new Date(r.apptAt)) : '',
 			labName: r.lab?.name ?? '',
 			status: r.status ?? '',
 			tpaName: r.vendor?.tpaName ?? '',

@@ -32,12 +32,19 @@ type Appointment = {
 	location: string | null;
 	status: string | null;
 
-	serviceType: string | null;      // NEW
+	serviceType: string | null;
 	paymentStatus: string | null;
 	extraChargeRs: number | null;
-	paymentDate: string | null;      // NEW (ISO date)
+	paymentDate: string | null;
 
 	createdAt: string;
+
+	// tests (should be returned by /api/appointments)
+	bloodTest?: 'FB' | 'B' | 'NONE' | null;
+	urineTest?: boolean | 'Yes' | 'No' | null;
+	ecg?: boolean | 'Yes' | 'No' | null;
+	applicationForm?: 'MER' | 'FMR' | 'ALL' | null;
+	testSummary?: string;
 };
 
 const GENDER_OPTS = ['Male', 'Female'] as const;
@@ -46,8 +53,8 @@ const VISIT_TYPE_OPTS = [
 	{ value: 'HOME', label: 'Home' },
 ] as const;
 const STATUS_OPTS = [
-	'TBI', 'On hold', 'Waiting for response', 'Not Responding', 'Rescheduled', 'Need Confirmation',
-	'Sample Collected', 'Medical Done', 'Cancelled', 'Report - InProgress', 'Report - Completed'
+	'TBI', 'Not Responding', 'Rescheduled', 'Need Confirmation', 'Confirmed',
+	'Medical Done', 'Cancelled', 'Report - InProgress', 'Report - Completed'
 ] as const;
 const PAYMENT_STATUS_OPTS = ['TBI', 'Paid', 'On Account'] as const;
 const SERVICE_TYPE_OPTS = ['Local', 'Outer', 'Others'] as const;
@@ -85,6 +92,8 @@ function statusClasses(s?: string | null) {
 		case 'waiting for response': return 'bg-gray-100 text-gray-800';
 		case 'rescheduled': return 'bg-red-100 text-red-800';
 		case 'need confirmation': return 'bg-slate-200 text-slate-900';
+		case 'appointment confirmed':
+		case 'confirmed': return 'bg-cyan-100 text-cyan-800';
 		case 'sample collected': return 'bg-orange-100 text-orange-800';
 		case 'medical done': return 'bg-blue-100 text-blue-800';
 		case 'cancelled': return 'bg-blue-200 text-blue-900';
@@ -110,7 +119,7 @@ function buildTrend(
 	if (f && t && f > t) [f, t] = [t, f];
 
 	for (const r of appts) {
-		if (opts.labId && r.labId !== opts.labId) continue; // if filtered lab, enforce
+		if (opts.labId && r.labId !== opts.labId) continue;
 		const ymd = formatDateOnly(r.apptAt);
 		if (!ymd) continue;
 		if (f && ymd < f) continue;
@@ -121,6 +130,26 @@ function buildTrend(
 	return Array.from(byDay.entries())
 		.sort((a, b) => (a[0] < b[0] ? -1 : 1))
 		.map(([date, count]) => ({ date, count }));
+}
+
+/** Build a single code like "FB,U,ECG,MER" from the test fields */
+function formatTestCodes(a: Appointment): string {
+	const parts: string[] = [];
+
+	// blood
+	if (a.bloodTest === 'FB') parts.push('FB');
+	else if (a.bloodTest === 'B') parts.push('B');
+
+	// urine (true or "Yes")
+	if (a.urineTest === true || a.urineTest === 'Yes') parts.push('U');
+
+	// ECG
+	if (a.ecg === true || a.ecg === 'Yes') parts.push('ECG');
+
+	// form
+	if (a.applicationForm === 'MER' || a.applicationForm === 'FMR') parts.push(a.applicationForm);
+
+	return parts.join(',');
 }
 
 /* ========= Page ========= */
@@ -153,6 +182,13 @@ export default function AppointmentsPage() {
 	const [extraChargeRs, setExtraChargeRs] = useState<string>('');
 	const [paymentDate, setPaymentDate] = useState<string>('');
 
+	// Tests dialog state
+	const [testsOpen, setTestsOpen] = useState(false);
+	const [bloodTest, setBloodTest] = useState<'FB' | 'B'>('FB');
+	const [urineTest, setUrineTest] = useState<'Yes' | 'No'>('No');
+	const [ecg, setEcg] = useState<'Yes' | 'No'>('No');
+	const [applicationForm, setApplicationForm] = useState<'MER' | 'FMR'>('MER');
+
 	// messages
 	const [formOk, setFormOk] = useState<string | null>(null);
 	const [listErr, setListErr] = useState<string | null>(null);
@@ -174,7 +210,8 @@ export default function AppointmentsPage() {
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
 		| 'mobile' | 'visit' | 'location' | 'status'
 		| 'serviceType' | 'payment' | 'extra' | 'paymentDate'
-		| 'gender' | 'age';
+		| 'gender' | 'age'
+		| 'tests';
 
 	const [sortKey, setSortKey] = useState<TableSortKey>('date');
 	const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -184,7 +221,8 @@ export default function AppointmentsPage() {
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
 		| 'status' | 'visit' | 'location'
 		| 'gender' | 'age' | 'mobile'
-		| 'serviceType' | 'payment' | 'extra' | 'paymentDate';
+		| 'serviceType' | 'payment' | 'extra' | 'paymentDate'
+		| 'tests';
 
 	const [visibleCols, setVisibleCols] = useState<Record<ColKey, boolean>>({
 		date: true,
@@ -203,6 +241,7 @@ export default function AppointmentsPage() {
 		payment: false,
 		extra: false,
 		paymentDate: false,
+		tests: false, // hidden by default
 	});
 
 	// dropdowns
@@ -238,6 +277,7 @@ export default function AppointmentsPage() {
 			const [rVendors, rLabs, rAppts, rIns] = await Promise.all([
 				fetch('/api/vendors', { cache: 'no-store' }),
 				fetch('/api/labs', { cache: 'no-store' }),
+				// ensure your API includes bloodTest, urineTest, ecg, applicationForm
 				fetch('/api/appointments?status=&source=&q=', { cache: 'no-store' }),
 				fetch('/api/insurance', { cache: 'no-store' }),
 			]);
@@ -295,13 +335,18 @@ export default function AppointmentsPage() {
 		setExtraChargeRs('');
 		setPaymentDate('');
 		setFormOk(null);
+
+		// tests defaults
+		setBloodTest('FB');
+		setUrineTest('No');
+		setEcg('No');
+		setApplicationForm('MER');
 	}
 
 	async function onSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		setFormOk(null);
 
-		// Required (TPA & Insurance are OPTIONAL now)
 		const missing: string[] = [];
 		if (!apptAt) missing.push('Appointment Date');
 		if (!labId) missing.push('Lab Name');
@@ -322,11 +367,11 @@ export default function AppointmentsPage() {
 		}
 
 		const payload = {
-			apptAt,                               // backend will convert
+			apptAt,
 			labId,
-			vendorId: vendorId || null,           // optional
-			insuranceVendorId: vendorId || null,  // legacy alias
-			insuranceCompanyId: insuranceCompanyId || null, // optional
+			vendorId: vendorId || null,
+			insuranceVendorId: vendorId || null,
+			insuranceCompanyId: insuranceCompanyId || null,
 
 			clientName: clientName || null,
 			clientRef: clientRef || null,
@@ -424,6 +469,7 @@ export default function AppointmentsPage() {
 			case 'paymentDate': { const ymd = formatDateOnly(r.paymentDate); return ymd ? Number(ymd.replaceAll('-', '')) : 0; }
 			case 'gender': return (r.gender || '').toLowerCase();
 			case 'age': return r.age ?? -1;
+			case 'tests': return formatTestCodes(r).toLowerCase();
 			default: return '';
 		}
 	};
@@ -438,7 +484,7 @@ export default function AppointmentsPage() {
 			const labOk = fLabId ? (r.labId === fLabId) : true;
 			if (!(dateOk && stOk && labOk)) return false;
 
-			// free-text search over client/phone/etc + LAB + TPA(VENDOR)
+			// free-text search over client/phone/etc + LAB + TPA(VENDOR) + tests
 			if (!term) return true;
 
 			const lab = labs.find(l => l.id === r.labId);
@@ -447,12 +493,10 @@ export default function AppointmentsPage() {
 				vendors.find(v => v.id === r.vendorId);
 
 			const haystack = [
-				// existing fields
 				r.clientName, r.clientRef, r.phone, r.location, r.serviceType,
-				// LAB fields
 				lab?.name, lab?.nickName, lab?.labCode,
-				// TPA / Vendor fields
 				vendor?.tpaName, vendor?.nickName, vendor?.vendorId,
+				formatTestCodes(r),
 			]
 				.filter(Boolean)
 				.map(s => String(s).toLowerCase());
@@ -471,7 +515,7 @@ export default function AppointmentsPage() {
 		return sorted;
 	}, [rows, q, sortKey, sortDir, fDateFrom, fDateTo, fStatus, fLabId, labs, vendors, insurers]);
 
-	/** Trend data (recomputes on first load + any filter change; works for All Labs) */
+	/** Trend data */
 	const trendData = useMemo(
 		() => buildTrend(rows, { labId: fLabId, from: fDateFrom, to: fDateTo }),
 		[rows, fLabId, fDateFrom, fDateTo]
@@ -497,6 +541,84 @@ export default function AppointmentsPage() {
 			setDelErr(e?.message || 'Network error');
 		} finally {
 			setDelLoading(false);
+		}
+	}
+
+	async function handleSaveTests() {
+		let apptId = selectedRowId;
+		if (!apptId) {
+			// validate minimal fields then create first to get an id
+			const missing: string[] = [];
+			if (!apptAt) missing.push('Appointment Date');
+			if (!labId) missing.push('Lab Name');
+			if (!clientName.trim()) missing.push('Client Name');
+			if (!clientRef.trim()) missing.push('Client ID / Proposal No');
+			if (!gender) missing.push('Gender');
+			if (!serviceType) missing.push('Service Type');
+			if (!visitType) missing.push('Type of Visit');
+			if (!status) missing.push('Status');
+			if (!paymentStatus) missing.push('Payment Status');
+
+			if (missing.length) {
+				const ordered = ['Lab Name', 'Client Name', 'Client ID / Proposal No', 'Gender', 'Service Type'];
+				const display = ordered.filter(x => missing.includes(x));
+				setReqList(display);
+				setReqOpen(true);
+				return;
+			}
+
+			const payload = {
+				apptAt,
+				labId,
+				vendorId: vendorId || null,
+				insuranceVendorId: vendorId || null,
+				insuranceCompanyId: insuranceCompanyId || null,
+				clientName: clientName || null,
+				clientRef: clientRef || null,
+				gender: gender || null,
+				age: age ? Number(age) : null,
+				phone: phone || null,
+				visitType,
+				location: location || null,
+				status,
+				serviceType: serviceType || null,
+				paymentStatus,
+				extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
+				paymentDate: paymentDate ? `${paymentDate}T00:00:00` : null,
+				source: 'INSURANCE',
+				notes: null,
+			};
+
+			const createRes = await fetch('/api/appointments', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			});
+			const created = await createRes.json().catch(() => ({} as any));
+			if (!createRes.ok || !created?.id) {
+				alert(created?.error || 'Could not create appointment before saving tests');
+				return;
+			}
+			apptId = created.id;
+			setSelectedRowId(apptId);
+			setEditingId(apptId);
+			await load();
+		}
+
+		const testsPayload = { bloodTest, urineTest, ecg, applicationForm };
+		try {
+			const res = await fetch(`/api/appointments/${apptId}/tests`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(testsPayload),
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(data?.error || 'Save failed');
+			setTestsOpen(false);
+			await load();
+			setFormOk('Tests saved');
+		} catch (e: any) {
+			alert(e?.message || 'Network error');
 		}
 	}
 
@@ -614,7 +736,7 @@ export default function AppointmentsPage() {
 					</div>
 
 					{/* Row 3 */}
-					<div className="grid grid-cols-1 md:grid-cols-[130px_90px_170px_180px_160px_120px_170px] gap-3 px-4 py-2">
+					<div className="grid grid-cols-1 md:grid-cols-[130px_90px_170px_180px_160px_120px_170px_auto] gap-3 px-4 py-2 items-end">
 						<div>
 							<label className="block text-sm mb-1">Gender</label>
 							<select className="w-full border rounded px-3 py-2" value={gender} onChange={(e) => setGender(e.target.value)}>
@@ -650,6 +772,18 @@ export default function AppointmentsPage() {
 						<div>
 							<label className="block text-sm mb-1">Payment Date</label>
 							<input type="date" className="w-full border rounded px-3 py-2" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+						</div>
+
+						{/* Tests button */}
+						<div className="flex md:justify-start">
+							<button
+								type="button"
+								className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50"
+								onClick={() => setTestsOpen(true)}
+								title="Add test details"
+							>
+								Tests
+							</button>
 						</div>
 					</div>
 
@@ -744,6 +878,15 @@ export default function AppointmentsPage() {
 
 								<button
 									type="button"
+									className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm hover:bg-gray-50"
+									onClick={() => setTestsOpen(true)}
+									title="Add test details"
+								>
+									Tests
+								</button>
+
+								<button
+									type="button"
 									className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
 									onClick={() => { setDelErr(null); setDelOpen(true); }}
 									title="Delete (soft delete)"
@@ -779,17 +922,18 @@ export default function AppointmentsPage() {
 									{visibleCols.payment && <SortTh k="payment" label="Payment Status" />}
 									{visibleCols.extra && <SortTh k="extra" label="Extra (Rs)" align="right" />}
 									{visibleCols.paymentDate && <SortTh k="paymentDate" label="Payment Date" />}
+									{visibleCols.tests && <SortTh k="tests" label="Test" />}
 								</tr>
 							</thead>
 							<tbody>
 								{loading ? (
-									<tr><td colSpan={16} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
+									<tr><td colSpan={17} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
 								) : (
 									(() => {
 										if (filtered.length === 0) {
 											return (
 												<tr>
-													<td colSpan={16} className="px-3 py-4 text-center text-sm text-gray-500">
+													<td colSpan={17} className="px-3 py-4 text-center text-sm text-gray-500">
 														No appointments found
 													</td>
 												</tr>
@@ -832,6 +976,7 @@ export default function AppointmentsPage() {
 													{visibleCols.payment && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.paymentStatus ?? ''}</td>}
 													{visibleCols.extra && <td className="px-3 py-2 text-sm text-right">{a.extraChargeRs ?? ''}</td>}
 													{visibleCols.paymentDate && <td className="px-3 py-2 text-sm whitespace-nowrap">{formatDateOnly(a.paymentDate)}</td>}
+													{visibleCols.tests && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.testSummary ?? ''}</td>}
 												</tr>
 											);
 										});
@@ -894,6 +1039,126 @@ export default function AppointmentsPage() {
 						</div>
 						<div className="p-3 border-t flex justify-end">
 							<button className="rounded bg-brand text-white px-4 py-1.5" onClick={() => setReqOpen(false)}>OK</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* Tests modal */}
+			{testsOpen && (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
+					<div className="bg-white rounded-xl shadow-lg w-full max-w-lg">
+						<div className="flex items-center justify-between p-3 border-b">
+							<h3 className="font-semibold">Test details</h3>
+							<button className="p-1 rounded hover:bg-gray-100" onClick={() => setTestsOpen(false)}>
+								<X className="h-5 w-5" />
+							</button>
+						</div>
+
+						<div className="p-4 space-y-4 text-sm">
+							{/* 1. Blood Test */}
+							<div>
+								<label className="block mb-1 font-medium">Blood Test</label>
+								<div className="flex gap-3">
+									<label className="inline-flex items-center gap-2">
+										<input
+											type="radio"
+											name="bloodTest"
+											value="FB"
+											checked={bloodTest === 'FB'}
+											onChange={() => setBloodTest('FB')}
+										/>
+										FB – Fasting Blood
+									</label>
+									<label className="inline-flex items-center gap-2">
+										<input
+											type="radio"
+											name="bloodTest"
+											value="B"
+											checked={bloodTest === 'B'}
+											onChange={() => setBloodTest('B')}
+										/>
+										B – Random
+									</label>
+								</div>
+							</div>
+
+							{/* 2. Urine Test */}
+							<div>
+								<label className="block mb-1 font-medium">Urine Test</label>
+								<div className="flex gap-3">
+									<label className="inline-flex items-center gap-2">
+										<input
+											type="radio"
+											name="urineTest"
+											value="No"
+											checked={urineTest === 'No'}
+											onChange={() => setUrineTest('No')}
+										/>
+										No
+									</label>
+									<label className="inline-flex items-center gap-2">
+										<input
+											type="radio"
+											name="urineTest"
+											value="Yes"
+											checked={urineTest === 'Yes'}
+											onChange={() => setUrineTest('Yes')}
+										/>
+										Yes
+									</label>
+								</div>
+							</div>
+
+							{/* 3. ECG */}
+							<div>
+								<label className="block mb-1 font-medium">ECG</label>
+								<div className="flex gap-3">
+									<label className="inline-flex items-center gap-2">
+										<input
+											type="radio"
+											name="ecg"
+											value="No"
+											checked={ecg === 'No'}
+											onChange={() => setEcg('No')}
+										/>
+										No
+									</label>
+									<label className="inline-flex items-center gap-2">
+										<input
+											type="radio"
+											name="ecg"
+											value="Yes"
+											checked={ecg === 'Yes'}
+											onChange={() => setEcg('Yes')}
+										/>
+										Yes
+									</label>
+								</div>
+							</div>
+
+							{/* 4. Application Form */}
+							<div>
+								<label className="block mb-1 font-medium">Application Form</label>
+								<select
+									className="w-full border rounded px-3 py-2"
+									value={applicationForm}
+									onChange={(e) => setApplicationForm(e.target.value as 'MER' | 'FMR')}
+								>
+									<option value="MER">MER</option>
+									<option value="FMR">FMR</option>
+								</select>
+							</div>
+						</div>
+
+						<div className="p-3 border-t flex justify-end gap-2">
+							<button className="rounded border px-3 py-1.5" onClick={() => setTestsOpen(false)}>Cancel</button>
+							<button
+								className="rounded bg-brand text-white px-3 py-1.5"
+								onClick={handleSaveTests}
+							>
+								Save
+							</button>
 						</div>
 					</div>
 				</div>
@@ -982,7 +1247,7 @@ function ColumnsDropdown({
 	colsOpen: boolean;
 	setColsOpen: (v: boolean) => void;
 	colsRef: React.RefObject<HTMLDivElement>;
-	visibleCols: Record<'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal' | 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment' | 'gender' | 'age' | 'serviceType' | 'paymentDate', boolean>;
+	visibleCols: Record<'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal' | 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment' | 'gender' | 'age' | 'serviceType' | 'paymentDate' | 'tests', boolean>;
 	toggleCol: (k: any) => void;
 }>) {
 	const items: [keyof typeof visibleCols, string][] = [
@@ -992,6 +1257,7 @@ function ColumnsDropdown({
 		['gender', 'Gender'], ['age', 'Age'], ['mobile', 'Mobile'],
 		['serviceType', 'Service Type'], ['payment', 'Payment Status'],
 		['extra', 'Extra Rs'], ['paymentDate', 'Payment Date'],
+		['tests', 'Test'],
 	];
 	return (
 		<div ref={colsRef} className="relative">

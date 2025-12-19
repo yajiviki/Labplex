@@ -163,6 +163,17 @@ model Patient {
   @@index([phone])
 }
 
+enum BloodTestType {
+  NONE
+  FB // Fasting Blood
+  B // Random
+}
+
+enum ApplicationForm {
+  MER
+  FMR
+}
+
 // ===========================================================
 // Appointment
 // - We store names for TPA/Insurance for your UI needs
@@ -170,61 +181,72 @@ model Patient {
 // ===========================================================
 
 model Appointment {
-  id String @id @default(cuid())
-
-  // When
+  id     String   @id @default(cuid())
   apptAt DateTime
 
-  // Patient (client) link — optional; make required if you always have a patient
-  //patientId String?npx
-  //patient   Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
-
-  // TPA (Vendor) link
   vendorId String?
   vendor   Vendor? @relation(fields: [vendorId], references: [id], onDelete: SetNull)
 
-  // Lab link
   labId String?
   lab   Lab?    @relation(fields: [labId], references: [id], onDelete: SetNull)
 
-  // Insurance company link
   insuranceCompanyId String?
   insuranceCompany   InsuranceCompany? @relation(fields: [insuranceCompanyId], references: [id], onDelete: SetNull)
 
-  // Client info (scalars)
   clientName String
   clientRef  String?
   gender     String?
   age        Int?
-  //address    String?
   phone      String?
 
-  // Visit / logistics
   visitType String?
   location  String?
 
-  // Medical/report/payment
-  status String?
-
+  status        String?
   extraChargeRs Decimal? @db.Decimal(12, 2)
   paymentStatus String?
 
-  // Bookkeeping
+  // NEW medical fields
+  //bloodTest       BloodTestType    @default(NONE)
+  //urineTest       Boolean          @default(false)
+  //ecg             Boolean          @default(false)
+  //applicationForm ApplicationForm?
+
+  tests AppointmentTests?
+
   isActive  Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  //Patient   Patient? @relation(fields: [patientId], references: [id])
-  //patientId String?
 
-  serviceType String? // e.g. 'Outer Area', 'Local', 'Walk-in'
-  paymentDate DateTime? // when payment was made (if any)
+  serviceType String?
+  paymentDate DateTime?
 
   @@unique([clientRef, apptAt])
   @@index([apptAt])
-  //@@index([patientId])
   @@index([vendorId])
   @@index([labId])
   @@index([insuranceCompanyId])
+}
+
+enum BloodTestKind {
+  FB // Fasting Blood
+  B // Random
+}
+
+enum ApplicationFormKind {
+  MER
+  FMR
+}
+
+model AppointmentTests {
+  appointmentId   String           @id
+  appointment     Appointment      @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  bloodTest       BloodTestType    @default(NONE)
+  urineTest       Boolean          @default(false)
+  ecg             Boolean          @default(false)
+  applicationForm ApplicationForm?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 }
 
 model Billing {

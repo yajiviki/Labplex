@@ -1,11 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
 	Building2, Workflow, CalendarRange, Undo2, X,
 	ChevronDown, ChevronUp, Download, Image as ImageIcon, FileDown
 } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts';
+import ExtraOuterPivot from '../../../../../components/ExtraOuterPivot';
+import OuterVsExtraMoM from '../../../../../components/OuterVsExtraMoM';
+import VisitWithExtraMoM from '../../../../../components/VisitWithExtraMoM';
 
 type LabLite = { id: string; name: string };
 type VendorLite = { id: string; tpaName: string };
@@ -492,6 +496,12 @@ export default function AccountsReportClient({
 		});
 	}
 
+	// ---------- read accountId from URL and pass current filters to pivot ----------
+	const sp = useSearchParams();
+	const accountId = sp.get('accountId');
+	const selectedLabId = labId || null;
+	const selectedVendorId = vendorId || null;
+
 	return (
 		<div className="space-y-4">
 			{/* Header */}
@@ -565,6 +575,29 @@ export default function AccountsReportClient({
 					{err && <div className="mt-3 text-sm text-red-600">{err}</div>}
 				</div>
 			</div>
+
+			{/* PIVOT ON TOP OF SUMMARY CARD */}
+			{/* <ExtraOuterPivot
+				insuranceCompanyId={accountId || null}
+				labId={selectedLabId}
+				vendorId={selectedVendorId}
+			/> */}
+
+			{/* <OuterVsExtraMoM
+				accountId={null}
+				labId={labId || null}
+				vendorId={vendorId || null}
+				from={from}
+				to={to}
+			/> */}
+
+			<VisitWithExtraMoM
+				accountId={accountId || null}
+				labId={labId || null}
+				vendorId={vendorId || null}
+				from={from}
+				to={to}
+			/>
 
 			{/* Table + Chart */}
 			<div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
