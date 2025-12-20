@@ -15,6 +15,23 @@ function yyyymm(d: Date) {
 	return `${d.getFullYear()}-${p(d.getMonth() + 1)}`;
 }
 
+// ✅ Converts Prisma Decimal | number | string | null to number
+function toNum(v: unknown): number {
+	if (v === null || v === undefined) return 0;
+	if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+	if (typeof v === 'string') {
+		const n = Number(v);
+		return Number.isFinite(n) ? n : 0;
+	}
+	// Prisma Decimal has toNumber()
+	if (typeof v === 'object' && v && typeof (v as any).toNumber === 'function') {
+		const n = (v as any).toNumber();
+		return typeof n === 'number' && Number.isFinite(n) ? n : 0;
+	}
+	const n = Number(v as any);
+	return Number.isFinite(n) ? n : 0;
+}
+
 type Bucket = {
 	centerWithExtra: { count: number; amount: number };
 	localHomeWithExtra: { count: number; amount: number };
@@ -25,11 +42,11 @@ export async function POST(req: Request) {
 	try {
 		const body = await req.json().catch(() => ({}));
 		const {
-			accountId,   // insuranceCompanyId (optional)
-			labId,       // optional
-			vendorId,    // optional
-			from,        // 'yyyy-mm-dd' (optional)
-			to,          // 'yyyy-mm-dd' (optional)
+			accountId,
+			labId,
+			vendorId,
+			from,
+			to,
 		}: {
 			accountId?: string | null;
 			labId?: string | null;
@@ -51,14 +68,13 @@ export async function POST(req: Request) {
 		if (labId) where.labId = labId;
 		if (vendorId) where.vendorId = vendorId;
 
-		// Pull only what we need; aggregate in JS (keeps it DB-agnostic).
 		const rows = await prisma.appointment.findMany({
 			where,
 			select: {
 				apptAt: true,
-				serviceType: true,     // 'Local' | 'Outer' | etc
-				visitType: true,       // 'CENTER' | 'HOME'
-				extraChargeRs: true,   // number | null
+				serviceType: true,
+				visitType: true,
+				extraChargeRs: true,
 			},
 			orderBy: { apptAt: 'desc' },
 			take: 500000,
@@ -68,6 +84,7 @@ export async function POST(req: Request) {
 
 		for (const r of rows) {
 			if (!r.apptAt) continue;
+
 			const month = yyyymm(new Date(r.apptAt));
 			const b = byMonth.get(month) ?? {
 				centerWithExtra: { count: 0, amount: 0 },
@@ -75,22 +92,22 @@ export async function POST(req: Request) {
 				outerHomeWithExtra: { count: 0, amount: 0 },
 			};
 
-			const visit = (r.visitType || '').toUpperCase();    // 'CENTER' | 'HOME'
-			const svc = (r.serviceType || '').toLowerCase();    // 'local' | 'outer' | ...
-			const extra = (r.extraChargeRs ?? 0) > 0 ? Number(r.extraChargeRs) : 0;
+			const visit = (r.visitType || '').toUpperCase();
+			const svc = (r.serviceType || '').toLowerCase();
+
+			// ✅ FIX: normalize to number BEFORE comparing
+			const extraRaw = toNum(r.extraChargeRs);
+			const extra = extraRaw > 0 ? extraRaw : 0;
 
 			if (extra > 0) {
-				// 1) Center visit with Extra (any service type)
 				if (visit === 'CENTER') {
 					b.centerWithExtra.count += 1;
 					b.centerWithExtra.amount += extra;
 				}
-				// 2) Local + Home with Extra
 				if (svc === 'local' && visit === 'HOME') {
 					b.localHomeWithExtra.count += 1;
 					b.localHomeWithExtra.amount += extra;
 				}
-				// 3) Outer + Home with Extra
 				if (svc === 'outer' && visit === 'HOME') {
 					b.outerHomeWithExtra.count += 1;
 					b.outerHomeWithExtra.amount += extra;
@@ -101,7 +118,7 @@ export async function POST(req: Request) {
 		}
 
 		const rowsOut = Array.from(byMonth.entries())
-			.sort((a, b) => (a[0] < b[0] ? 1 : -1)) // newest first
+			.sort((a, b) => (a[0] < b[0] ? 1 : -1))
 			.map(([month, v]) => ({
 				month,
 				centerWithExtra: v.centerWithExtra,
