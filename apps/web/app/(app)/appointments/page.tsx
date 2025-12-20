@@ -40,9 +40,10 @@ type Appointment = {
 	createdAt: string;
 
 	// tests (should be returned by /api/appointments)
-	bloodTest?: 'FB' | 'B' | 'NONE' | null;
+	bloodTest?: 'FB' | 'B' | 'No' | null;
 	urineTest?: boolean | 'Yes' | 'No' | null;
 	ecg?: boolean | 'Yes' | 'No' | null;
+	tmt?: boolean | 'Yes' | 'No' | null; // ✅ NEW
 	applicationForm?: 'MER' | 'FMR' | 'ALL' | null;
 	testSummary?: string;
 };
@@ -132,7 +133,7 @@ function buildTrend(
 		.map(([date, count]) => ({ date, count }));
 }
 
-/** Build a single code like "FB,U,ECG,MER" from the test fields */
+/** Build a single code like "FB,U,ECG,TMT,MER" from the test fields */
 function formatTestCodes(a: Appointment): string {
 	const parts: string[] = [];
 
@@ -146,10 +147,38 @@ function formatTestCodes(a: Appointment): string {
 	// ECG
 	if (a.ecg === true || a.ecg === 'Yes') parts.push('ECG');
 
+	// ✅ TMT
+	if (a.tmt === true || a.tmt === 'Yes') parts.push('TMT');
+
 	// form
 	if (a.applicationForm === 'MER' || a.applicationForm === 'FMR') parts.push(a.applicationForm);
 
 	return parts.join(',');
+}
+
+/* ========= Small UI bits ========= */
+
+function Pill({
+	active,
+	children,
+	onClick,
+}: Readonly<{
+	active: boolean;
+	children: React.ReactNode;
+	onClick: () => void;
+}>) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={[
+				'px-3 py-1.5 rounded-full border text-sm transition',
+				active ? 'bg-brand text-white border-brand' : 'bg-white hover:bg-gray-50',
+			].join(' ')}
+		>
+			{children}
+		</button>
+	);
 }
 
 /* ========= Page ========= */
@@ -184,10 +213,14 @@ export default function AppointmentsPage() {
 
 	// Tests dialog state
 	const [testsOpen, setTestsOpen] = useState(false);
-	const [bloodTest, setBloodTest] = useState<'FB' | 'B'>('FB');
+	const [bloodTest, setBloodTest] = useState<'FB' | 'B' | 'No'>('No');
 	const [urineTest, setUrineTest] = useState<'Yes' | 'No'>('No');
 	const [ecg, setEcg] = useState<'Yes' | 'No'>('No');
+	const [tmt, setTmt] = useState<'Yes' | 'No'>('No'); // ✅ NEW
 	const [applicationForm, setApplicationForm] = useState<'MER' | 'FMR'>('MER');
+
+	// when user clicks Create, open tests modal first
+	const [pendingCreate, setPendingCreate] = useState(false);
 
 	// messages
 	const [formOk, setFormOk] = useState<string | null>(null);
@@ -277,7 +310,7 @@ export default function AppointmentsPage() {
 			const [rVendors, rLabs, rAppts, rIns] = await Promise.all([
 				fetch('/api/vendors', { cache: 'no-store' }),
 				fetch('/api/labs', { cache: 'no-store' }),
-				// ensure your API includes bloodTest, urineTest, ecg, applicationForm
+				// ensure your API includes bloodTest, urineTest, ecg, tmt, applicationForm
 				fetch('/api/appointments?status=&source=&q=', { cache: 'no-store' }),
 				fetch('/api/insurance', { cache: 'no-store' }),
 			]);
@@ -287,10 +320,10 @@ export default function AppointmentsPage() {
 				rAppts.json().catch(() => []),
 				rIns.json().catch(() => []),
 			]);
-			if (!rVendors.ok) throw new Error(vendorsJson?.error || 'Load vendors failed');
-			if (!rLabs.ok) throw new Error(labsJson?.error || 'Load labs failed');
-			if (!rAppts.ok) throw new Error(apptsJson?.error || 'Load appointments failed');
-			if (!rIns.ok) throw new Error(insJson?.error || 'Load insurance failed');
+			if (!rVendors.ok) throw new Error((vendorsJson as any)?.error || 'Load vendors failed');
+			if (!rLabs.ok) throw new Error((labsJson as any)?.error || 'Load labs failed');
+			if (!rAppts.ok) throw new Error((apptsJson as any)?.error || 'Load appointments failed');
+			if (!rIns.ok) throw new Error((insJson as any)?.error || 'Load insurance failed');
 
 			setVendors(Array.isArray(vendorsJson) ? vendorsJson : []);
 			setLabs(Array.isArray(labsJson) ? labsJson : []);
@@ -337,16 +370,16 @@ export default function AppointmentsPage() {
 		setFormOk(null);
 
 		// tests defaults
-		setBloodTest('FB');
+		setBloodTest('No');
 		setUrineTest('No');
 		setEcg('No');
+		setTmt('No');
 		setApplicationForm('MER');
+
+		setPendingCreate(false);
 	}
 
-	async function onSubmit(e: React.FormEvent) {
-		e.preventDefault();
-		setFormOk(null);
-
+	function validateRequiredFields(): string[] {
 		const missing: string[] = [];
 		if (!apptAt) missing.push('Appointment Date');
 		if (!labId) missing.push('Lab Name');
@@ -357,12 +390,26 @@ export default function AppointmentsPage() {
 		if (!visitType) missing.push('Type of Visit');
 		if (!status) missing.push('Status');
 		if (!paymentStatus) missing.push('Payment Status');
+		return missing;
+	}
 
+	async function onSubmit(e: React.FormEvent) {
+		e.preventDefault();
+		setFormOk(null);
+
+		const missing = validateRequiredFields();
 		if (missing.length) {
 			const ordered = ['Lab Name', 'Client Name', 'Client ID / Proposal No', 'Gender', 'Service Type'];
 			const display = ordered.filter(x => missing.includes(x));
-			setReqList(display);
+			setReqList(display.length ? display : missing);
 			setReqOpen(true);
+			return;
+		}
+
+		// ✅ NEW: On Create, open tests popup first so user won't miss it
+		if (!editingId) {
+			setPendingCreate(true);
+			setTestsOpen(true);
 			return;
 		}
 
@@ -378,32 +425,34 @@ export default function AppointmentsPage() {
 			gender: gender || null,
 			age: age ? Number(age) : null,
 			phone: phone || null,
+
 			visitType,
 			location: location || null,
 			status,
+
 			serviceType: serviceType || null,
 			paymentStatus,
 			extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
 			paymentDate: paymentDate ? `${paymentDate}T00:00:00` : null,
+
 			source: 'INSURANCE',
 			notes: null,
 		};
 
 		try {
-			const res = await fetch(editingId ? `/api/appointments/${editingId}` : '/api/appointments', {
-				method: editingId ? 'PUT' : 'POST',
+			const res = await fetch(`/api/appointments/${editingId}`, {
+				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload),
 			});
 			const data = await res.json().catch(() => ({}));
 			if (!res.ok) {
-				setReqList([data?.error || 'Save failed']);
+				setReqList([(data as any)?.error || 'Save failed']);
 				setReqOpen(true);
 				return;
 			}
-			setFormOk(editingId ? 'Updated!' : 'Created!');
+			setFormOk('Updated!');
 			await load();
-			if (!editingId) resetForm();
 		} catch (e: any) {
 			setReqList([e?.message || 'Network error']);
 			setReqOpen(true);
@@ -434,6 +483,15 @@ export default function AppointmentsPage() {
 		setExtraChargeRs(a.extraChargeRs != null ? String(a.extraChargeRs) : '');
 		setPaymentDate(formatDateOnly(a.paymentDate));
 		setFormOk(null);
+
+		// ✅ load tests into modal state
+		setBloodTest((a.bloodTest as any) ?? 'No');
+		setUrineTest((a.urineTest === true || a.urineTest === 'Yes') ? 'Yes' : 'No');
+		setEcg((a.ecg === true || a.ecg === 'Yes') ? 'Yes' : 'No');
+		setTmt((a.tmt === true || a.tmt === 'Yes') ? 'Yes' : 'No');
+		setApplicationForm((a.applicationForm as any) ?? 'MER');
+
+		setPendingCreate(false);
 	}
 
 	function inDateRangeDateOnly(apptISO: string, fromYmd: string, toYmd: string) {
@@ -532,7 +590,7 @@ export default function AppointmentsPage() {
 		try {
 			const res = await fetch(`/api/appointments/${selectedRowId}`, { method: 'DELETE' });
 			const data = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(data?.error || 'Delete failed');
+			if (!res.ok) throw new Error((data as any)?.error || 'Delete failed');
 			setDelOpen(false);
 			setSelectedRowId(null);
 			await load();
@@ -545,80 +603,92 @@ export default function AppointmentsPage() {
 	}
 
 	async function handleSaveTests() {
-		let apptId = selectedRowId;
-		if (!apptId) {
-			// validate minimal fields then create first to get an id
-			const missing: string[] = [];
-			if (!apptAt) missing.push('Appointment Date');
-			if (!labId) missing.push('Lab Name');
-			if (!clientName.trim()) missing.push('Client Name');
-			if (!clientRef.trim()) missing.push('Client ID / Proposal No');
-			if (!gender) missing.push('Gender');
-			if (!serviceType) missing.push('Service Type');
-			if (!visitType) missing.push('Type of Visit');
-			if (!status) missing.push('Status');
-			if (!paymentStatus) missing.push('Payment Status');
+		let apptId = selectedRowId || editingId;
 
-			if (missing.length) {
-				const ordered = ['Lab Name', 'Client Name', 'Client ID / Proposal No', 'Gender', 'Service Type'];
-				const display = ordered.filter(x => missing.includes(x));
-				setReqList(display);
+		try {
+			// If user clicked Create and we opened tests modal first, create appointment now.
+			if (pendingCreate && !apptId) {
+				const missing = validateRequiredFields();
+				if (missing.length) {
+					const ordered = ['Lab Name', 'Client Name', 'Client ID / Proposal No', 'Gender', 'Service Type'];
+					const display = ordered.filter(x => missing.includes(x));
+					setReqList(display.length ? display : missing);
+					setReqOpen(true);
+					return;
+				}
+
+				const payload = {
+					apptAt,
+					labId,
+					vendorId: vendorId || null,
+					insuranceVendorId: vendorId || null,
+					insuranceCompanyId: insuranceCompanyId || null,
+
+					clientName: clientName || null,
+					clientRef: clientRef || null,
+					gender: gender || null,
+					age: age ? Number(age) : null,
+					phone: phone || null,
+
+					visitType,
+					location: location || null,
+					status,
+
+					serviceType: serviceType || null,
+					paymentStatus,
+					extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
+					paymentDate: paymentDate ? `${paymentDate}T00:00:00` : null,
+
+					source: 'INSURANCE',
+					notes: null,
+				};
+
+				const createRes = await fetch('/api/appointments', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload),
+				});
+				const created = await createRes.json().catch(() => ({} as any));
+				if (!createRes.ok || !created?.id) {
+					setReqList([created?.error || 'Could not create appointment']);
+					setReqOpen(true);
+					return;
+				}
+
+				apptId = created.id;
+				setSelectedRowId(apptId);
+				setEditingId(apptId);
+			}
+
+			if (!apptId) {
+				setReqList(['Please select an appointment row before saving tests.']);
 				setReqOpen(true);
 				return;
 			}
 
-			const payload = {
-				apptAt,
-				labId,
-				vendorId: vendorId || null,
-				insuranceVendorId: vendorId || null,
-				insuranceCompanyId: insuranceCompanyId || null,
-				clientName: clientName || null,
-				clientRef: clientRef || null,
-				gender: gender || null,
-				age: age ? Number(age) : null,
-				phone: phone || null,
-				visitType,
-				location: location || null,
-				status,
-				serviceType: serviceType || null,
-				paymentStatus,
-				extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
-				paymentDate: paymentDate ? `${paymentDate}T00:00:00` : null,
-				source: 'INSURANCE',
-				notes: null,
-			};
+			const testsPayload = { bloodTest, urineTest, ecg, tmt, applicationForm };
 
-			const createRes = await fetch('/api/appointments', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(payload),
-			});
-			const created = await createRes.json().catch(() => ({} as any));
-			if (!createRes.ok || !created?.id) {
-				alert(created?.error || 'Could not create appointment before saving tests');
-				return;
-			}
-			apptId = created.id;
-			setSelectedRowId(apptId);
-			setEditingId(apptId);
-			await load();
-		}
-
-		const testsPayload = { bloodTest, urineTest, ecg, applicationForm };
-		try {
 			const res = await fetch(`/api/appointments/${apptId}/tests`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(testsPayload),
 			});
 			const data = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(data?.error || 'Save failed');
+			if (!res.ok) throw new Error((data as any)?.error || 'Save tests failed');
+
 			setTestsOpen(false);
 			await load();
-			setFormOk('Tests saved');
+
+			if (pendingCreate) {
+				setPendingCreate(false);
+				setFormOk('Created!');
+				resetForm();
+			} else {
+				setFormOk('Tests saved');
+			}
 		} catch (e: any) {
-			alert(e?.message || 'Network error');
+			setReqList([e?.message || 'Network error']);
+			setReqOpen(true);
 		}
 	}
 
@@ -774,12 +844,12 @@ export default function AppointmentsPage() {
 							<input type="date" className="w-full border rounded px-3 py-2" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
 						</div>
 
-						{/* Tests button */}
+						{/* Tests button (still available for edits / manual open) */}
 						<div className="flex md:justify-start">
 							<button
 								type="button"
 								className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50"
-								onClick={() => setTestsOpen(true)}
+								onClick={() => { setPendingCreate(false); setTestsOpen(true); }}
 								title="Add test details"
 							>
 								Tests
@@ -789,9 +859,17 @@ export default function AppointmentsPage() {
 
 					<div className="px-3 pb-3 py-2">
 						<div className="flex gap-2">
-							<button className="rounded bg-brand text-white px-4 py-2">{editingId ? 'Update' : 'Create'}</button>
+							<button className="rounded bg-brand text-white px-4 py-2">
+								{editingId ? 'Update' : 'Create'}
+							</button>
 							<button type="button" className="rounded border px-4 py-2" onClick={resetForm}>Reset</button>
 						</div>
+
+						{!editingId && (
+							<div className="mt-2 text-xs text-gray-500">
+								Note: When you click <b>Create</b>, Test Details popup will open to avoid missing test info.
+							</div>
+						)}
 					</div>
 				</form>
 			</div>
@@ -879,7 +957,7 @@ export default function AppointmentsPage() {
 								<button
 									type="button"
 									className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm hover:bg-gray-50"
-									onClick={() => setTestsOpen(true)}
+									onClick={() => { setPendingCreate(false); setTestsOpen(true); }}
 									title="Add test details"
 								>
 									Tests
@@ -976,7 +1054,11 @@ export default function AppointmentsPage() {
 													{visibleCols.payment && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.paymentStatus ?? ''}</td>}
 													{visibleCols.extra && <td className="px-3 py-2 text-sm text-right">{a.extraChargeRs ?? ''}</td>}
 													{visibleCols.paymentDate && <td className="px-3 py-2 text-sm whitespace-nowrap">{formatDateOnly(a.paymentDate)}</td>}
-													{visibleCols.tests && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.testSummary ?? ''}</td>}
+													{visibleCols.tests && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">
+															{a.testSummary ?? formatTestCodes(a)}
+														</td>
+													)}
 												</tr>
 											);
 										});
@@ -1044,117 +1126,96 @@ export default function AppointmentsPage() {
 				</div>
 			)}
 
-			{/* Tests modal */}
+			{/* ✅ Tests modal (professional) */}
 			{testsOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
-					<div className="bg-white rounded-xl shadow-lg w-full max-w-lg">
-						<div className="flex items-center justify-between p-3 border-b">
-							<h3 className="font-semibold">Test details</h3>
-							<button className="p-1 rounded hover:bg-gray-100" onClick={() => setTestsOpen(false)}>
+					<div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden">
+						<div className="flex items-start justify-between p-4 border-b">
+							<div>
+								<h3 className="text-base font-semibold">Test Details</h3>
+								<p className="text-xs text-gray-500 mt-0.5">
+									Please confirm tests before saving the appointment.
+								</p>
+							</div>
+							<button
+								className="p-1 rounded hover:bg-gray-100"
+								onClick={() => { setTestsOpen(false); setPendingCreate(false); }}
+								title="Close"
+							>
 								<X className="h-5 w-5" />
 							</button>
 						</div>
 
 						<div className="p-4 space-y-4 text-sm">
-							{/* 1. Blood Test */}
-							<div>
-								<label className="block mb-1 font-medium">Blood Test</label>
-								<div className="flex gap-3">
-									<label className="inline-flex items-center gap-2">
-										<input
-											type="radio"
-											name="bloodTest"
-											value="FB"
-											checked={bloodTest === 'FB'}
-											onChange={() => setBloodTest('FB')}
-										/>
-										FB – Fasting Blood
-									</label>
-									<label className="inline-flex items-center gap-2">
-										<input
-											type="radio"
-											name="bloodTest"
-											value="B"
-											checked={bloodTest === 'B'}
-											onChange={() => setBloodTest('B')}
-										/>
-										B – Random
-									</label>
+							<div className="rounded-xl border p-4">
+								<div className="font-medium mb-2">Blood Test</div>
+								<div className="flex flex-wrap gap-2">
+									<Pill active={bloodTest === 'No'} onClick={() => setBloodTest('No')}>No</Pill>
+									<Pill active={bloodTest === 'FB'} onClick={() => setBloodTest('FB')}>FB (Fasting)</Pill>
+									<Pill active={bloodTest === 'B'} onClick={() => setBloodTest('B')}>B (Random)</Pill>
 								</div>
 							</div>
 
-							{/* 2. Urine Test */}
-							<div>
-								<label className="block mb-1 font-medium">Urine Test</label>
-								<div className="flex gap-3">
-									<label className="inline-flex items-center gap-2">
-										<input
-											type="radio"
-											name="urineTest"
-											value="No"
-											checked={urineTest === 'No'}
-											onChange={() => setUrineTest('No')}
-										/>
-										No
-									</label>
-									<label className="inline-flex items-center gap-2">
-										<input
-											type="radio"
-											name="urineTest"
-											value="Yes"
-											checked={urineTest === 'Yes'}
-											onChange={() => setUrineTest('Yes')}
-										/>
-										Yes
-									</label>
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+								<div className="rounded-xl border p-4">
+									<div className="font-medium mb-2">Urine Test</div>
+									<div className="flex gap-2">
+										<Pill active={urineTest === 'No'} onClick={() => setUrineTest('No')}>No</Pill>
+										<Pill active={urineTest === 'Yes'} onClick={() => setUrineTest('Yes')}>Yes</Pill>
+									</div>
+								</div>
+
+								<div className="rounded-xl border p-4">
+									<div className="font-medium mb-2">ECG</div>
+									<div className="flex gap-2">
+										<Pill active={ecg === 'No'} onClick={() => setEcg('No')}>No</Pill>
+										<Pill active={ecg === 'Yes'} onClick={() => setEcg('Yes')}>Yes</Pill>
+									</div>
+								</div>
+
+								<div className="rounded-xl border p-4">
+									<div className="font-medium mb-2">TMT</div>
+									<div className="flex gap-2">
+										<Pill active={tmt === 'No'} onClick={() => setTmt('No')}>No</Pill>
+										<Pill active={tmt === 'Yes'} onClick={() => setTmt('Yes')}>Yes</Pill>
+									</div>
+								</div>
+
+								<div className="rounded-xl border p-4">
+									<div className="font-medium mb-2">Application Form</div>
+									<select
+										className="w-full border rounded-lg px-3 py-2"
+										value={applicationForm}
+										onChange={(e) => setApplicationForm(e.target.value as 'MER' | 'FMR')}
+									>
+										<option value="MER">MER</option>
+										<option value="FMR">FMR</option>
+									</select>
 								</div>
 							</div>
 
-							{/* 3. ECG */}
-							<div>
-								<label className="block mb-1 font-medium">ECG</label>
-								<div className="flex gap-3">
-									<label className="inline-flex items-center gap-2">
-										<input
-											type="radio"
-											name="ecg"
-											value="No"
-											checked={ecg === 'No'}
-											onChange={() => setEcg('No')}
-										/>
-										No
-									</label>
-									<label className="inline-flex items-center gap-2">
-										<input
-											type="radio"
-											name="ecg"
-											value="Yes"
-											checked={ecg === 'Yes'}
-											onChange={() => setEcg('Yes')}
-										/>
-										Yes
-									</label>
-								</div>
-							</div>
-
-							{/* 4. Application Form */}
-							<div>
-								<label className="block mb-1 font-medium">Application Form</label>
-								<select
-									className="w-full border rounded px-3 py-2"
-									value={applicationForm}
-									onChange={(e) => setApplicationForm(e.target.value as 'MER' | 'FMR')}
-								>
-									<option value="MER">MER</option>
-									<option value="FMR">FMR</option>
-								</select>
+							<div className="rounded-xl bg-gray-50 border px-4 py-3 text-xs text-gray-600">
+								<b>Summary:</b> {[
+									bloodTest !== 'No' ? bloodTest : null,
+									urineTest === 'Yes' ? 'U' : null,
+									ecg === 'Yes' ? 'ECG' : null,
+									tmt === 'Yes' ? 'TMT' : null,
+									applicationForm,
+								].filter(Boolean).join(', ') || 'No tests selected'}
 							</div>
 						</div>
 
-						<div className="p-3 border-t flex justify-end gap-2">
-							<button className="rounded border px-3 py-1.5" onClick={() => setTestsOpen(false)}>Cancel</button>
+						<div className="p-4 border-t flex justify-end gap-2">
 							<button
-								className="rounded bg-brand text-white px-3 py-1.5"
+								type="button"
+								className="rounded-lg border px-4 py-2 text-sm"
+								onClick={() => { setTestsOpen(false); setPendingCreate(false); }}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								className="rounded-lg bg-brand text-white px-4 py-2 text-sm"
 								onClick={handleSaveTests}
 							>
 								Save
