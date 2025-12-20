@@ -136,25 +136,27 @@ function buildTrend(
 /** Build a single code like "FB,U,ECG,TMT,MER" from the test fields */
 function formatTestCodes(a: Appointment): string {
 	const parts: string[] = [];
-
 	// blood
 	if (a.bloodTest === 'FB') parts.push('FB');
 	else if (a.bloodTest === 'B') parts.push('B');
 
-	// urine (true or "Yes")
+	// urine
 	if (a.urineTest === true || a.urineTest === 'Yes') parts.push('U');
 
 	// ECG
 	if (a.ecg === true || a.ecg === 'Yes') parts.push('ECG');
 
 	// ✅ TMT
-	if (a.tmt === true || a.tmt === 'Yes') parts.push('TMT');
+	if ((a as any).tmt === true || (a as any).tmt === 'Yes') parts.push('TMT');
 
 	// form
-	if (a.applicationForm === 'MER' || a.applicationForm === 'FMR') parts.push(a.applicationForm);
+	if (a.applicationForm === 'MER' || a.applicationForm === 'FMR' || a.applicationForm === 'ALL') {
+		parts.push(a.applicationForm);
+	}
 
 	return parts.join(',');
 }
+
 
 /* ========= Small UI bits ========= */
 
@@ -845,7 +847,7 @@ export default function AppointmentsPage() {
 						</div>
 
 						{/* Tests button (still available for edits / manual open) */}
-						<div className="flex md:justify-start">
+						{/* <div className="flex md:justify-start">
 							<button
 								type="button"
 								className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50"
@@ -854,7 +856,7 @@ export default function AppointmentsPage() {
 							>
 								Tests
 							</button>
-						</div>
+						</div> */}
 					</div>
 
 					<div className="px-3 pb-3 py-2">

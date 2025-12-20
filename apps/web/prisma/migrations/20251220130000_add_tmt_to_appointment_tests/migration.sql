@@ -1,0 +1,2 @@
+ALTER TABLE "public"."AppointmentTests"
+ADD COLUMN IF NOT EXISTS "tmt" BOOLEAN NOT NULL DEFAULT false;

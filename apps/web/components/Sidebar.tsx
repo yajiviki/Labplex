@@ -6,7 +6,8 @@ import {
 	LayoutDashboard, CalendarDays, FileText,
 	Receipt, Activity, Settings, Users, FlaskConical,
 	SlidersHorizontal, ChevronDown, ChevronRight, KeyRound,
-	PanelLeftClose, PanelRightClose, Building2, Stethoscope, KeySquare, ShieldCheck
+	PanelLeftClose, PanelRightClose, Building2, Stethoscope, KeySquare, ShieldCheck,
+	MapPin
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useState, useMemo } from 'react';
@@ -14,12 +15,13 @@ import { useSession } from 'next-auth/react';
 
 type Role = 'USER' | 'STAFF' | 'ADMIN' | 'SUPER_ADMIN' | string;
 
-/** single item instead of 3 (kept your label) */
+/** Appointments submenu */
 const appointmentChildren = [
 	{ href: '/appointments', icon: Stethoscope, label: 'TPA/DR/OP' },
+	{ href: '/appointments/outer-assign', icon: MapPin, label: 'Outer Assignments' }, // ✅ NEW
 ];
 
-/** NEW: Reports submenu */
+/** Reports submenu */
 const reportsChildren = [
 	{ href: '/reports/accounts', icon: Receipt, label: 'Accounts' },
 ];
@@ -28,7 +30,6 @@ const settingsChildrenFull = [
 	{ href: '/settings/user', icon: Users, label: 'Manage User' },
 	{ href: '/settings/labs', icon: FlaskConical, label: 'Manage Labs' },
 	{ href: '/settings/vendors', icon: Building2, label: 'Manage TPA' },
-	// ✅ Added/normalized: Manage Insurance (lowercase route)
 	{ href: '/settings/insurance', icon: ShieldCheck, label: 'Manage Insurance' },
 	{ href: '/settings/config', icon: SlidersHorizontal, label: 'App Configurations' },
 	{ href: '/settings/password', icon: KeyRound, label: 'Change Password' },
@@ -139,7 +140,7 @@ export default function Sidebar({
 								<ul
 									className={clsx(
 										'mt-1 pl-4 space-y-1 overflow-hidden transition-[max-height] duration-300',
-										appointmentsOpen ? 'max-h-64' : 'max-h-0'
+										appointmentsOpen ? 'max-h-80' : 'max-h-0'
 									)}
 								>
 									{appointmentChildren.map(({ href, icon: Icon, label }) => {
@@ -166,7 +167,7 @@ export default function Sidebar({
 						</li>
 					)}
 
-					{/* Reports submenu (NEW) */}
+					{/* Reports submenu */}
 					<li>
 						<button
 							type="button"
@@ -289,7 +290,6 @@ export default function Sidebar({
 								<ul
 									className={clsx(
 										'mt-1 pl-4 space-y-1 overflow-hidden transition-[max-height] duration-300',
-										// a little taller to fit one more row comfortably
 										settingsOpen ? 'max-h-[400px]' : 'max-h-0'
 									)}
 								>

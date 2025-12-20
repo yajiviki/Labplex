@@ -31,28 +31,21 @@ function truthy(v: any) {
 	return false;
 }
 function buildTestSummary(t?: {
-	bloodTest?: 'NONE' | 'FB' | 'B' | string | null;
-	urineTest?: boolean | string | number | null;
-	ecg?: boolean | string | number | null;
-	applicationForm?: 'MER' | 'FMR' | string | null;
+	bloodTest: 'No' | 'FB' | 'B';
+	urineTest: boolean;
+	ecg: boolean;
+	tmt: boolean;
+	applicationForm: 'MER' | 'FMR' | 'ALL' | null;
 }) {
 	if (!t) return '';
 	const parts: string[] = [];
-
-	const bt = (t.bloodTest ?? '').toString().toUpperCase();
-	if (bt === 'FB') parts.push('FB');
-	else if (bt === 'B' || bt === 'RANDOM') parts.push('B');
-
-	if (truthy(t.urineTest)) parts.push('U');
-	if (truthy(t.ecg)) parts.push('ECG');
-
-	const af = (t.applicationForm ?? '').toString().toUpperCase();
-	if (af === 'MER') parts.push('MER');
-	else if (af === 'FMR') parts.push('FMR');
-
+	if (t.bloodTest && t.bloodTest !== 'No') parts.push(t.bloodTest);
+	if (t.urineTest) parts.push('U');
+	if (t.ecg) parts.push('ECG');
+	if (t.tmt) parts.push('TMT');
+	if (t.applicationForm) parts.push(t.applicationForm);
 	return parts.join(',');
 }
-
 
 /**
  * GET /api/appointments
@@ -160,6 +153,7 @@ export async function GET(req: Request) {
 						bloodTest: true,
 						urineTest: true,
 						ecg: true,
+						tmt: true, // ✅ ADD THIS (this is the fix)
 						applicationForm: true,
 					},
 				},

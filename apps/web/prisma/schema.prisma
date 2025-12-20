@@ -46,7 +46,7 @@ model User {
   labId String
   lab   Lab    @relation(fields: [labId], references: [id])
 
-  userId   String    @unique // <-- make globally unique now
+  userId   String    @unique
   name     String
   phone    String
   role     String
@@ -61,9 +61,13 @@ model User {
 
   passwordSetupTokens PasswordSetupToken[] @relation("PasswordSetupTokens")
 
+  // ✅ NEW
+  assignedAppointments Appointment[] @relation("AppointmentAssignedTo")
+
   @@index([labId])
   @@index([phone])
 }
+
 
 // ===========================================================
 // PasswordSetupToken (optional; used if you email setup links)
@@ -207,13 +211,13 @@ model Appointment {
   extraChargeRs Decimal? @db.Decimal(12, 2)
   paymentStatus String?
 
-  // NEW medical fields
-  //bloodTest       BloodTestType    @default(No)
-  //urineTest       Boolean          @default(false)
-  //ecg             Boolean          @default(false)
-  //applicationForm ApplicationForm?
-
   tests AppointmentTests?
+
+  // ✅ NEW assignment fields
+  assignedToId  String?
+  assignedTo    User?    @relation("AppointmentAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedAt    DateTime?
+  addressRemark String?  @db.Text
 
   isActive  Int      @default(1)
   createdAt DateTime @default(now())
@@ -227,18 +231,22 @@ model Appointment {
   @@index([vendorId])
   @@index([labId])
   @@index([insuranceCompanyId])
+  @@index([assignedToId])
 }
 
+
 model AppointmentTests {
-  appointmentId   String           @id
-  appointment     Appointment      @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  appointmentId String      @id
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
   bloodTest       BloodTestType    @default(No)
   urineTest       Boolean          @default(false)
   ecg             Boolean          @default(false)
-  tmt             Boolean          @default(false)
+  tmt             Boolean          @default(false) // ✅ ADD THIS
   applicationForm ApplicationForm?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Billing {
