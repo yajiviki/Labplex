@@ -1,136 +1,237 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { CalendarPlus, Save, RefreshCw, Search, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { toPng } from 'html-to-image';
+import { CalendarDays, Download, RefreshCcw, Save, AlertTriangle, Users } from 'lucide-react';
 
-type Staff = { id: string; name: string; userId: string; phone: string; role: string };
-type Row = {
+type Lab = {
 	id: string;
+	name: string;
+	nickName?: string | null;
+	labCode?: string | null;
+};
+
+type UserRow = {
+	id: string;
+	name: string;
+	userId?: string | null;
+	phone?: string | null;
+	role?: string | null;
+	labId?: string | null;
+	lab?: { nickName?: string | null; name?: string | null; labCode?: string | null } | null;
+};
+
+type AssignmentRow = {
+	id: string;
+
+	labId: string;
+	labNick?: string;
+	labName?: string;
+	labCode?: string;
+
 	apptAt: string | null;
-	proposalNo: string;
+
+	clientName: string; // ✅ replaced proposalNo
 	mobileNo: string;
 	insuranceName: string;
 	testSummary: string;
 	location: string;
 	status: string;
+
 	addressRemark: string;
 	assignedToId: string;
 	assignedAt: string | null;
 };
 
-function formatDateTime(iso?: string | null) {
+type ApiResp = {
+	mode: 'ALL_LABS' | 'SINGLE_LAB';
+	labId: string | null;
+	users: UserRow[];
+	rows: AssignmentRow[];
+};
+
+function formatDateOnly(iso?: string | null) {
 	if (!iso) return '';
 	const d = new Date(iso);
 	if (Number.isNaN(d.getTime())) return '';
 	const pad = (n: number) => String(n).padStart(2, '0');
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function badgeCls(status: string) {
-	const s = (status || '').toLowerCase();
-	if (s.includes('confirmed')) return 'bg-green-100 text-green-800';
-	if (s.includes('need confirmation')) return 'bg-yellow-100 text-yellow-900';
-	return 'bg-gray-100 text-gray-700';
+function formatTime(iso?: string | null) {
+	if (!iso) return '';
+	const d = new Date(iso);
+	if (Number.isNaN(d.getTime())) return '';
+	const pad = (n: number) => String(n).padStart(2, '0');
+	return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export default function OuterAppointmentAssignPage() {
+function userLabel(u: UserRow) {
+	const uid = u.userId ? ` (${u.userId})` : '';
+	return `${u.name}${uid}`;
+}
+
+export default function OuterAssignmentsPage() {
+	const exportRef = useRef<HTMLDivElement | null>(null);
+
 	const [loading, setLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
+	const [exporting, setExporting] = useState(false);
 
-	const [staff, setStaff] = useState<Staff[]>([]);
-	const [rows, setRows] = useState<Row[]>([]);
+	const [labs, setLabs] = useState<Lab[]>([]);
+	const [labId, setLabId] = useState<string>(''); // '' = All Labs (SUPER_ADMIN)
+	const [rows, setRows] = useState<AssignmentRow[]>([]);
+	const [users, setUsers] = useState<UserRow[]>([]);
 
-	const [q, setQ] = useState('');
-	const [msgOk, setMsgOk] = useState<string | null>(null);
-	const [msgErr, setMsgErr] = useState<string | null>(null);
+	const [err, setErr] = useState<string | null>(null);
+	const [ok, setOk] = useState<string | null>(null);
 
-	// local edits
-	const [assignedTo, setAssignedTo] = useState<Record<string, string>>({});
-	const [remark, setRemark] = useState<Record<string, string>>({});
+	// Editable drafts (per row)
+	const [draftAssignedTo, setDraftAssignedTo] = useState<Record<string, string>>({});
+	const [draftRemark, setDraftRemark] = useState<Record<string, string>>({});
 
-	async function load() {
+	async function loadLabs() {
+		try {
+			const res = await fetch('/api/labs', { cache: 'no-store' });
+			const data = await res.json().catch(() => []);
+			if (!res.ok) return;
+			setLabs(Array.isArray(data) ? data : []);
+		} catch {
+			// ignore
+		}
+	}
+
+	async function loadAssignments(targetLabId?: string) {
 		setLoading(true);
-		setMsgOk(null);
-		setMsgErr(null);
+		setErr(null);
+		setOk(null);
 
 		try {
-			const res = await fetch('/api/appointments/outer-assignments', { cache: 'no-store' });
-			const data = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(data?.error || 'Load failed');
+			const q = targetLabId ? `?labId=${encodeURIComponent(targetLabId)}` : '';
+			const res = await fetch(`/api/appointments/outer-assignments${q}`, { cache: 'no-store' });
+			const data = (await res.json().catch(() => null)) as ApiResp | null;
 
-			setStaff(Array.isArray(data.staff) ? data.staff : []);
-			const list: Row[] = Array.isArray(data.rows) ? data.rows : [];
-			setRows(list);
+			if (!res.ok) {
+				setErr((data as any)?.error || 'Load failed');
+				setRows([]);
+				setUsers([]);
+				return;
+			}
+			if (!data) {
+				setErr('Load failed');
+				setRows([]);
+				setUsers([]);
+				return;
+			}
 
-			// hydrate edits from server values
+			setRows(Array.isArray(data.rows) ? data.rows : []);
+
+			// ✅ Only USER role (hide SUPER_ADMIN/ADMIN/STAFF)
+			const all = Array.isArray(data.users) ? data.users : [];
+			const onlyUser = all.filter(u => (u.role || '').toUpperCase() === 'USER');
+			setUsers(onlyUser);
+
+			// init drafts from server values
 			const a: Record<string, string> = {};
 			const r: Record<string, string> = {};
-			for (const row of list) {
+			for (const row of data.rows || []) {
 				a[row.id] = row.assignedToId || '';
 				r[row.id] = row.addressRemark || '';
 			}
-			setAssignedTo(a);
-			setRemark(r);
+			setDraftAssignedTo(a);
+			setDraftRemark(r);
 		} catch (e: any) {
-			setMsgErr(e?.message || 'Network error');
-			setStaff([]);
+			setErr(e?.message || 'Network error');
 			setRows([]);
+			setUsers([]);
 		} finally {
 			setLoading(false);
 		}
 	}
 
-	useEffect(() => { load(); }, []);
+	useEffect(() => {
+		loadLabs();
+		loadAssignments(''); // All labs by default (SUPER_ADMIN); others auto-scope
+	}, []);
 
-	const filtered = useMemo(() => {
-		const term = q.trim().toLowerCase();
-		if (!term) return rows;
-		return rows.filter(r => {
-			const hay = [
-				r.proposalNo,
-				r.mobileNo,
-				r.insuranceName,
-				r.testSummary,
-				r.location,
-				r.status,
-			].filter(Boolean).map(x => String(x).toLowerCase());
-			return hay.some(s => s.includes(term));
-		});
-	}, [rows, q]);
+	useEffect(() => {
+		loadAssignments(labId);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [labId]);
+
+	const userMap = useMemo(() => {
+		const m = new Map<string, UserRow>();
+		for (const u of users) m.set(u.id, u);
+		return m;
+	}, [users]);
 
 	const stats = useMemo(() => {
 		const total = rows.length;
-		let complete = 0;
-		for (const r of rows) {
-			const s = assignedTo[r.id] || '';
-			const rm = (remark[r.id] || '').trim();
-			if (s && rm) complete += 1;
-		}
-		return { total, complete, pending: total - complete };
-	}, [rows, assignedTo, remark]);
+		const assigned = rows.filter(r => (draftAssignedTo[r.id] || r.assignedToId || '').trim()).length;
+		const missingRemark = rows.filter(r => !(draftRemark[r.id] ?? r.addressRemark ?? '').trim()).length;
+		return { total, assigned, missingRemark };
+	}, [rows, draftAssignedTo, draftRemark]);
 
-	async function onSaveAll() {
-		setMsgOk(null);
-		setMsgErr(null);
+	// group rows by assignee (draft first, fallback to saved)
+	const groupedForExport = useMemo(() => {
+		const groups = new Map<string, AssignmentRow[]>();
+
+		for (const r of rows) {
+			const staffId = (draftAssignedTo[r.id] || r.assignedToId || '').trim();
+			const key = staffId || '__UNASSIGNED__';
+			const arr = groups.get(key) ?? [];
+			arr.push(r);
+			groups.set(key, arr);
+		}
+
+		// sort groups: assigned users alphabetically, unassigned at end
+		const entries = Array.from(groups.entries()).map(([staffId, list]) => {
+			const staffName =
+				staffId === '__UNASSIGNED__'
+					? 'Unassigned'
+					: (userMap.get(staffId)?.name || 'Unknown User');
+			return { staffId, staffName, list: list.sort((a, b) => String(a.apptAt).localeCompare(String(b.apptAt))) };
+		});
+
+		entries.sort((a, b) => {
+			if (a.staffId === '__UNASSIGNED__') return 1;
+			if (b.staffId === '__UNASSIGNED__') return -1;
+			return a.staffName.localeCompare(b.staffName);
+		});
+
+		return entries;
+	}, [rows, draftAssignedTo, userMap]);
+
+	async function saveAll() {
+		setErr(null);
+		setOk(null);
 
 		if (!rows.length) return;
 
-		// Validate all rows (as per requirement: address remark must be entered)
-		const invalid = rows.filter(r => !(assignedTo[r.id] || '').trim() || !(remark[r.id] || '').trim());
-		if (invalid.length) {
-			setMsgErr(`Please select Staff and enter Address Remark for all rows. Pending: ${invalid.length}`);
-			return;
+		// validate
+		for (const r of rows) {
+			const staffId = (draftAssignedTo[r.id] || '').trim();
+			const remark = (draftRemark[r.id] || '').trim();
+			if (!staffId) {
+				setErr('Please select Staff for all rows.');
+				return;
+			}
+			if (!remark) {
+				setErr('Please enter Address Remark for all rows.');
+				return;
+			}
 		}
 
 		setSaving(true);
 		try {
-			const payload = {
-				items: rows.map(r => ({
-					id: r.id,
-					assignedToId: assignedTo[r.id],
-					addressRemark: (remark[r.id] || '').trim(),
-				})),
-			};
+			const items = rows.map(r => ({
+				id: r.id,
+				assignedToId: (draftAssignedTo[r.id] || '').trim(),
+				addressRemark: (draftRemark[r.id] || '').trim(),
+			}));
+
+			const payload: any = { items };
+			if (labId) payload.labId = labId;
 
 			const res = await fetch('/api/appointments/outer-assignments', {
 				method: 'POST',
@@ -138,180 +239,334 @@ export default function OuterAppointmentAssignPage() {
 				body: JSON.stringify(payload),
 			});
 			const data = await res.json().catch(() => ({}));
-			if (!res.ok) throw new Error(data?.error || 'Save failed');
+			if (!res.ok) {
+				setErr(data?.error || 'Save failed');
+				return;
+			}
 
-			setMsgOk('Assignments saved successfully.');
-			await load();
+			setOk('Assignments saved');
+			await loadAssignments(labId);
 		} catch (e: any) {
-			setMsgErr(e?.message || 'Network error');
+			setErr(e?.message || 'Network error');
 		} finally {
 			setSaving(false);
+		}
+	}
+
+	async function exportPngTemplate() {
+		try {
+			if (!exportRef.current) return;
+
+			setErr(null);
+			setOk(null);
+			setExporting(true);
+
+			// wait fonts
+			// @ts-ignore
+			if (document.fonts?.ready) {
+				// @ts-ignore
+				await document.fonts.ready;
+			}
+
+			const node = exportRef.current;
+
+			const dataUrl = await toPng(node, {
+				cacheBust: true,
+				pixelRatio: 2,
+				backgroundColor: 'white',
+			});
+
+			const a = document.createElement('a');
+			a.href = dataUrl;
+			a.download = `outer-assignments-template-${new Date().toISOString().slice(0, 10)}.png`;
+			a.click();
+		} catch (e: any) {
+			setErr(e?.message || 'Export failed');
+		} finally {
+			setExporting(false);
 		}
 	}
 
 	return (
 		<div className="mx-auto w-full max-w-[1600px] px-4 space-y-6">
 			{/* Header */}
-			<div className="rounded-xl border bg-white px-5 py-4 shadow-sm flex items-center justify-between gap-3">
-				<div className="flex items-center gap-3">
-					<div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand/10 text-brand-600">
-						<CalendarPlus className="h-5 w-5" />
+			<div className="rounded-xl border bg-white px-5 py-4 shadow-sm flex items-start justify-between gap-4">
+				<div className="flex items-start gap-3">
+					<div className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-brand/10 text-brand-600">
+						<CalendarDays className="h-5 w-5" />
 					</div>
 					<div>
 						<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Outer Appointment Assignment</h1>
-						<p className="text-sm text-gray-600 mt-1">
-							Upcoming appointments with status <b>Need Confirmation</b> / <b>Confirmed</b> only.
-						</p>
+						<div className="text-sm text-gray-600 mt-1">
+							Upcoming appointments with status <b>Need Confirmation</b> or <b>Confirmed</b> (Service Type: <b>Outer</b>)
+						</div>
 					</div>
 				</div>
 
-				<div className="flex items-center gap-2">
-					<button
-						type="button"
-						onClick={load}
-						className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50"
-						disabled={loading || saving}
-						title="Refresh"
-					>
-						<RefreshCw className="h-4 w-4" />
-						Refresh
-					</button>
+				<div className="flex flex-col items-end gap-2">
+					<div className="text-xs text-gray-600">
+						<span className="inline-flex items-center gap-2">
+							<Users className="h-4 w-4" />
+							Total: <b>{stats.total}</b> · Staff selected: <b>{stats.assigned}</b>
+							{stats.missingRemark ? (
+								<span className="text-red-600"> · Missing remarks: <b>{stats.missingRemark}</b></span>
+							) : null}
+						</span>
+					</div>
 
-					<button
-						type="button"
-						onClick={onSaveAll}
-						className="inline-flex items-center gap-2 rounded bg-brand text-white px-4 py-2 text-sm disabled:opacity-60"
-						disabled={loading || saving || rows.length === 0}
-						title="Save all assignments"
-					>
-						<Save className="h-4 w-4" />
-						{saving ? 'Saving…' : 'Save All'}
-					</button>
+					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+							onClick={() => loadAssignments(labId)}
+							disabled={loading || saving}
+							title="Refresh"
+						>
+							<RefreshCcw className="h-4 w-4" />
+							Refresh
+						</button>
+
+						<button
+							type="button"
+							className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+							onClick={exportPngTemplate}
+							disabled={loading || exporting}
+							title="Export template as PNG"
+						>
+							<Download className="h-4 w-4" />
+							{exporting ? 'Exporting…' : 'Export PNG'}
+						</button>
+
+						<button
+							type="button"
+							className="inline-flex items-center gap-2 rounded bg-brand text-white px-4 py-2 text-sm disabled:opacity-60"
+							onClick={saveAll}
+							disabled={loading || saving || rows.length === 0}
+							title="Save all assignment rows"
+						>
+							<Save className="h-4 w-4" />
+							{saving ? 'Saving…' : 'Save All'}
+						</button>
+					</div>
 				</div>
 			</div>
 
 			{/* Alerts */}
-			{msgErr && (
-				<div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 flex items-start gap-2">
+			{err && (
+				<div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-start gap-2">
 					<AlertTriangle className="h-4 w-4 mt-0.5" />
-					<span>{msgErr}</span>
+					<div>{err}</div>
 				</div>
 			)}
-			{msgOk && (
-				<div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 flex items-start gap-2">
-					<CheckCircle2 className="h-4 w-4 mt-0.5" />
-					<span>{msgOk}</span>
+			{ok && (
+				<div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+					{ok}
 				</div>
 			)}
 
-			{/* Toolbar */}
-			<div className="rounded-xl border bg-white p-4 shadow-sm">
-				<div className="flex flex-wrap items-end justify-between gap-3">
+			{/* Main card */}
+			<div className="rounded-xl border bg-white shadow-sm">
+				{/* Toolbar */}
+				<div className="p-4 border-b flex flex-wrap items-end gap-3 justify-between">
 					<div>
-						<label className="block text-xs text-gray-600 mb-1">Search</label>
-						<div className="relative">
-							<Search className="h-4 w-4 absolute left-3 top-2.5 text-gray-400" />
-							<input
-								className="pl-9 pr-3 py-2 border rounded w-[360px] max-w-full"
-								placeholder="Proposal, Mobile, Insurance, Test, Location…"
-								value={q}
-								onChange={(e) => setQ(e.target.value)}
-							/>
+						<div className="text-base font-semibold">Assignment List</div>
+						<div className="text-xs text-gray-600 mt-1">
+							Fill <b>Staff</b> + <b>Address Remark</b>, then click <b>Save All</b>.
 						</div>
 					</div>
 
-					<div className="text-sm text-gray-700">
-						<div className="flex items-center gap-3">
-							<span><b>Total:</b> {stats.total}</span>
-							<span><b>Completed:</b> {stats.complete}</span>
-							<span className={stats.pending ? 'text-red-600' : 'text-green-700'}>
-								<b>Pending:</b> {stats.pending}
-							</span>
+					{/* Lab filter */}
+					<div className="flex items-end gap-2">
+						<div>
+							<label className="block text-xs text-gray-600 mb-1">Lab</label>
+							<select
+								className="border rounded px-3 py-2 min-w-[260px]"
+								value={labId}
+								onChange={(e) => setLabId(e.target.value)}
+							>
+								<option value="">All Labs</option>
+								{labs.map(l => (
+									<option key={l.id} value={l.id}>
+										{l.nickName || l.name} {l.labCode ? `(${l.labCode})` : ''}
+									</option>
+								))}
+							</select>
 						</div>
 					</div>
 				</div>
 
 				{/* Table */}
-				<div className="mt-4 w-full overflow-x-auto">
-					<div className="max-h-[620px] overflow-y-auto rounded border">
-						<table className="w-full min-w-[1250px]">
-							<thead className="sticky top-0 z-10 bg-white border-b">
-								<tr className="text-left">
-									<th className="px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap">Appointment Date</th>
-									<th className="px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap">Proposal No</th>
-									<th className="px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap">Mobile No</th>
-									<th className="px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap">Insurance</th>
-									<th className="px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap">Test</th>
-									<th className="px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap">Location</th>
-									<th className="px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap">Status</th>
-									<th className="px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap">Assigned Staff</th>
-									<th className="px-3 py-2 text-sm font-semibold text-gray-700 whitespace-nowrap">Address Remark</th>
-								</tr>
-							</thead>
-
-							<tbody>
-								{loading ? (
-									<tr>
-										<td colSpan={9} className="px-3 py-6 text-center text-sm text-gray-500">Loading…</td>
+				<div className="p-4">
+					<div className="w-full overflow-x-auto">
+						<div className="max-h-[620px] overflow-y-auto rounded border">
+							<table className="w-full min-w-[1400px]">
+								<thead className="sticky top-0 z-10 bg-white">
+									<tr className="border-b bg-gray-50">
+										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Appointment</th>
+										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Client Name</th>
+										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Mobile No</th>
+										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Insurance</th>
+										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Test</th>
+										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Location</th>
+										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Staff</th>
+										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Address Remark</th>
+										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Status</th>
 									</tr>
-								) : filtered.length === 0 ? (
-									<tr>
-										<td colSpan={9} className="px-3 py-6 text-center text-sm text-gray-500">
-											No upcoming Outer appointments found for Need Confirmation / Confirmed.
-										</td>
-									</tr>
-								) : filtered.map((r) => {
-									const staffVal = assignedTo[r.id] || '';
-									const remarkVal = remark[r.id] || '';
+								</thead>
 
-									const rowIncomplete = !staffVal || !remarkVal.trim();
-
-									return (
-										<tr key={r.id} className={`border-t hover:bg-gray-50 ${rowIncomplete ? 'bg-yellow-50/40' : ''}`}>
-											<td className="px-3 py-2 text-sm whitespace-nowrap">{formatDateTime(r.apptAt)}</td>
-											<td className="px-3 py-2 text-sm whitespace-nowrap">{r.proposalNo}</td>
-											<td className="px-3 py-2 text-sm whitespace-nowrap">{r.mobileNo}</td>
-											<td className="px-3 py-2 text-sm">{r.insuranceName}</td>
-											<td className="px-3 py-2 text-sm whitespace-nowrap">{r.testSummary}</td>
-											<td className="px-3 py-2 text-sm">{r.location}</td>
-											<td className="px-3 py-2 text-sm whitespace-nowrap">
-												<span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${badgeCls(r.status)}`}>
-													{r.status}
-												</span>
-											</td>
-
-											<td className="px-3 py-2 text-sm">
-												<select
-													className="w-[240px] max-w-full border rounded px-2 py-1.5 bg-white"
-													value={staffVal}
-													onChange={(e) => setAssignedTo(prev => ({ ...prev, [r.id]: e.target.value }))}
-												>
-													<option value="">Select staff</option>
-													{staff.map(s => (
-														<option key={s.id} value={s.id}>
-															{s.name} ({s.userId})
-														</option>
-													))}
-												</select>
-											</td>
-
-											<td className="px-3 py-2 text-sm">
-												<input
-													className="w-[420px] max-w-full border rounded px-3 py-1.5"
-													placeholder="Enter address remark (required)"
-													value={remarkVal}
-													onChange={(e) => setRemark(prev => ({ ...prev, [r.id]: e.target.value }))}
-												/>
+								<tbody>
+									{loading ? (
+										<tr>
+											<td colSpan={9} className="px-3 py-6 text-center text-sm text-gray-500">Loading…</td>
+										</tr>
+									) : rows.length === 0 ? (
+										<tr>
+											<td colSpan={9} className="px-3 py-6 text-center text-sm text-gray-500">
+												No upcoming outer appointments found.
 											</td>
 										</tr>
-									);
-								})}
-							</tbody>
-						</table>
+									) : (
+										rows.map((r) => {
+											const assignedToId = (draftAssignedTo[r.id] ?? r.assignedToId ?? '').trim();
+											const remark = draftRemark[r.id] ?? r.addressRemark ?? '';
+
+											return (
+												<tr key={r.id} className="border-t hover:bg-gray-50">
+													<td className="px-3 py-2 text-sm whitespace-nowrap">
+														<div className="font-medium text-gray-900">
+															{formatDateOnly(r.apptAt)} <span className="text-gray-500">{formatTime(r.apptAt)}</span>
+														</div>
+														{!labId && (
+															<div className="text-xs text-gray-500">
+																{r.labNick || r.labCode || r.labName || r.labId}
+															</div>
+														)}
+													</td>
+
+													<td className="px-3 py-2 text-sm whitespace-nowrap">{r.clientName}</td>
+													<td className="px-3 py-2 text-sm whitespace-nowrap">{r.mobileNo}</td>
+													<td className="px-3 py-2 text-sm">{r.insuranceName}</td>
+													<td className="px-3 py-2 text-sm whitespace-nowrap">{r.testSummary}</td>
+													<td className="px-3 py-2 text-sm">{r.location}</td>
+
+													<td className="px-3 py-2 text-sm">
+														<select
+															className="w-full border rounded px-2 py-1.5 bg-white"
+															value={assignedToId}
+															onChange={(e) => setDraftAssignedTo((p) => ({ ...p, [r.id]: e.target.value }))}
+														>
+															<option value="">Select User</option>
+															{users.map(u => (
+																<option key={u.id} value={u.id}>
+																	{userLabel(u)}
+																</option>
+															))}
+														</select>
+													</td>
+
+													<td className="px-3 py-2 text-sm">
+														<input
+															className="w-full border rounded px-2 py-1.5"
+															placeholder="Enter address / landmark / remark"
+															value={remark}
+															onChange={(e) => setDraftRemark((p) => ({ ...p, [r.id]: e.target.value }))}
+														/>
+													</td>
+
+													<td className="px-3 py-2 text-sm whitespace-nowrap">{r.status}</td>
+												</tr>
+											);
+										})
+									)}
+								</tbody>
+							</table>
+						</div>
 					</div>
 
-					<div className="mt-2 text-xs text-gray-600">
-						Rows highlighted in light yellow are pending Staff selection or Address Remark.
+					<div className="text-xs text-gray-500 mt-3">
+						Export PNG will use the clean assignment template (not this table).
+					</div>
+				</div>
+			</div>
+
+			{/* ===================== */}
+			{/* EXPORT TEMPLATE ONLY  */}
+			{/* ===================== */}
+			<div className="fixed -left-[100000px] top-0">
+				<div
+					ref={exportRef}
+					className="bg-white text-black"
+					style={{
+						width: '900px',
+						padding: '24px',
+						fontFamily:
+							'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
+					}}
+				>
+					<div className="text-xl font-bold">Outer Appointment Assignment</div>
+					<div className="text-sm text-gray-700 mt-1">
+						Date: <b>{new Date().toISOString().slice(0, 10)}</b>
+						{labId ? (
+							<span>
+								{' '}· Lab:{' '}
+								<b>{labs.find(l => l.id === labId)?.nickName || labs.find(l => l.id === labId)?.name || labId}</b>
+							</span>
+						) : (
+							<span> · Lab: <b>All Labs</b></span>
+						)}
+					</div>
+
+					<div className="mt-4" style={{ borderTop: '2px solid #111', paddingTop: '12px' }}>
+						{groupedForExport.length === 0 ? (
+							<div className="text-sm text-gray-700">No rows to export.</div>
+						) : (
+							groupedForExport.map((g, idx) => {
+								const assigneeNo = idx + 1;
+								const staffName = g.staffName;
+
+								return (
+									<div key={g.staffId} style={{ marginBottom: '24px' }}>
+										<div className="text-base font-semibold">
+											Assignee_{assigneeNo} : {staffName}
+										</div>
+										<div style={{ borderTop: '1px solid #111', marginTop: '6px', marginBottom: '10px' }} />
+
+										{g.list.map((r) => {
+											const address =
+												(draftRemark[r.id] ?? r.addressRemark ?? '').trim() ||
+												(r.location || '');
+
+											return (
+												<div key={r.id} style={{ marginBottom: '12px' }}>
+													<div className="text-sm">
+														<span className="font-semibold">Appointment</span> : {formatDateOnly(r.apptAt)} {formatTime(r.apptAt)}
+													</div>
+													<div className="text-sm">
+														<span className="font-semibold">Client Name</span> : {r.clientName || '-'}
+													</div>
+													<div className="text-sm">
+														<span className="font-semibold">Test</span> : {r.testSummary || '-'}
+													</div>
+													<div className="text-sm">
+														<span className="font-semibold">Insurance Company</span> : {r.insuranceName || '-'}
+													</div>
+													<div className="text-sm">
+														<span className="font-semibold">Mobile No</span> : {r.mobileNo || '-'}
+													</div>
+													<div className="text-sm">
+														<span className="font-semibold">Address</span> : {address || '-'}
+													</div>
+
+													<div style={{ borderTop: '1px dashed #444', marginTop: '10px' }} />
+												</div>
+											);
+										})}
+
+										<div style={{ borderTop: '2px solid #111', marginTop: '14px' }} />
+									</div>
+								);
+							})
+						)}
 					</div>
 				</div>
 			</div>
