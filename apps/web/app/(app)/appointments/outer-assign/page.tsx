@@ -2,7 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toPng } from 'html-to-image';
-import { CalendarDays, Download, RefreshCcw, Save, AlertTriangle, Users } from 'lucide-react';
+import {
+	CalendarDays,
+	Download,
+	RefreshCcw,
+	Save,
+	AlertTriangle,
+	Users,
+	ChevronDown,
+	ChevronUp,
+} from 'lucide-react';
 
 type Lab = {
 	id: string;
@@ -31,13 +40,14 @@ type AssignmentRow = {
 
 	apptAt: string | null;
 
-	clientName: string; // ✅ replaced proposalNo
+	clientName: string;
 	mobileNo: string;
 	insuranceName: string;
 	testSummary: string;
 	location: string;
 	status: string;
 
+	visitType?: string | null; // ✅ added for filter
 	addressRemark: string;
 	assignedToId: string;
 	assignedAt: string | null;
@@ -71,6 +81,19 @@ function userLabel(u: UserRow) {
 	return `${u.name}${uid}`;
 }
 
+function ymdToday() {
+	const d = new Date();
+	const pad = (n: number) => String(n).padStart(2, '0');
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function normalizeVisitType(v?: string | null) {
+	const s = (v || '').toUpperCase().trim();
+	if (s === 'CENTER') return 'CENTER';
+	if (s === 'HOME') return 'HOME';
+	return '';
+}
+
 export default function OuterAssignmentsPage() {
 	const exportRef = useRef<HTMLDivElement | null>(null);
 
@@ -86,9 +109,41 @@ export default function OuterAssignmentsPage() {
 	const [err, setErr] = useState<string | null>(null);
 	const [ok, setOk] = useState<string | null>(null);
 
+	// ✅ date duration filter (default: today only)
+	const [dateFrom, setDateFrom] = useState<string>(() => ymdToday());
+	const [dateTo, setDateTo] = useState<string>(() => ymdToday());
+
+	// ✅ NEW: Visit type filter
+	// '' = All, 'CENTER', 'HOME'
+	const [visitType, setVisitType] = useState<string>(''); // store normalized value
+
 	// Editable drafts (per row)
 	const [draftAssignedTo, setDraftAssignedTo] = useState<Record<string, string>>({});
 	const [draftRemark, setDraftRemark] = useState<Record<string, string>>({});
+
+	// ✅ Sorting
+	type SortKey =
+		| 'apptAt'
+		| 'clientName'
+		| 'mobileNo'
+		| 'insuranceName'
+		| 'testSummary'
+		| 'location'
+		| 'visitType'
+		| 'status'
+		| 'staff'
+		| 'remark';
+
+	const [sortKey, setSortKey] = useState<SortKey>('apptAt');
+	const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+	function sortBy(k: SortKey) {
+		if (k === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+		else {
+			setSortKey(k);
+			setSortDir('asc');
+		}
+	}
 
 	async function loadLabs() {
 		try {
@@ -101,13 +156,26 @@ export default function OuterAssignmentsPage() {
 		}
 	}
 
+	function buildQuery(targetLabId?: string) {
+		const sp = new URLSearchParams();
+		if (targetLabId) sp.set('labId', targetLabId);
+
+		if (dateFrom) sp.set('dateFrom', dateFrom);
+		if (dateTo) sp.set('dateTo', dateTo);
+
+		if (visitType) sp.set('visitType', visitType); // ✅ NEW
+
+		const qs = sp.toString();
+		return qs ? `?${qs}` : '';
+	}
+
 	async function loadAssignments(targetLabId?: string) {
 		setLoading(true);
 		setErr(null);
 		setOk(null);
 
 		try {
-			const q = targetLabId ? `?labId=${encodeURIComponent(targetLabId)}` : '';
+			const q = buildQuery(targetLabId);
 			const res = await fetch(`/api/appointments/outer-assignments${q}`, { cache: 'no-store' });
 			const data = (await res.json().catch(() => null)) as ApiResp | null;
 
@@ -128,7 +196,7 @@ export default function OuterAssignmentsPage() {
 
 			// ✅ Only USER role (hide SUPER_ADMIN/ADMIN/STAFF)
 			const all = Array.isArray(data.users) ? data.users : [];
-			const onlyUser = all.filter(u => (u.role || '').toUpperCase() === 'USER');
+			const onlyUser = all.filter((u) => (u.role || '').toUpperCase() === 'USER');
 			setUsers(onlyUser);
 
 			// init drafts from server values
@@ -151,13 +219,14 @@ export default function OuterAssignmentsPage() {
 
 	useEffect(() => {
 		loadLabs();
-		loadAssignments(''); // All labs by default (SUPER_ADMIN); others auto-scope
+		loadAssignments('');
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	useEffect(() => {
 		loadAssignments(labId);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [labId]);
+	}, [labId, dateFrom, dateTo, visitType]);
 
 	const userMap = useMemo(() => {
 		const m = new Map<string, UserRow>();
@@ -165,18 +234,92 @@ export default function OuterAssignmentsPage() {
 		return m;
 	}, [users]);
 
+	function inRange(iso: string | null, from: string, to: string) {
+		if (!iso) return false;
+		const ymd = formatDateOnly(iso);
+		if (!ymd) return false;
+
+		let f = from || '';
+		let t = to || '';
+		if (f && t && f > t) [f, t] = [t, f];
+
+		if (f && ymd < f) return false;
+		if (t && ymd > t) return false;
+		return true;
+	}
+
+	const filteredSortedRows = useMemo(() => {
+		const vt = normalizeVisitType(visitType);
+
+		const base = rows.filter((r) => {
+			// client-side safety filter
+			if (dateFrom || dateTo) {
+				if (!inRange(r.apptAt, dateFrom, dateTo)) return false;
+			}
+
+			if (vt) {
+				const rowVT = normalizeVisitType(r.visitType || '');
+				if (rowVT !== vt) return false;
+			}
+
+			return true;
+		});
+
+		function val(r: AssignmentRow, k: SortKey) {
+			switch (k) {
+				case 'apptAt':
+					return r.apptAt ? new Date(r.apptAt).getTime() : 0;
+				case 'clientName':
+					return (r.clientName || '').toLowerCase();
+				case 'mobileNo':
+					return (r.mobileNo || '').toLowerCase();
+				case 'insuranceName':
+					return (r.insuranceName || '').toLowerCase();
+				case 'testSummary':
+					return (r.testSummary || '').toLowerCase();
+				case 'location':
+					return (r.location || '').toLowerCase();
+				case 'visitType':
+					return normalizeVisitType(r.visitType || '');
+				case 'status':
+					return (r.status || '').toLowerCase();
+				case 'staff': {
+					const staffId = (draftAssignedTo[r.id] || r.assignedToId || '').trim();
+					return (userMap.get(staffId)?.name || '').toLowerCase();
+				}
+				case 'remark': {
+					const remark = (draftRemark[r.id] ?? r.addressRemark ?? '').trim();
+					return remark.toLowerCase();
+				}
+				default:
+					return '';
+			}
+		}
+
+		const sorted = [...base].sort((a, b) => {
+			const va = val(a, sortKey);
+			const vb = val(b, sortKey);
+			if (va === vb) return 0;
+			const cmp = va > vb ? 1 : -1;
+			return sortDir === 'asc' ? cmp : -cmp;
+		});
+
+		return sorted;
+	}, [rows, dateFrom, dateTo, visitType, sortKey, sortDir, draftAssignedTo, draftRemark, userMap]);
+
+	// ✅ stats should reflect filtered rows only
 	const stats = useMemo(() => {
-		const total = rows.length;
-		const assigned = rows.filter(r => (draftAssignedTo[r.id] || r.assignedToId || '').trim()).length;
-		const missingRemark = rows.filter(r => !(draftRemark[r.id] ?? r.addressRemark ?? '').trim()).length;
+		const total = filteredSortedRows.length;
+		const assigned = filteredSortedRows.filter((r) => (draftAssignedTo[r.id] || r.assignedToId || '').trim()).length;
+		const missingRemark = filteredSortedRows.filter((r) => !(draftRemark[r.id] ?? r.addressRemark ?? '').trim()).length;
 		return { total, assigned, missingRemark };
-	}, [rows, draftAssignedTo, draftRemark]);
+	}, [filteredSortedRows, draftAssignedTo, draftRemark]);
 
 	// group rows by assignee (draft first, fallback to saved)
 	const groupedForExport = useMemo(() => {
 		const groups = new Map<string, AssignmentRow[]>();
 
-		for (const r of rows) {
+		for (const r of filteredSortedRows) {
 			const staffId = (draftAssignedTo[r.id] || r.assignedToId || '').trim();
 			const key = staffId || '__UNASSIGNED__';
 			const arr = groups.get(key) ?? [];
@@ -184,13 +327,12 @@ export default function OuterAssignmentsPage() {
 			groups.set(key, arr);
 		}
 
-		// sort groups: assigned users alphabetically, unassigned at end
 		const entries = Array.from(groups.entries()).map(([staffId, list]) => {
 			const staffName =
 				staffId === '__UNASSIGNED__'
 					? 'Unassigned'
-					: (userMap.get(staffId)?.name || 'Unknown User');
-			return { staffId, staffName, list: list.sort((a, b) => String(a.apptAt).localeCompare(String(b.apptAt))) };
+					: userMap.get(staffId)?.name || 'Unknown User';
+			return { staffId, staffName, list };
 		});
 
 		entries.sort((a, b) => {
@@ -200,31 +342,35 @@ export default function OuterAssignmentsPage() {
 		});
 
 		return entries;
-	}, [rows, draftAssignedTo, userMap]);
+	}, [filteredSortedRows, draftAssignedTo, userMap]);
 
 	async function saveAll() {
 		setErr(null);
 		setOk(null);
 
-		if (!rows.length) return;
+		// ✅ IMPORTANT: only save filtered rows
+		if (!filteredSortedRows.length) {
+			setErr('No rows in the current filter to save.');
+			return;
+		}
 
-		// validate
-		for (const r of rows) {
+		// ✅ validate only filtered rows (not all data)
+		for (const r of filteredSortedRows) {
 			const staffId = (draftAssignedTo[r.id] || '').trim();
 			const remark = (draftRemark[r.id] || '').trim();
 			if (!staffId) {
-				setErr('Please select Staff for all rows.');
+				setErr('Please select Staff for all filtered rows.');
 				return;
 			}
 			if (!remark) {
-				setErr('Please enter Address Remark for all rows.');
+				setErr('Please enter Address Remark for all filtered rows.');
 				return;
 			}
 		}
 
 		setSaving(true);
 		try {
-			const items = rows.map(r => ({
+			const items = filteredSortedRows.map((r) => ({
 				id: r.id,
 				assignedToId: (draftAssignedTo[r.id] || '').trim(),
 				addressRemark: (draftRemark[r.id] || '').trim(),
@@ -244,7 +390,7 @@ export default function OuterAssignmentsPage() {
 				return;
 			}
 
-			setOk('Assignments saved');
+			setOk(`Assignments saved (${items.length})`);
 			await loadAssignments(labId);
 		} catch (e: any) {
 			setErr(e?.message || 'Network error');
@@ -261,7 +407,6 @@ export default function OuterAssignmentsPage() {
 			setOk(null);
 			setExporting(true);
 
-			// wait fonts
 			// @ts-ignore
 			if (document.fonts?.ready) {
 				// @ts-ignore
@@ -287,6 +432,22 @@ export default function OuterAssignmentsPage() {
 		}
 	}
 
+	const SortTh = ({ k, label }: { k: SortKey; label: string }) => {
+		const active = sortKey === k;
+		return (
+			<th
+				className="px-3 py-2 text-left text-xs font-semibold text-gray-700 cursor-pointer select-none whitespace-nowrap"
+				onClick={() => sortBy(k)}
+				title={`Sort by ${label}`}
+			>
+				<span className="inline-flex items-center gap-1">
+					{label}
+					{active ? (sortDir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />) : null}
+				</span>
+			</th>
+		);
+	};
+
 	return (
 		<div className="mx-auto w-full max-w-[1600px] px-4 space-y-6">
 			{/* Header */}
@@ -297,8 +458,12 @@ export default function OuterAssignmentsPage() {
 					</div>
 					<div>
 						<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Outer Appointment Assignment</h1>
-						<div className="text-sm text-gray-600 mt-1">
+						{/* <div className="text-sm text-gray-600 mt-1">
 							Upcoming appointments with status <b>Need Confirmation</b> or <b>Confirmed</b> (Service Type: <b>Outer</b>)
+						</div> */}
+						<div className="text-xs text-gray-500 mt-1">
+							Range: <b>{dateFrom || '…'}</b> → <b>{dateTo || '…'}</b>
+							{visitType ? <span> · Visit: <b>{visitType}</b></span> : null}
 						</div>
 					</div>
 				</div>
@@ -307,7 +472,7 @@ export default function OuterAssignmentsPage() {
 					<div className="text-xs text-gray-600">
 						<span className="inline-flex items-center gap-2">
 							<Users className="h-4 w-4" />
-							Total: <b>{stats.total}</b> · Staff selected: <b>{stats.assigned}</b>
+							Filtered rows: <b>{stats.total}</b> · Staff selected: <b>{stats.assigned}</b>
 							{stats.missingRemark ? (
 								<span className="text-red-600"> · Missing remarks: <b>{stats.missingRemark}</b></span>
 							) : null}
@@ -341,8 +506,8 @@ export default function OuterAssignmentsPage() {
 							type="button"
 							className="inline-flex items-center gap-2 rounded bg-brand text-white px-4 py-2 text-sm disabled:opacity-60"
 							onClick={saveAll}
-							disabled={loading || saving || rows.length === 0}
-							title="Save all assignment rows"
+							disabled={loading || saving || filteredSortedRows.length === 0}
+							title="Save only filtered assignment rows"
 						>
 							<Save className="h-4 w-4" />
 							{saving ? 'Saving…' : 'Save All'}
@@ -372,26 +537,73 @@ export default function OuterAssignmentsPage() {
 						<div className="text-base font-semibold">Assignment List</div>
 						<div className="text-xs text-gray-600 mt-1">
 							Fill <b>Staff</b> + <b>Address Remark</b>, then click <b>Save All</b>.
+							<span className="ml-2 text-gray-500">(Save All = only current filter)</span>
 						</div>
 					</div>
 
-					{/* Lab filter */}
-					<div className="flex items-end gap-2">
+					<div className="flex flex-wrap items-end gap-3">
+						{/* Lab filter (smaller width) */}
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">Lab</label>
 							<select
-								className="border rounded px-3 py-2 min-w-[260px]"
+								className="border rounded px-3 py-2 min-w-[190px] max-w-[220px]"
 								value={labId}
 								onChange={(e) => setLabId(e.target.value)}
 							>
 								<option value="">All Labs</option>
-								{labs.map(l => (
+								{labs.map((l) => (
 									<option key={l.id} value={l.id}>
 										{l.nickName || l.name} {l.labCode ? `(${l.labCode})` : ''}
 									</option>
 								))}
 							</select>
 						</div>
+
+						{/* Visit Type filter */}
+						<div>
+							<label className="block text-xs text-gray-600 mb-1">Visit Type</label>
+							<select
+								className="border rounded px-3 py-2 min-w-[160px]"
+								value={visitType}
+								onChange={(e) => setVisitType(normalizeVisitType(e.target.value))}
+							>
+								<option value="">All</option>
+								<option value="CENTER">Center</option>
+								<option value="HOME">Home</option>
+							</select>
+						</div>
+
+						{/* Date duration */}
+						<div>
+							<label className="block text-xs text-gray-600 mb-1">From</label>
+							<input
+								type="date"
+								className="border rounded px-3 py-2"
+								value={dateFrom}
+								onChange={(e) => setDateFrom(e.target.value)}
+							/>
+						</div>
+						<div>
+							<label className="block text-xs text-gray-600 mb-1">To</label>
+							<input
+								type="date"
+								className="border rounded px-3 py-2"
+								value={dateTo}
+								onChange={(e) => setDateTo(e.target.value)}
+							/>
+						</div>
+
+						<button
+							type="button"
+							className="rounded border px-3 py-2 text-sm hover:bg-gray-50"
+							onClick={() => {
+								setDateFrom('');
+								setDateTo('');
+							}}
+							title="Clear date filter"
+						>
+							Clear Dates
+						</button>
 					</div>
 				</div>
 
@@ -399,36 +611,38 @@ export default function OuterAssignmentsPage() {
 				<div className="p-4">
 					<div className="w-full overflow-x-auto">
 						<div className="max-h-[620px] overflow-y-auto rounded border">
-							<table className="w-full min-w-[1400px]">
+							<table className="w-full min-w-[1500px]">
 								<thead className="sticky top-0 z-10 bg-white">
 									<tr className="border-b bg-gray-50">
-										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Appointment</th>
-										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Client Name</th>
-										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Mobile No</th>
-										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Insurance</th>
-										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Test</th>
-										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Location</th>
-										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Staff</th>
-										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Address Remark</th>
-										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Status</th>
+										<SortTh k="apptAt" label="Appointment" />
+										<SortTh k="clientName" label="Client Name" />
+										<SortTh k="mobileNo" label="Mobile No" />
+										<SortTh k="insuranceName" label="Insurance" />
+										<SortTh k="testSummary" label="Test" />
+										<SortTh k="visitType" label="Visit Type" />
+										<SortTh k="location" label="Location" />
+										<SortTh k="staff" label="Staff" />
+										<SortTh k="remark" label="Address Remark" />
+										<SortTh k="status" label="Status" />
 									</tr>
 								</thead>
 
 								<tbody>
 									{loading ? (
 										<tr>
-											<td colSpan={9} className="px-3 py-6 text-center text-sm text-gray-500">Loading…</td>
+											<td colSpan={10} className="px-3 py-6 text-center text-sm text-gray-500">Loading…</td>
 										</tr>
-									) : rows.length === 0 ? (
+									) : filteredSortedRows.length === 0 ? (
 										<tr>
-											<td colSpan={9} className="px-3 py-6 text-center text-sm text-gray-500">
-												No upcoming outer appointments found.
+											<td colSpan={10} className="px-3 py-6 text-center text-sm text-gray-500">
+												No rows found for the current filter.
 											</td>
 										</tr>
 									) : (
-										rows.map((r) => {
+										filteredSortedRows.map((r) => {
 											const assignedToId = (draftAssignedTo[r.id] ?? r.assignedToId ?? '').trim();
 											const remark = draftRemark[r.id] ?? r.addressRemark ?? '';
+											const vt = normalizeVisitType(r.visitType || '');
 
 											return (
 												<tr key={r.id} className="border-t hover:bg-gray-50">
@@ -447,6 +661,7 @@ export default function OuterAssignmentsPage() {
 													<td className="px-3 py-2 text-sm whitespace-nowrap">{r.mobileNo}</td>
 													<td className="px-3 py-2 text-sm">{r.insuranceName}</td>
 													<td className="px-3 py-2 text-sm whitespace-nowrap">{r.testSummary}</td>
+													<td className="px-3 py-2 text-sm whitespace-nowrap">{vt || '-'}</td>
 													<td className="px-3 py-2 text-sm">{r.location}</td>
 
 													<td className="px-3 py-2 text-sm">
@@ -456,7 +671,7 @@ export default function OuterAssignmentsPage() {
 															onChange={(e) => setDraftAssignedTo((p) => ({ ...p, [r.id]: e.target.value }))}
 														>
 															<option value="">Select User</option>
-															{users.map(u => (
+															{users.map((u) => (
 																<option key={u.id} value={u.id}>
 																	{userLabel(u)}
 																</option>
@@ -489,9 +704,7 @@ export default function OuterAssignmentsPage() {
 				</div>
 			</div>
 
-			{/* ===================== */}
-			{/* EXPORT TEMPLATE ONLY  */}
-			{/* ===================== */}
+			{/* EXPORT TEMPLATE ONLY */}
 			<div className="fixed -left-[100000px] top-0">
 				<div
 					ref={exportRef}
@@ -506,10 +719,12 @@ export default function OuterAssignmentsPage() {
 					<div className="text-xl font-bold">Outer Appointment Assignment</div>
 					<div className="text-sm text-gray-700 mt-1">
 						Date: <b>{new Date().toISOString().slice(0, 10)}</b>
+						<span> · Range: <b>{dateFrom || '…'}</b> → <b>{dateTo || '…'}</b></span>
+						{visitType ? <span> · Visit: <b>{visitType}</b></span> : null}
 						{labId ? (
 							<span>
 								{' '}· Lab:{' '}
-								<b>{labs.find(l => l.id === labId)?.nickName || labs.find(l => l.id === labId)?.name || labId}</b>
+								<b>{labs.find((l) => l.id === labId)?.nickName || labs.find((l) => l.id === labId)?.name || labId}</b>
 							</span>
 						) : (
 							<span> · Lab: <b>All Labs</b></span>
@@ -522,12 +737,11 @@ export default function OuterAssignmentsPage() {
 						) : (
 							groupedForExport.map((g, idx) => {
 								const assigneeNo = idx + 1;
-								const staffName = g.staffName;
 
 								return (
 									<div key={g.staffId} style={{ marginBottom: '24px' }}>
 										<div className="text-base font-semibold">
-											Assignee_{assigneeNo} : {staffName}
+											Assignee_{assigneeNo} : {g.staffName}
 										</div>
 										<div style={{ borderTop: '1px solid #111', marginTop: '6px', marginBottom: '10px' }} />
 
