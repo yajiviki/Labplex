@@ -474,7 +474,10 @@ export default function OuterAssignmentsPage() {
 	};
 
 	const selectedVendorLabel =
-		vendorId ? vendorLabel(vendors.find((v) => v.id === vendorId) || {}) : 'All TPA';
+		vendorId ? (() => {
+			const vendor = vendors.find((v) => v.id === vendorId);
+			return vendor ? vendorLabel(vendor) : 'All TPA';
+		})() : 'All TPA';
 
 	return (
 		<div className="mx-auto w-full max-w-[1600px] px-4 space-y-6">
