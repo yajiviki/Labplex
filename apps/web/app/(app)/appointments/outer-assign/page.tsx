@@ -20,6 +20,13 @@ type Lab = {
 	labCode?: string | null;
 };
 
+type Vendor = {
+	id: string;
+	vendorId?: string | null;
+	tpaName?: string | null;
+	nickName?: string | null;
+};
+
 type UserRow = {
 	id: string;
 	name: string;
@@ -47,7 +54,8 @@ type AssignmentRow = {
 	location: string;
 	status: string;
 
-	visitType?: string | null; // ✅ added for filter
+	visitType?: string | null;
+
 	addressRemark: string;
 	assignedToId: string;
 	assignedAt: string | null;
@@ -94,6 +102,12 @@ function normalizeVisitType(v?: string | null) {
 	return '';
 }
 
+function vendorLabel(v: Vendor) {
+	const name = v.nickName || v.tpaName || 'TPA';
+	const code = v.vendorId ? ` (${v.vendorId})` : '';
+	return `${name}${code}`;
+}
+
 export default function OuterAssignmentsPage() {
 	const exportRef = useRef<HTMLDivElement | null>(null);
 
@@ -102,26 +116,29 @@ export default function OuterAssignmentsPage() {
 	const [exporting, setExporting] = useState(false);
 
 	const [labs, setLabs] = useState<Lab[]>([]);
+	const [vendors, setVendors] = useState<Vendor[]>([]);
+
 	const [labId, setLabId] = useState<string>(''); // '' = All Labs (SUPER_ADMIN)
+	const [vendorId, setVendorId] = useState<string>(''); // ✅ NEW filter: TPA/Vendor (id)
+
 	const [rows, setRows] = useState<AssignmentRow[]>([]);
 	const [users, setUsers] = useState<UserRow[]>([]);
 
 	const [err, setErr] = useState<string | null>(null);
 	const [ok, setOk] = useState<string | null>(null);
 
-	// ✅ date duration filter (default: today only)
+	// date duration filter (default: today only)
 	const [dateFrom, setDateFrom] = useState<string>(() => ymdToday());
 	const [dateTo, setDateTo] = useState<string>(() => ymdToday());
 
-	// ✅ NEW: Visit type filter
-	// '' = All, 'CENTER', 'HOME'
-	const [visitType, setVisitType] = useState<string>(''); // store normalized value
+	// visit type filter
+	const [visitType, setVisitType] = useState<string>('');
 
-	// Editable drafts (per row)
+	// drafts per row
 	const [draftAssignedTo, setDraftAssignedTo] = useState<Record<string, string>>({});
 	const [draftRemark, setDraftRemark] = useState<Record<string, string>>({});
 
-	// ✅ Sorting
+	// sorting
 	type SortKey =
 		| 'apptAt'
 		| 'clientName'
@@ -156,14 +173,30 @@ export default function OuterAssignmentsPage() {
 		}
 	}
 
+	async function loadVendors() {
+		try {
+			const res = await fetch('/api/vendors', { cache: 'no-store' });
+			const data = await res.json().catch(() => []);
+			if (!res.ok) return;
+			const list = Array.isArray(data) ? data : [];
+			// sort for dropdown
+			list.sort((a: Vendor, b: Vendor) => vendorLabel(a).localeCompare(vendorLabel(b)));
+			setVendors(list);
+		} catch {
+			// ignore
+		}
+	}
+
 	function buildQuery(targetLabId?: string) {
 		const sp = new URLSearchParams();
-		if (targetLabId) sp.set('labId', targetLabId);
 
+		if (targetLabId) sp.set('labId', targetLabId);
 		if (dateFrom) sp.set('dateFrom', dateFrom);
 		if (dateTo) sp.set('dateTo', dateTo);
+		if (visitType) sp.set('visitType', visitType);
 
-		if (visitType) sp.set('visitType', visitType); // ✅ NEW
+		// ✅ NEW
+		if (vendorId) sp.set('vendorId', vendorId);
 
 		const qs = sp.toString();
 		return qs ? `?${qs}` : '';
@@ -194,12 +227,12 @@ export default function OuterAssignmentsPage() {
 
 			setRows(Array.isArray(data.rows) ? data.rows : []);
 
-			// ✅ Only USER role (hide SUPER_ADMIN/ADMIN/STAFF)
+			// only USER role (hide SUPER_ADMIN/ADMIN/STAFF)
 			const all = Array.isArray(data.users) ? data.users : [];
 			const onlyUser = all.filter((u) => (u.role || '').toUpperCase() === 'USER');
 			setUsers(onlyUser);
 
-			// init drafts from server values
+			// init drafts
 			const a: Record<string, string> = {};
 			const r: Record<string, string> = {};
 			for (const row of data.rows || []) {
@@ -219,6 +252,7 @@ export default function OuterAssignmentsPage() {
 
 	useEffect(() => {
 		loadLabs();
+		loadVendors();
 		loadAssignments('');
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
@@ -226,7 +260,7 @@ export default function OuterAssignmentsPage() {
 	useEffect(() => {
 		loadAssignments(labId);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [labId, dateFrom, dateTo, visitType]);
+	}, [labId, dateFrom, dateTo, visitType, vendorId]);
 
 	const userMap = useMemo(() => {
 		const m = new Map<string, UserRow>();
@@ -252,16 +286,13 @@ export default function OuterAssignmentsPage() {
 		const vt = normalizeVisitType(visitType);
 
 		const base = rows.filter((r) => {
-			// client-side safety filter
 			if (dateFrom || dateTo) {
 				if (!inRange(r.apptAt, dateFrom, dateTo)) return false;
 			}
-
 			if (vt) {
 				const rowVT = normalizeVisitType(r.visitType || '');
 				if (rowVT !== vt) return false;
 			}
-
 			return true;
 		});
 
@@ -296,18 +327,15 @@ export default function OuterAssignmentsPage() {
 			}
 		}
 
-		const sorted = [...base].sort((a, b) => {
+		return [...base].sort((a, b) => {
 			const va = val(a, sortKey);
 			const vb = val(b, sortKey);
 			if (va === vb) return 0;
 			const cmp = va > vb ? 1 : -1;
 			return sortDir === 'asc' ? cmp : -cmp;
 		});
-
-		return sorted;
 	}, [rows, dateFrom, dateTo, visitType, sortKey, sortDir, draftAssignedTo, draftRemark, userMap]);
 
-	// ✅ stats should reflect filtered rows only
 	const stats = useMemo(() => {
 		const total = filteredSortedRows.length;
 		const assigned = filteredSortedRows.filter((r) => (draftAssignedTo[r.id] || r.assignedToId || '').trim()).length;
@@ -315,7 +343,6 @@ export default function OuterAssignmentsPage() {
 		return { total, assigned, missingRemark };
 	}, [filteredSortedRows, draftAssignedTo, draftRemark]);
 
-	// group rows by assignee (draft first, fallback to saved)
 	const groupedForExport = useMemo(() => {
 		const groups = new Map<string, AssignmentRow[]>();
 
@@ -348,13 +375,11 @@ export default function OuterAssignmentsPage() {
 		setErr(null);
 		setOk(null);
 
-		// ✅ IMPORTANT: only save filtered rows
 		if (!filteredSortedRows.length) {
 			setErr('No rows in the current filter to save.');
 			return;
 		}
 
-		// ✅ validate only filtered rows (not all data)
 		for (const r of filteredSortedRows) {
 			const staffId = (draftAssignedTo[r.id] || '').trim();
 			const remark = (draftRemark[r.id] || '').trim();
@@ -448,6 +473,9 @@ export default function OuterAssignmentsPage() {
 		);
 	};
 
+	const selectedVendorLabel =
+		vendorId ? vendorLabel(vendors.find((v) => v.id === vendorId) || {}) : 'All TPA';
+
 	return (
 		<div className="mx-auto w-full max-w-[1600px] px-4 space-y-6">
 			{/* Header */}
@@ -458,12 +486,10 @@ export default function OuterAssignmentsPage() {
 					</div>
 					<div>
 						<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Outer Appointment Assignment</h1>
-						{/* <div className="text-sm text-gray-600 mt-1">
-							Upcoming appointments with status <b>Need Confirmation</b> or <b>Confirmed</b> (Service Type: <b>Outer</b>)
-						</div> */}
 						<div className="text-xs text-gray-500 mt-1">
 							Range: <b>{dateFrom || '…'}</b> → <b>{dateTo || '…'}</b>
 							{visitType ? <span> · Visit: <b>{visitType}</b></span> : null}
+							{vendorId ? <span> · TPA: <b>{selectedVendorLabel}</b></span> : null}
 						</div>
 					</div>
 				</div>
@@ -542,7 +568,7 @@ export default function OuterAssignmentsPage() {
 					</div>
 
 					<div className="flex flex-wrap items-end gap-3">
-						{/* Lab filter (smaller width) */}
+						{/* Lab filter */}
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">Lab</label>
 							<select
@@ -554,6 +580,23 @@ export default function OuterAssignmentsPage() {
 								{labs.map((l) => (
 									<option key={l.id} value={l.id}>
 										{l.nickName || l.name} {l.labCode ? `(${l.labCode})` : ''}
+									</option>
+								))}
+							</select>
+						</div>
+
+						{/* ✅ NEW: TPA filter */}
+						<div>
+							<label className="block text-xs text-gray-600 mb-1">TPA Name</label>
+							<select
+								className="border rounded px-3 py-2 min-w-[220px] max-w-[260px]"
+								value={vendorId}
+								onChange={(e) => setVendorId(e.target.value)}
+							>
+								<option value="">All TPA</option>
+								{vendors.map((v) => (
+									<option key={v.id} value={v.id}>
+										{vendorLabel(v)}
 									</option>
 								))}
 							</select>
@@ -721,6 +764,7 @@ export default function OuterAssignmentsPage() {
 						Date: <b>{new Date().toISOString().slice(0, 10)}</b>
 						<span> · Range: <b>{dateFrom || '…'}</b> → <b>{dateTo || '…'}</b></span>
 						{visitType ? <span> · Visit: <b>{visitType}</b></span> : null}
+						{vendorId ? <span> · TPA: <b>{selectedVendorLabel}</b></span> : null}
 						{labId ? (
 							<span>
 								{' '}· Lab:{' '}

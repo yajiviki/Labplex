@@ -57,7 +57,7 @@ function getLabId(session: any): string | null {
 }
 
 /* ----------------------------------------------------------------------- */
-/* GET /api/appointments/outer-assignments?labId=&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&visitType=CENTER|HOME */
+/* GET /api/appointments/outer-assignments?labId=&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&visitType=CENTER|HOME&vendorId= */
 /* ----------------------------------------------------------------------- */
 export async function GET(req: Request) {
 	try {
@@ -75,6 +75,9 @@ export async function GET(req: Request) {
 		const dateTo = searchParams.get('dateTo');
 		const visitType = normalizeVisitType(searchParams.get('visitType'));
 
+		// ✅ NEW: vendor filter (TPA)
+		const vendorId = (searchParams.get('vendorId') || '').trim();
+
 		const isSuperAdmin = role === 'SUPER_ADMIN';
 
 		// lab scoping
@@ -82,19 +85,33 @@ export async function GET(req: Request) {
 		if (isSuperAdmin) {
 			effectiveLabId = labIdParam ? labIdParam : null; // empty => all labs
 		} else {
-			// non-super admin always scoped to their lab
 			effectiveLabId = sessionLabId;
 		}
 
 		// build appointment filter
 		const where: any = {
 			isActive: 1,
-			// your requirement: serviceType Outer + status Need confirmation / Confirmed
-			serviceType: { in: ['Outer', 'Local'], mode: 'insensitive' },
-			status: { in: ['TBI', 'Need Confirmation', 'Need confirmation', 'Confirmed', 'CONFIRMED', 'confirmed'] },
+
+			// ✅ FIX: Prisma "in" doesn't support mode: 'insensitive'
+			// (Keep whichever values you actually use in DB)
+			serviceType: { in: ['Outer', 'OUTER', 'outer', 'Local', 'LOCAL', 'local'] },
+
+			status: {
+				in: [
+					'TBI',
+					'Need Confirmation',
+					'Need confirmation',
+					'Confirmed',
+					'CONFIRMED',
+					'confirmed',
+				],
+			},
 		};
 
 		if (effectiveLabId) where.labId = effectiveLabId;
+
+		// ✅ NEW: apply vendor filter
+		if (vendorId) where.vendorId = vendorId;
 
 		if (dateFrom || dateTo) {
 			const gte = dateFrom ? parseDateOnlyStart(dateFrom) : null;
@@ -111,7 +128,6 @@ export async function GET(req: Request) {
 		}
 
 		// ✅ users: show only USER role across ALL labs (no SUPER_ADMIN/ADMIN/STAFF)
-		// keep simple: role equals USER (common in your app)
 		const users = await prisma.user.findMany({
 			where: {
 				isActive: 1,
@@ -141,6 +157,10 @@ export async function GET(req: Request) {
 				location: true,
 				status: true,
 				visitType: true,
+
+				// ✅ keep vendorId + vendor relation (for UI dropdown label if needed later)
+				vendorId: true,
+				vendor: { select: { tpaName: true, nickName: true, vendorId: true } },
 
 				// assignment fields must exist in Appointment model
 				addressRemark: true,
@@ -191,6 +211,10 @@ export async function GET(req: Request) {
 				status: a.status || '',
 				visitType: a.visitType || '',
 
+				// ✅ optional fields (not required, but helpful)
+				vendorId: a.vendorId || '',
+				vendorName: a.vendor?.nickName || a.vendor?.tpaName || a.vendor?.vendorId || '',
+
 				addressRemark: a.addressRemark || '',
 				assignedToId: a.assignedToId || '',
 				assignedAt: isoOrNull(a.assignedAt),
@@ -234,23 +258,20 @@ export async function POST(req: Request) {
 			return NextResponse.json({ error: 'No items to save' }, { status: 400 });
 		}
 
-		// validate
 		for (const it of items) {
 			if (!it?.id) return NextResponse.json({ error: 'Missing appointment id' }, { status: 400 });
 			if (!it?.assignedToId) return NextResponse.json({ error: 'Missing assignedToId' }, { status: 400 });
 			if (!it?.addressRemark) return NextResponse.json({ error: 'Missing addressRemark' }, { status: 400 });
 		}
 
-		// If not super admin, enforce lab scope.
-		// If super admin, optional labId in payload can be used (but we still secure by checking appointment row itself).
 		const now = new Date();
 
 		const updates = items.map((it: any) => {
 			const where: any = { id: String(it.id), isActive: 1 };
+
 			if (!isSuperAdmin) {
 				where.labId = sessionLabId;
 			} else if (body?.labId) {
-				// optional safety narrowing (not mandatory)
 				where.labId = String(body.labId);
 			}
 
