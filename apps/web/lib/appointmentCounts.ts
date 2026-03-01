@@ -28,7 +28,7 @@ export async function getAppointmentCounts(labId?: string) {
 
 	// Medical pipeline
 	const booked = await prisma.appointment.count({
-		where: { ...whereBase, status: 'BOOKED' },
+		where: { ...whereBase, status: 'CONFIRMED' },
 	});
 	const checkedIn = await prisma.appointment.count({
 		where: { ...whereBase, status: 'CHECKED_IN' },

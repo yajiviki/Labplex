@@ -3,11 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	CalendarPlus, Search, ChevronDown, ChevronUp, SlidersHorizontal,
-	Trash2, X, AlertTriangle, Info
+	Trash2, X, AlertTriangle, Info, FileDown
 } from 'lucide-react';
 import {
 	ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip,
 } from 'recharts';
+
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 /* ========= Types ========= */
 
@@ -43,7 +46,7 @@ type Appointment = {
 	bloodTest?: 'FB' | 'B' | 'No' | null;
 	urineTest?: boolean | 'Yes' | 'No' | null;
 	ecg?: boolean | 'Yes' | 'No' | null;
-	tmt?: boolean | 'Yes' | 'No' | null; // ✅ NEW
+	tmt?: boolean | 'Yes' | 'No' | null;
 	applicationForm?: 'MER' | 'FMR' | 'ALL' | null;
 	testSummary?: string;
 };
@@ -136,27 +139,18 @@ function buildTrend(
 /** Build a single code like "FB,U,ECG,TMT,MER" from the test fields */
 function formatTestCodes(a: Appointment): string {
 	const parts: string[] = [];
-	// blood
 	if (a.bloodTest === 'FB') parts.push('FB');
 	else if (a.bloodTest === 'B') parts.push('B');
 
-	// urine
 	if (a.urineTest === true || a.urineTest === 'Yes') parts.push('U');
-
-	// ECG
 	if (a.ecg === true || a.ecg === 'Yes') parts.push('ECG');
-
-	// ✅ TMT
 	if ((a as any).tmt === true || (a as any).tmt === 'Yes') parts.push('TMT');
 
-	// form
 	if (a.applicationForm === 'MER' || a.applicationForm === 'FMR' || a.applicationForm === 'ALL') {
 		parts.push(a.applicationForm);
 	}
-
 	return parts.join(',');
 }
-
 
 /* ========= Small UI bits ========= */
 
@@ -213,15 +207,16 @@ export default function AppointmentsPage() {
 	const [extraChargeRs, setExtraChargeRs] = useState<string>('');
 	const [paymentDate, setPaymentDate] = useState<string>('');
 
+	const extraRef = useRef<HTMLInputElement | null>(null);
+
 	// Tests dialog state
 	const [testsOpen, setTestsOpen] = useState(false);
 	const [bloodTest, setBloodTest] = useState<'FB' | 'B' | 'No'>('No');
 	const [urineTest, setUrineTest] = useState<'Yes' | 'No'>('No');
 	const [ecg, setEcg] = useState<'Yes' | 'No'>('No');
-	const [tmt, setTmt] = useState<'Yes' | 'No'>('No'); // ✅ NEW
+	const [tmt, setTmt] = useState<'Yes' | 'No'>('No');
 	const [applicationForm, setApplicationForm] = useState<'MER' | 'FMR'>('MER');
 
-	// when user clicks Create, open tests modal first
 	const [pendingCreate, setPendingCreate] = useState(false);
 
 	// messages
@@ -239,6 +234,11 @@ export default function AppointmentsPage() {
 	const [fDateTo, setFDateTo] = useState<string>(monthTo);
 	const [fStatus, setFStatus] = useState<string>('');
 	const [fLabId, setFLabId] = useState<string>(''); // empty = All Labs
+
+	// ✅ Filters
+	const [fTpaId, setFTpaId] = useState<string>('');           // TPA
+	const [fVisitType, setFVisitType] = useState<string>('');   // Visit Type
+	const [fServiceType, setFServiceType] = useState<string>(''); // ✅ replaced Location filter
 
 	// sorting
 	type TableSortKey =
@@ -276,8 +276,13 @@ export default function AppointmentsPage() {
 		payment: false,
 		extra: false,
 		paymentDate: false,
-		tests: false, // hidden by default
+		tests: false,
 	});
+
+	const visibleColCount = useMemo(
+		() => Object.values(visibleCols).filter(Boolean).length,
+		[visibleCols]
+	);
 
 	// dropdowns
 	const [colsOpen, setColsOpen] = useState(false);
@@ -312,7 +317,6 @@ export default function AppointmentsPage() {
 			const [rVendors, rLabs, rAppts, rIns] = await Promise.all([
 				fetch('/api/vendors', { cache: 'no-store' }),
 				fetch('/api/labs', { cache: 'no-store' }),
-				// ensure your API includes bloodTest, urineTest, ecg, tmt, applicationForm
 				fetch('/api/appointments?status=&source=&q=', { cache: 'no-store' }),
 				fetch('/api/insurance', { cache: 'no-store' }),
 			]);
@@ -347,11 +351,12 @@ export default function AppointmentsPage() {
 		setVendorId('');
 	}, [labId]);
 
-	const labVendors = useMemo(() => {
-		const l = labs.find(x => x.id === labId);
-		if (l?.vendors?.length) return l.vendors;
-		return vendors;
-	}, [labs, labId, vendors]);
+	// focus Extra when Outer and empty
+	useEffect(() => {
+		const isOuter = (serviceType || '').trim().toLowerCase() === 'outer';
+		const extraEmpty = !extraChargeRs || Number(extraChargeRs) <= 0;
+		if (isOuter && extraEmpty) setTimeout(() => extraRef.current?.focus(), 0);
+	}, [serviceType, extraChargeRs]);
 
 	function resetForm() {
 		setEditingId(null);
@@ -371,7 +376,6 @@ export default function AppointmentsPage() {
 		setPaymentDate('');
 		setFormOk(null);
 
-		// tests defaults
 		setBloodTest('No');
 		setUrineTest('No');
 		setEcg('No');
@@ -392,6 +396,12 @@ export default function AppointmentsPage() {
 		if (!visitType) missing.push('Type of Visit');
 		if (!status) missing.push('Status');
 		if (!paymentStatus) missing.push('Payment Status');
+
+		const isOuter = (serviceType || '').trim().toLowerCase() === 'outer';
+		const extraNum = extraChargeRs === '' ? NaN : Number(extraChargeRs);
+		const extraValid = Number.isFinite(extraNum) && extraNum > 0;
+		if (isOuter && !extraValid) missing.push('Extra Charge (Rs)');
+
 		return missing;
 	}
 
@@ -401,14 +411,21 @@ export default function AppointmentsPage() {
 
 		const missing = validateRequiredFields();
 		if (missing.length) {
-			const ordered = ['Lab Name', 'Client Name', 'Client ID / Proposal No', 'Gender', 'Service Type'];
+			const ordered = [
+				'Lab Name',
+				'Client Name',
+				'Client ID / Proposal No',
+				'Gender',
+				'Service Type',
+				'Extra Charge (Rs)',
+			];
 			const display = ordered.filter(x => missing.includes(x));
 			setReqList(display.length ? display : missing);
 			setReqOpen(true);
+			if (missing.includes('Extra Charge (Rs)')) setTimeout(() => extraRef.current?.focus(), 0);
 			return;
 		}
 
-		// ✅ NEW: On Create, open tests popup first so user won't miss it
 		if (!editingId) {
 			setPendingCreate(true);
 			setTestsOpen(true);
@@ -486,7 +503,6 @@ export default function AppointmentsPage() {
 		setPaymentDate(formatDateOnly(a.paymentDate));
 		setFormOk(null);
 
-		// ✅ load tests into modal state
 		setBloodTest((a.bloodTest as any) ?? 'No');
 		setUrineTest((a.urineTest === true || a.urineTest === 'Yes') ? 'Yes' : 'No');
 		setEcg((a.ecg === true || a.ecg === 'Yes') ? 'Yes' : 'No');
@@ -534,33 +550,28 @@ export default function AppointmentsPage() {
 		}
 	};
 
+	// ✅ Filters (searchbox ONLY: client/proposal/mobile) + new filters (TPA, VisitType, ServiceType)
 	const filtered = useMemo(() => {
 		const term = q.trim().toLowerCase();
 
 		const base = rows.filter(r => {
-			// date, status, lab filters
 			const dateOk = inDateRangeDateOnly(r.apptAt, fDateFrom, fDateTo);
 			const stOk = fStatus ? (r.status === fStatus) : true;
 			const labOk = fLabId ? (r.labId === fLabId) : true;
-			if (!(dateOk && stOk && labOk)) return false;
 
-			// free-text search over client/phone/etc + LAB + TPA(VENDOR) + tests
+			const tpaOk = fTpaId ? (r.vendorId === fTpaId) : true;
+			const visitOk = fVisitType ? ((r.visitType || '') === fVisitType) : true;
+
+			const svcOk = fServiceType
+				? String(r.serviceType || '').trim().toLowerCase() === fServiceType.trim().toLowerCase()
+				: true;
+
+			if (!(dateOk && stOk && labOk && tpaOk && visitOk && svcOk)) return false;
+
 			if (!term) return true;
-
-			const lab = labs.find(l => l.id === r.labId);
-			const vendor =
-				lab?.vendors?.find(v => v.id === r.vendorId) ||
-				vendors.find(v => v.id === r.vendorId);
-
-			const haystack = [
-				r.clientName, r.clientRef, r.phone, r.location, r.serviceType,
-				lab?.name, lab?.nickName, lab?.labCode,
-				vendor?.tpaName, vendor?.nickName, vendor?.vendorId,
-				formatTestCodes(r),
-			]
+			const haystack = [r.clientName, r.clientRef, r.phone]
 				.filter(Boolean)
 				.map(s => String(s).toLowerCase());
-
 			return haystack.some(s => s.includes(term));
 		});
 
@@ -573,7 +584,18 @@ export default function AppointmentsPage() {
 		});
 
 		return sorted;
-	}, [rows, q, sortKey, sortDir, fDateFrom, fDateTo, fStatus, fLabId, labs, vendors, insurers]);
+	}, [
+		rows, q,
+		sortKey, sortDir,
+		fDateFrom, fDateTo, fStatus, fLabId,
+		fTpaId, fVisitType, fServiceType,
+		labs, vendors, insurers
+	]);
+
+	// ✅ Total Extra for footer
+	const extraTotal = useMemo(() => {
+		return filtered.reduce((sum, r) => sum + (Number(r.extraChargeRs) || 0), 0);
+	}, [filtered]);
 
 	/** Trend data */
 	const trendData = useMemo(
@@ -584,6 +606,109 @@ export default function AppointmentsPage() {
 	function sortBy(k: TableSortKey) {
 		if (k === sortKey) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
 		else { setSortKey(k); setSortDir('asc'); }
+	}
+
+	// ✅ Export PDF using jsPDF (no print dialog)
+	function exportFilteredToPdf(rowsToExport: Appointment[]) {
+		const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+
+		const labName = fLabId ? (labs.find(l => l.id === fLabId)?.name || '') : 'All Labs';
+		const statusText = fStatus || 'All';
+		const dateText = (fDateFrom || fDateTo) ? `${fDateFrom || '…'} → ${fDateTo || '…'}` : 'All dates';
+		const searchText = q.trim() || '—';
+
+		const tpaName = fTpaId ? (vendors.find(v => v.id === fTpaId)?.tpaName || '') : 'All';
+		const visitText = fVisitType ? (fVisitType === 'CENTER' ? 'Center' : 'Home') : 'All';
+		const svcText = fServiceType || 'All';
+
+		doc.setFontSize(14);
+		doc.text('Appointments (Filtered)', 40, 40);
+
+		doc.setFontSize(10);
+		doc.text(`Date range: ${dateText}`, 40, 60);
+		doc.text(`Lab: ${labName}    Status: ${statusText}`, 40, 75);
+		doc.text(`TPA: ${tpaName}    Visit: ${visitText}    Service Type: ${svcText}`, 40, 90);
+		doc.text(`Search (Client/Proposal/Mobile): ${searchText}`, 40, 105);
+		doc.text(`Rows: ${rowsToExport.length}`, 40, 120);
+
+		// columns = currently visible columns
+		const cols: Array<{ key: ColKey; label: string }> = [
+			{ key: 'date', label: 'Date' },
+			{ key: 'lab', label: 'Lab' },
+			{ key: 'tpa', label: 'TPA' },
+			{ key: 'ins', label: 'Insurance' },
+			{ key: 'status', label: 'Status' },
+			{ key: 'client', label: 'Client' },
+			{ key: 'proposal', label: 'Proposal' },
+			{ key: 'mobile', label: 'Mobile' },
+			{ key: 'visit', label: 'Visit' },
+			{ key: 'location', label: 'Location' },
+			{ key: 'gender', label: 'Gender' },
+			{ key: 'age', label: 'Age' },
+			{ key: 'serviceType', label: 'Service Type' },
+			{ key: 'payment', label: 'Payment Status' },
+			{ key: 'extra', label: 'Extra (Rs)' },
+			{ key: 'paymentDate', label: 'Payment Date' },
+			{ key: 'tests', label: 'Tests' },
+		].filter(c => visibleCols[c.key]);
+
+		const head = [cols.map(c => c.label)];
+
+		const body = rowsToExport.map(a => {
+			const lab = labs.find(l => l.id === a.labId);
+			const vendor = (lab?.vendors?.find(v => v.id === a.vendorId)) || vendors.find(v => v.id === a.vendorId);
+			const ins = insurers.find(i => i.id === a.insuranceCompanyId);
+
+			const visitTypeLabel = a.visitType === 'CENTER' ? 'Center' : a.visitType === 'HOME' ? 'Home' : '';
+
+			const cell = (k: ColKey) => {
+				switch (k) {
+					case 'date': return formatDateOnly(a.apptAt);
+					case 'lab': return lab?.nickName ?? '';
+					case 'tpa': return vendor?.tpaName ?? '';
+					case 'ins': return ins?.nickName ?? '';
+					case 'status': return a.status ?? '';
+					case 'client': return a.clientName ?? '';
+					case 'proposal': return a.clientRef ?? '';
+					case 'mobile': return a.phone ?? '';
+					case 'visit': return visitTypeLabel;
+					case 'location': return a.location ?? '';
+					case 'gender': return a.gender ?? '';
+					case 'age': return a.age != null ? String(a.age) : '';
+					case 'serviceType': return a.serviceType ?? '';
+					case 'payment': return a.paymentStatus ?? '';
+					case 'extra': return a.extraChargeRs != null ? String(a.extraChargeRs) : '';
+					case 'paymentDate': return formatDateOnly(a.paymentDate);
+					case 'tests': return a.testSummary ?? formatTestCodes(a);
+					default: return '';
+				}
+			};
+
+			return cols.map(c => cell(c.key));
+		});
+
+		// Footer only if Extra is visible
+		const showExtraTotal = cols.some(c => c.key === 'extra');
+		const extraSum = rowsToExport.reduce((sum, r) => sum + (Number(r.extraChargeRs) || 0), 0);
+
+		autoTable(doc, {
+			startY: 140,
+			head,
+			body,
+			styles: { fontSize: 8, cellPadding: 4 },
+			headStyles: { fontSize: 8 },
+			theme: 'grid',
+			didDrawPage: () => { },
+		});
+
+		if (showExtraTotal) {
+			const endY = (doc as any).lastAutoTable?.finalY ?? 140;
+			doc.setFontSize(10);
+			doc.text(`Total Extra (Rs): ${extraSum}`, 40, endY + 18);
+		}
+
+		const fileName = `appointments_${new Date().toISOString().slice(0, 10)}.pdf`;
+		doc.save(fileName);
 	}
 
 	async function onDelete() {
@@ -608,14 +733,22 @@ export default function AppointmentsPage() {
 		let apptId = selectedRowId || editingId;
 
 		try {
-			// If user clicked Create and we opened tests modal first, create appointment now.
 			if (pendingCreate && !apptId) {
 				const missing = validateRequiredFields();
 				if (missing.length) {
-					const ordered = ['Lab Name', 'Client Name', 'Client ID / Proposal No', 'Gender', 'Service Type'];
+					const ordered = [
+						'Lab Name',
+						'Client Name',
+						'Client ID / Proposal No',
+						'Gender',
+						'Service Type',
+						'Extra Charge (Rs)',
+					];
 					const display = ordered.filter(x => missing.includes(x));
 					setReqList(display.length ? display : missing);
 					setReqOpen(true);
+
+					if (missing.includes('Extra Charge (Rs)')) setTimeout(() => extraRef.current?.focus(), 0);
 					return;
 				}
 
@@ -709,6 +842,9 @@ export default function AppointmentsPage() {
 			</th>
 		);
 	};
+
+	const isOuter = (serviceType || '').trim().toLowerCase() === 'outer';
+	const extraMissingForOuter = isOuter && (!extraChargeRs || Number(extraChargeRs) <= 0);
 
 	return (
 		<div className="mx-auto w-full max-w-[1600px] px-4 space-y-6">
@@ -837,26 +973,29 @@ export default function AppointmentsPage() {
 								{PAYMENT_STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
 							</select>
 						</div>
+
 						<div>
-							<label className="block text-sm mb-1">Extra Charge (Rs)</label>
-							<input type="number" min={0} className="w-full border rounded px-3 py-2" value={extraChargeRs} onChange={(e) => setExtraChargeRs(e.target.value)} />
+							<label className="block text-sm mb-1">
+								Extra Charge (Rs) {isOuter ? <span className="text-red-600">*</span> : null}
+							</label>
+							<input
+								ref={extraRef}
+								type="number"
+								min={0}
+								className={[
+									'w-full border rounded px-3 py-2',
+									extraMissingForOuter ? 'border-red-500 focus:ring-red-200 focus:border-red-500' : '',
+								].join(' ')}
+								value={extraChargeRs}
+								onChange={(e) => setExtraChargeRs(e.target.value)}
+								placeholder={isOuter ? 'Required for Outer' : ''}
+							/>
 						</div>
+
 						<div>
 							<label className="block text-sm mb-1">Payment Date</label>
 							<input type="date" className="w-full border rounded px-3 py-2" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
 						</div>
-
-						{/* Tests button (still available for edits / manual open) */}
-						{/* <div className="flex md:justify-start">
-							<button
-								type="button"
-								className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50"
-								onClick={() => { setPendingCreate(false); setTestsOpen(true); }}
-								title="Add test details"
-							>
-								Tests
-							</button>
-						</div> */}
 					</div>
 
 					<div className="px-3 pb-3 py-2">
@@ -887,7 +1026,7 @@ export default function AppointmentsPage() {
 							<div>
 								<Search className="h-4 w-4 absolute left-3 top-[34px] text-gray-400" />
 								<input
-									placeholder="Client, Proposal Id, Phone, Location…"
+									placeholder="Client, Proposal Id, Mobile…"
 									className="pl-9 pr-3 py-2 border rounded w-72"
 									value={q}
 									onChange={(e) => setQ(e.target.value)}
@@ -905,6 +1044,45 @@ export default function AppointmentsPage() {
 							>
 								<option value="">All Labs</option>
 								{labs.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+							</select>
+						</div>
+
+						{/* TPA filter */}
+						<div>
+							<label className="block text-xs text-gray-600 mb-1">TPA</label>
+							<select
+								className="border rounded px-3 py-2 min-w-[220px]"
+								value={fTpaId}
+								onChange={(e) => setFTpaId(e.target.value)}
+							>
+								<option value="">All TPA</option>
+								{vendors.map(v => <option key={v.id} value={v.id}>{v.tpaName}</option>)}
+							</select>
+						</div>
+
+						{/* Visit Type filter */}
+						<div>
+							<label className="block text-xs text-gray-600 mb-1">Visit Type</label>
+							<select
+								className="border rounded px-3 py-2 min-w-[160px]"
+								value={fVisitType}
+								onChange={(e) => setFVisitType(e.target.value)}
+							>
+								<option value="">All</option>
+								{VISIT_TYPE_OPTS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+							</select>
+						</div>
+
+						{/* ✅ Service Type filter (replaces Location filter) */}
+						<div>
+							<label className="block text-xs text-gray-600 mb-1">Service Type</label>
+							<select
+								className="border rounded px-3 py-2 min-w-[160px]"
+								value={fServiceType}
+								onChange={(e) => setFServiceType(e.target.value)}
+							>
+								<option value="">All</option>
+								{SERVICE_TYPE_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
 							</select>
 						</div>
 
@@ -944,7 +1122,18 @@ export default function AppointmentsPage() {
 					<div className="text-sm text-gray-600">
 						{selectedRowId ? '1 row selected' : ''}
 					</div>
+
 					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm hover:bg-gray-50"
+							onClick={() => exportFilteredToPdf(filtered)}
+							title="Export filtered rows to PDF"
+						>
+							<FileDown className="h-4 w-4" />
+							Export PDF
+						</button>
+
 						{selectedRowId && (
 							<>
 								<button
@@ -977,7 +1166,6 @@ export default function AppointmentsPage() {
 							</>
 						)}
 					</div>
-
 				</div>
 
 				{/* Table */}
@@ -1005,15 +1193,20 @@ export default function AppointmentsPage() {
 									{visibleCols.tests && <SortTh k="tests" label="Test" />}
 								</tr>
 							</thead>
+
 							<tbody>
 								{loading ? (
-									<tr><td colSpan={17} className="px-3 py-4 text-center text-sm text-gray-500">Loading…</td></tr>
+									<tr>
+										<td colSpan={Math.max(visibleColCount, 1)} className="px-3 py-4 text-center text-sm text-gray-500">
+											Loading…
+										</td>
+									</tr>
 								) : (
 									(() => {
 										if (filtered.length === 0) {
 											return (
 												<tr>
-													<td colSpan={17} className="px-3 py-4 text-center text-sm text-gray-500">
+													<td colSpan={Math.max(visibleColCount, 1)} className="px-3 py-4 text-center text-sm text-gray-500">
 														No appointments found
 													</td>
 												</tr>
@@ -1024,6 +1217,7 @@ export default function AppointmentsPage() {
 											const vendor = (lab?.vendors?.find(v => v.id === a.vendorId)) || vendors.find(v => v.id === a.vendorId);
 											const ins = insurers.find(i => i.id === a.insuranceCompanyId);
 											const selected = selectedRowId === a.id;
+
 											let visitTypeLabel = '';
 											if (a.visitType === 'CENTER') visitTypeLabel = 'Center';
 											else if (a.visitType === 'HOME') visitTypeLabel = 'Home';
@@ -1067,6 +1261,23 @@ export default function AppointmentsPage() {
 									})()
 								)}
 							</tbody>
+
+							{/* ✅ Footer total only when Extra column is visible */}
+							{visibleCols.extra && (
+								<tfoot className="sticky bottom-0 bg-white">
+									<tr className="border-t">
+										<td
+											colSpan={Math.max(visibleColCount - 1, 1)}
+											className="px-3 py-2 text-sm font-semibold text-right bg-gray-50"
+										>
+											Total Extra (Rs)
+										</td>
+										<td className="px-3 py-2 text-sm font-semibold text-right bg-gray-50">
+											{extraTotal}
+										</td>
+									</tr>
+								</tfoot>
+							)}
 						</table>
 					</div>
 				</div>
@@ -1128,7 +1339,7 @@ export default function AppointmentsPage() {
 				</div>
 			)}
 
-			{/* ✅ Tests modal (professional) */}
+			{/* Tests modal (unchanged UI) */}
 			{testsOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
 					<div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden">
@@ -1246,15 +1457,10 @@ function DateRangeDropdown({
 	rangeRef: React.RefObject<HTMLDivElement>;
 }>) {
 	let rangeLabel = '';
-	if (!fDateFrom && !fDateTo) {
-		rangeLabel = 'All dates';
-	} else if (fDateFrom && fDateTo) {
-		rangeLabel = `${fDateFrom} → ${fDateTo}`;
-	} else if (fDateFrom) {
-		rangeLabel = `${fDateFrom} → …`;
-	} else {
-		rangeLabel = `… → ${fDateTo}`;
-	}
+	if (!fDateFrom && !fDateTo) rangeLabel = 'All dates';
+	else if (fDateFrom && fDateTo) rangeLabel = `${fDateFrom} → ${fDateTo}`;
+	else if (fDateFrom) rangeLabel = `${fDateFrom} → …`;
+	else rangeLabel = `… → ${fDateTo}`;
 
 	return (
 		<div ref={rangeRef} className="relative">

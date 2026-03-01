@@ -48,6 +48,9 @@ type AssignmentRow = {
 	apptAt: string | null;
 
 	clientName: string;
+	// ✅ NEW (for Export PNG): Client ID / Proposal No
+	clientRef?: string | null;
+
 	mobileNo: string;
 	insuranceName: string;
 	testSummary: string;
@@ -119,7 +122,7 @@ export default function OuterAssignmentsPage() {
 	const [vendors, setVendors] = useState<Vendor[]>([]);
 
 	const [labId, setLabId] = useState<string>(''); // '' = All Labs (SUPER_ADMIN)
-	const [vendorId, setVendorId] = useState<string>(''); // ✅ NEW filter: TPA/Vendor (id)
+	const [vendorId, setVendorId] = useState<string>(''); // filter: TPA/Vendor (id)
 
 	const [rows, setRows] = useState<AssignmentRow[]>([]);
 	const [users, setUsers] = useState<UserRow[]>([]);
@@ -179,7 +182,6 @@ export default function OuterAssignmentsPage() {
 			const data = await res.json().catch(() => []);
 			if (!res.ok) return;
 			const list = Array.isArray(data) ? data : [];
-			// sort for dropdown
 			list.sort((a: Vendor, b: Vendor) => vendorLabel(a).localeCompare(vendorLabel(b)));
 			setVendors(list);
 		} catch {
@@ -195,7 +197,6 @@ export default function OuterAssignmentsPage() {
 		if (dateTo) sp.set('dateTo', dateTo);
 		if (visitType) sp.set('visitType', visitType);
 
-		// ✅ NEW
 		if (vendorId) sp.set('vendorId', vendorId);
 
 		const qs = sp.toString();
@@ -474,10 +475,12 @@ export default function OuterAssignmentsPage() {
 	};
 
 	const selectedVendorLabel =
-		vendorId ? (() => {
-			const vendor = vendors.find((v) => v.id === vendorId);
-			return vendor ? vendorLabel(vendor) : 'All TPA';
-		})() : 'All TPA';
+		vendorId
+			? (() => {
+				const vendor = vendors.find((v) => v.id === vendorId);
+				return vendor ? vendorLabel(vendor) : 'All TPA';
+			})()
+			: 'All TPA';
 
 	return (
 		<div className="mx-auto w-full max-w-[1600px] px-4 space-y-6">
@@ -588,7 +591,7 @@ export default function OuterAssignmentsPage() {
 							</select>
 						</div>
 
-						{/* ✅ NEW: TPA filter */}
+						{/* TPA filter */}
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">TPA Name</label>
 							<select
@@ -676,7 +679,9 @@ export default function OuterAssignmentsPage() {
 								<tbody>
 									{loading ? (
 										<tr>
-											<td colSpan={10} className="px-3 py-6 text-center text-sm text-gray-500">Loading…</td>
+											<td colSpan={10} className="px-3 py-6 text-center text-sm text-gray-500">
+												Loading…
+											</td>
 										</tr>
 									) : filteredSortedRows.length === 0 ? (
 										<tr>
@@ -765,16 +770,37 @@ export default function OuterAssignmentsPage() {
 					<div className="text-xl font-bold">Outer Appointment Assignment</div>
 					<div className="text-sm text-gray-700 mt-1">
 						Date: <b>{new Date().toISOString().slice(0, 10)}</b>
-						<span> · Range: <b>{dateFrom || '…'}</b> → <b>{dateTo || '…'}</b></span>
-						{visitType ? <span> · Visit: <b>{visitType}</b></span> : null}
-						{vendorId ? <span> · TPA: <b>{selectedVendorLabel}</b></span> : null}
+						<span>
+							{' '}
+							· Range: <b>{dateFrom || '…'}</b> → <b>{dateTo || '…'}</b>
+						</span>
+						{visitType ? (
+							<span>
+								{' '}
+								· Visit: <b>{visitType}</b>
+							</span>
+						) : null}
+						{vendorId ? (
+							<span>
+								{' '}
+								· TPA: <b>{selectedVendorLabel}</b>
+							</span>
+						) : null}
 						{labId ? (
 							<span>
-								{' '}· Lab:{' '}
-								<b>{labs.find((l) => l.id === labId)?.nickName || labs.find((l) => l.id === labId)?.name || labId}</b>
+								{' '}
+								· Lab:{' '}
+								<b>
+									{labs.find((l) => l.id === labId)?.nickName ||
+										labs.find((l) => l.id === labId)?.name ||
+										labId}
+								</b>
 							</span>
 						) : (
-							<span> · Lab: <b>All Labs</b></span>
+							<span>
+								{' '}
+								· Lab: <b>All Labs</b>
+							</span>
 						)}
 					</div>
 
@@ -794,17 +820,24 @@ export default function OuterAssignmentsPage() {
 
 										{g.list.map((r) => {
 											const address =
-												(draftRemark[r.id] ?? r.addressRemark ?? '').trim() ||
-												(r.location || '');
+												(draftRemark[r.id] ?? r.addressRemark ?? '').trim() || (r.location || '');
 
 											return (
 												<div key={r.id} style={{ marginBottom: '12px' }}>
 													<div className="text-sm">
-														<span className="font-semibold">Appointment</span> : {formatDateOnly(r.apptAt)} {formatTime(r.apptAt)}
+														<span className="font-semibold">Appointment</span> : {formatDateOnly(r.apptAt)}{' '}
+														{formatTime(r.apptAt)}
 													</div>
+
 													<div className="text-sm">
 														<span className="font-semibold">Client Name</span> : {r.clientName || '-'}
 													</div>
+
+													{/* ✅ NEW: Client ID / Proposal No in PNG */}
+													<div className="text-sm">
+														<span className="font-semibold">Client ID</span> : {r.clientRef || '-'}
+													</div>
+
 													<div className="text-sm">
 														<span className="font-semibold">Test</span> : {r.testSummary || '-'}
 													</div>

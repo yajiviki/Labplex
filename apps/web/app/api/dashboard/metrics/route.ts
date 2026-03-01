@@ -62,6 +62,7 @@ export async function POST(req: Request) {
 			'Not Responding',
 			'Rescheduled',
 			'Need Confirmation',
+			'Confirmed',
 			'On hold',
 		];
 		const TOTAL = ['Cancelled', ...TBI, ...INPROGRESS];

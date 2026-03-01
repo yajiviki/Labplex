@@ -75,7 +75,7 @@ export async function GET(req: Request) {
 		const dateTo = searchParams.get('dateTo');
 		const visitType = normalizeVisitType(searchParams.get('visitType'));
 
-		// ✅ NEW: vendor filter (TPA)
+		// ✅ vendor filter (TPA)
 		const vendorId = (searchParams.get('vendorId') || '').trim();
 
 		const isSuperAdmin = role === 'SUPER_ADMIN';
@@ -92,8 +92,7 @@ export async function GET(req: Request) {
 		const where: any = {
 			isActive: 1,
 
-			// ✅ FIX: Prisma "in" doesn't support mode: 'insensitive'
-			// (Keep whichever values you actually use in DB)
+			// NOTE: this is what you had. If you ONLY want Outer, change to { in: ['Outer','OUTER','outer'] }
 			serviceType: { in: ['Outer', 'OUTER', 'outer', 'Local', 'LOCAL', 'local'] },
 
 			status: {
@@ -110,12 +109,19 @@ export async function GET(req: Request) {
 
 		if (effectiveLabId) where.labId = effectiveLabId;
 
-		// ✅ NEW: apply vendor filter
+		// ✅ apply vendor filter
 		if (vendorId) where.vendorId = vendorId;
 
 		if (dateFrom || dateTo) {
 			const gte = dateFrom ? parseDateOnlyStart(dateFrom) : null;
-			const lte = dateTo ? endOfDay(parseDateOnlyStart(dateTo)!) : null;
+
+			// safe end date
+			let lte: Date | null = null;
+			if (dateTo) {
+				const d = parseDateOnlyStart(dateTo);
+				if (d) lte = endOfDay(d);
+			}
+
 			if (gte || lte) {
 				where.apptAt = {};
 				if (gte) where.apptAt.gte = gte;
@@ -153,12 +159,16 @@ export async function GET(req: Request) {
 				labId: true,
 				apptAt: true,
 				clientName: true,
+
+				// ✅ NEW: include Client ID / Proposal No for Export PNG
+				clientRef: true,
+
 				phone: true,
 				location: true,
 				status: true,
 				visitType: true,
 
-				// ✅ keep vendorId + vendor relation (for UI dropdown label if needed later)
+				// keep vendorId + vendor relation (for dropdown label)
 				vendorId: true,
 				vendor: { select: { tpaName: true, nickName: true, vendorId: true } },
 
@@ -202,6 +212,10 @@ export async function GET(req: Request) {
 				apptAt: isoOrNull(a.apptAt),
 
 				clientName: a.clientName || '',
+
+				// ✅ NEW
+				clientRef: a.clientRef || '',
+
 				mobileNo: a.phone || '',
 
 				insuranceName,
@@ -211,7 +225,7 @@ export async function GET(req: Request) {
 				status: a.status || '',
 				visitType: a.visitType || '',
 
-				// ✅ optional fields (not required, but helpful)
+				// optional fields (helpful)
 				vendorId: a.vendorId || '',
 				vendorName: a.vendor?.nickName || a.vendor?.tpaName || a.vendor?.vendorId || '',
 
@@ -238,7 +252,7 @@ export async function GET(req: Request) {
 /* ----------------------------------------------------------------------- */
 /* POST /api/appointments/outer-assignments
    body: { labId?: string, items: [{ id, assignedToId, addressRemark }] }
-   ✅ updates ONLY the items sent (filtered rows)
+   updates ONLY the items sent (filtered rows)
 ----------------------------------------------------------------------- */
 export async function POST(req: Request) {
 	try {

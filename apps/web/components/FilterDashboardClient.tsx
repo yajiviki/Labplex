@@ -140,6 +140,7 @@ export default function FilterDashboardClient({
 	async function load() {
 		setLoading(true); setErr(null);
 		try {
+			// debugger;
 			const body = { labId: labId || null, from, to };
 			const res = await fetch('/api/dashboard/metrics', {
 				method: 'POST',

@@ -19,7 +19,7 @@ function toYmd(d: Date) {
 const ACTIVE = { isActive: 1 } as const;
 
 const TBI = ['TBI'];
-const INPROGRESS = ['Waiting for response', 'Not Responding', 'Rescheduled', 'Need Confirmation', 'On hold'];
+const INPROGRESS = ['Waiting for response', 'Not Responding', 'Rescheduled', 'Need Confirmation', 'On hold', 'Confirmed'];
 const CONFIRMED = ['Appointment Confirmed', 'App. Confirmed']; // support both spellings
 const SUBMITTED = ['Submitted', 'Submited', 'Report - Submitted'];
 const REPORT_PHASE = ['Medical Done', 'OnProcess', 'Report - InProgress', 'Completed'];
