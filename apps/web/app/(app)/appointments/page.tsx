@@ -671,7 +671,7 @@ export default function AppointmentsPage() {
 		doc.text(`Rows: ${rowsToExport.length}`, 40, 120);
 
 		// columns = currently visible columns
-		const cols: Array<{ key: ColKey; label: string }> = [
+		const ALL_COLS = [
 			{ key: 'date', label: 'Date' },
 			{ key: 'lab', label: 'Lab' },
 			{ key: 'tpa', label: 'TPA' },
@@ -691,7 +691,9 @@ export default function AppointmentsPage() {
 			{ key: 'totalAmount', label: 'Total Amount (Rs)' },
 			{ key: 'paymentDate', label: 'Payment Date' },
 			{ key: 'tests', label: 'Tests' },
-		].filter(c => visibleCols[c.key]);
+		] as const satisfies ReadonlyArray<{ key: ColKey; label: string }>;
+
+		const cols = ALL_COLS.filter(c => visibleCols[c.key]);
 
 		const head = [cols.map(c => c.label)];
 
