@@ -24,12 +24,6 @@ function parseISOOrNull(v?: string | null) {
 function isoOrNull(d?: Date | null) {
 	return d ? new Date(d).toISOString() : null;
 }
-function truthy(v: any) {
-	if (v === true) return true;
-	if (typeof v === 'string') return v.trim().toLowerCase() === 'yes';
-	if (typeof v === 'number') return v !== 0;
-	return false;
-}
 function buildTestSummary(t?: {
 	bloodTest: 'No' | 'FB' | 'B';
 	urineTest: boolean;
@@ -47,10 +41,16 @@ function buildTestSummary(t?: {
 	return parts.join(',');
 }
 
+/** safe number parser (keeps null if empty) */
+function toNumberOrNull(v: any): number | null {
+	if (v === null || v === undefined || v === '') return null;
+	const n = typeof v === 'number' ? v : Number(v);
+	return Number.isFinite(n) ? n : null;
+}
+
 /**
  * GET /api/appointments
  * Query params: q, status, vendorId, labId, insuranceCompanyId, dateFrom(yyyy-mm-dd), dateTo(yyyy-mm-dd)
- * If session has labId -> scope to that lab; super admin sees all, or the chosen labId if provided.
  */
 export async function GET(req: Request) {
 	try {
@@ -137,12 +137,16 @@ export async function GET(req: Request) {
 				serviceType: true,
 				paymentStatus: true,
 				extraChargeRs: true,
+
+				// ✅ NEW
+				testAmountRs: true,
+
 				paymentDate: true,
 
 				isActive: true,
 				createdAt: true,
 
-				// for optional client-side labels/search (if you ever need to show them)
+				// optional client-side labels/search
 				lab: { select: { name: true, nickName: true, labCode: true } },
 				vendor: { select: { tpaName: true, nickName: true, vendorId: true } },
 				insuranceCompany: { select: { name: true, nickName: true, code: true } },
@@ -153,7 +157,7 @@ export async function GET(req: Request) {
 						bloodTest: true,
 						urineTest: true,
 						ecg: true,
-						tmt: true, // ✅ ADD THIS (this is the fix)
+						tmt: true,
 						applicationForm: true,
 					},
 				},
@@ -181,11 +185,14 @@ export async function GET(req: Request) {
 			serviceType: r.serviceType,
 			paymentStatus: r.paymentStatus,
 			extraChargeRs: r.extraChargeRs,
+
+			// ✅ NEW
+			testAmountRs: r.testAmountRs ?? 0,
+
 			paymentDate: isoOrNull(r.paymentDate),
 
 			createdAt: isoOrNull(r.createdAt)!,
 
-			// optional labels (not required by your table, but harmless to keep)
 			_labels: {
 				labName: r.lab?.name ?? null,
 				labNick: r.lab?.nickName ?? null,
@@ -198,7 +205,6 @@ export async function GET(req: Request) {
 				insCode: r.insuranceCompany?.code ?? null,
 			},
 
-			// NEW single string your table will show in the hidden “Test” column
 			testSummary: buildTestSummary(r.tests || undefined),
 		}));
 
@@ -211,8 +217,7 @@ export async function GET(req: Request) {
 /**
  * POST /api/appointments
  * Accepts both legacy and new field names; writes to single `status` column.
- * NEW: serviceType, paymentDate (date or ISO)
- * REMOVED: address
+ * NEW: serviceType, paymentDate (date or ISO), testAmountRs
  */
 export async function POST(req: Request) {
 	try {
@@ -224,12 +229,12 @@ export async function POST(req: Request) {
 		const {
 			apptAt,
 			vendorId,
-			insuranceVendorId,       // legacy
+			insuranceVendorId, // legacy
 			insuranceCompanyId,
 			labId,
 
 			clientName,
-			patientName,             // legacy
+			patientName, // legacy
 			clientRef,
 			gender,
 			age,
@@ -243,7 +248,10 @@ export async function POST(req: Request) {
 
 			// NEW
 			serviceType,
-			paymentDate,             // yyyy-mm-dd or ISO
+			paymentDate, // yyyy-mm-dd or ISO
+
+			// ✅ NEW
+			testAmountRs,
 		} = body;
 
 		if (!apptAt) return NextResponse.json({ error: 'apptAt is required' }, { status: 400 });
@@ -281,6 +289,9 @@ export async function POST(req: Request) {
 
 				serviceType: serviceType || null,
 				paymentDate: paymentDateDt,
+
+				// ✅ NEW
+				testAmountRs: toNumberOrNull(testAmountRs),
 
 				isActive: 1,
 			},

@@ -1,3 +1,4 @@
+// app/api/appointments/[id]/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../../lib/db';
 import { auth } from '../../../../lib/auth';
@@ -15,6 +16,11 @@ function parseISOOrNull(v?: string | null) {
 	if (!v) return null;
 	const d = new Date(v);
 	return Number.isNaN(d.getTime()) ? null : d;
+}
+function toNumberOrNull(v: any): number | null {
+	if (v === null || v === undefined || v === '') return null;
+	const n = typeof v === 'number' ? v : Number(v);
+	return Number.isFinite(n) ? n : null;
 }
 
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
@@ -42,6 +48,12 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 			else newPaymentDate = parseDateOnlyStart(body.paymentDate) ?? parseISOOrNull(body.paymentDate);
 		}
 
+		// ✅ Handle testAmountRs (allow clearing)
+		let newTestAmount: number | null | undefined = undefined;
+		if ('testAmountRs' in body) {
+			newTestAmount = toNumberOrNull(body.testAmountRs);
+		}
+
 		const updated = await prisma.appointment.update({
 			where: { id },
 			data: {
@@ -58,7 +70,6 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 					body.age !== undefined
 						? (body.age === null || body.age === '' ? null : Number(body.age))
 						: existing.age,
-				// address removed
 				phone: body.phone ?? existing.phone,
 
 				visitType: body.visitType ?? existing.visitType,
@@ -70,9 +81,11 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 						: existing.extraChargeRs,
 				paymentStatus: body.paymentStatus ?? existing.paymentStatus,
 
-				// NEW
 				serviceType: body.serviceType ?? existing.serviceType,
 				paymentDate: newPaymentDate !== undefined ? newPaymentDate : existing.paymentDate,
+
+				// ✅ NEW
+				testAmountRs: newTestAmount !== undefined ? newTestAmount : existing.testAmountRs,
 			},
 		});
 

@@ -219,6 +219,9 @@ model Appointment {
   assignedAt    DateTime?
   addressRemark String?  @db.Text
 
+  // ✅ NEW
+  testAmountRs        Float?   @default(0)
+
   isActive  Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

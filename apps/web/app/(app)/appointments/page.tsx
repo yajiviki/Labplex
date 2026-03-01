@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	CalendarPlus, Search, ChevronDown, ChevronUp, SlidersHorizontal,
-	Trash2, X, AlertTriangle, Info, FileDown
+	Trash2, X, AlertTriangle, Info, FileDown,
 } from 'lucide-react';
 import {
 	ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip,
@@ -38,8 +38,11 @@ type Appointment = {
 	serviceType: string | null;
 	paymentStatus: string | null;
 	extraChargeRs: number | null;
-	paymentDate: string | null;
 
+	// ✅ NEW
+	testAmountRs?: number | null;
+
+	paymentDate: string | null;
 	createdAt: string;
 
 	// tests (should be returned by /api/appointments)
@@ -58,7 +61,7 @@ const VISIT_TYPE_OPTS = [
 ] as const;
 const STATUS_OPTS = [
 	'TBI', 'Not Responding', 'Rescheduled', 'Need Confirmation', 'Confirmed',
-	'Medical Done', 'Cancelled', 'Report - InProgress', 'Report - Completed'
+	'Medical Done', 'Cancelled', 'Report - InProgress', 'Report - Completed',
 ] as const;
 const PAYMENT_STATUS_OPTS = ['TBI', 'Paid', 'On Account'] as const;
 const SERVICE_TYPE_OPTS = ['Local', 'Outer', 'Others'] as const;
@@ -114,7 +117,7 @@ function statusClasses(s?: string | null) {
 /** Build daily trend counts from appointments; works for All Labs on first load */
 function buildTrend(
 	appts: Appointment[],
-	opts: { labId: string; from: string; to: string }
+	opts: { labId: string; from: string; to: string },
 ) {
 	const byDay = new Map<string, number>();
 
@@ -150,6 +153,11 @@ function formatTestCodes(a: Appointment): string {
 		parts.push(a.applicationForm);
 	}
 	return parts.join(',');
+}
+
+function money(n: any) {
+	const num = Number(n);
+	return Number.isFinite(num) ? num : 0;
 }
 
 /* ========= Small UI bits ========= */
@@ -190,8 +198,8 @@ export default function AppointmentsPage() {
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [apptAt, setApptAt] = useState<string>(toDateLocalValue(new Date()));
 	const [labId, setLabId] = useState<string>('');
-	const [vendorId, setVendorId] = useState<string>('');              // optional now
-	const [insuranceCompanyId, setInsuranceCompanyId] = useState<string>(''); // optional now
+	const [vendorId, setVendorId] = useState<string>(''); // optional
+	const [insuranceCompanyId, setInsuranceCompanyId] = useState<string>(''); // optional
 
 	const [clientName, setClientName] = useState('');
 	const [clientRef, setClientRef] = useState('');
@@ -205,6 +213,10 @@ export default function AppointmentsPage() {
 	const [serviceType, setServiceType] = useState('');
 	const [paymentStatus, setPaymentStatus] = useState<string>('TBI');
 	const [extraChargeRs, setExtraChargeRs] = useState<string>('');
+
+	// ✅ NEW
+	const [testAmountRs, setTestAmountRs] = useState<string>('');
+
 	const [paymentDate, setPaymentDate] = useState<string>('');
 
 	const extraRef = useRef<HTMLInputElement | null>(null);
@@ -236,15 +248,15 @@ export default function AppointmentsPage() {
 	const [fLabId, setFLabId] = useState<string>(''); // empty = All Labs
 
 	// ✅ Filters
-	const [fTpaId, setFTpaId] = useState<string>('');           // TPA
-	const [fVisitType, setFVisitType] = useState<string>('');   // Visit Type
-	const [fServiceType, setFServiceType] = useState<string>(''); // ✅ replaced Location filter
+	const [fTpaId, setFTpaId] = useState<string>(''); // TPA
+	const [fVisitType, setFVisitType] = useState<string>(''); // Visit Type
+	const [fServiceType, setFServiceType] = useState<string>(''); // ServiceType filter
 
 	// sorting
 	type TableSortKey =
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
 		| 'mobile' | 'visit' | 'location' | 'status'
-		| 'serviceType' | 'payment' | 'extra' | 'paymentDate'
+		| 'serviceType' | 'payment' | 'extra' | 'testAmount' | 'totalAmount' | 'paymentDate'
 		| 'gender' | 'age'
 		| 'tests';
 
@@ -256,7 +268,7 @@ export default function AppointmentsPage() {
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
 		| 'status' | 'visit' | 'location'
 		| 'gender' | 'age' | 'mobile'
-		| 'serviceType' | 'payment' | 'extra' | 'paymentDate'
+		| 'serviceType' | 'payment' | 'extra' | 'testAmount' | 'totalAmount' | 'paymentDate'
 		| 'tests';
 
 	const [visibleCols, setVisibleCols] = useState<Record<ColKey, boolean>>({
@@ -275,13 +287,15 @@ export default function AppointmentsPage() {
 		serviceType: false,
 		payment: false,
 		extra: false,
+		testAmount: false,   // ✅ NEW (default hidden; you can set true if you want)
+		totalAmount: true,   // ✅ NEW (default visible)
 		paymentDate: false,
 		tests: false,
 	});
 
 	const visibleColCount = useMemo(
 		() => Object.values(visibleCols).filter(Boolean).length,
-		[visibleCols]
+		[visibleCols],
 	);
 
 	// dropdowns
@@ -373,6 +387,7 @@ export default function AppointmentsPage() {
 		setServiceType('');
 		setPaymentStatus('TBI');
 		setExtraChargeRs('');
+		setTestAmountRs(''); // ✅ NEW
 		setPaymentDate('');
 		setFormOk(null);
 
@@ -452,6 +467,10 @@ export default function AppointmentsPage() {
 			serviceType: serviceType || null,
 			paymentStatus,
 			extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
+
+			// ✅ NEW
+			testAmountRs: testAmountRs ? Number(testAmountRs) : null,
+
 			paymentDate: paymentDate ? `${paymentDate}T00:00:00` : null,
 
 			source: 'INSURANCE',
@@ -500,6 +519,10 @@ export default function AppointmentsPage() {
 		setServiceType(a.serviceType || '');
 		setPaymentStatus(a.paymentStatus || 'TBI');
 		setExtraChargeRs(a.extraChargeRs != null ? String(a.extraChargeRs) : '');
+
+		// ✅ NEW
+		setTestAmountRs(a.testAmountRs != null ? String(a.testAmountRs) : '');
+
 		setPaymentDate(formatDateOnly(a.paymentDate));
 		setFormOk(null);
 
@@ -523,6 +546,12 @@ export default function AppointmentsPage() {
 		return true;
 	}
 
+	const getTotalAmount = (r: Appointment) => {
+		// ✅ Requested: Outer => Extra + Test Amount.
+		// For non-Outer, Extra usually 0, so this still behaves correctly.
+		return money(r.extraChargeRs) + money(r.testAmountRs);
+	};
+
 	const getSortVal = (r: Appointment, key: any): string | number => {
 		switch (key) {
 			case 'date': { const ymd = formatDateOnly(r.apptAt); return ymd ? Number(ymd.replaceAll('-', '')) : 0; }
@@ -542,6 +571,8 @@ export default function AppointmentsPage() {
 			case 'serviceType': return (r.serviceType || '').toLowerCase();
 			case 'payment': return (r.paymentStatus || '').toLowerCase();
 			case 'extra': return r.extraChargeRs ?? -1;
+			case 'testAmount': return r.testAmountRs ?? -1;
+			case 'totalAmount': return getTotalAmount(r);
 			case 'paymentDate': { const ymd = formatDateOnly(r.paymentDate); return ymd ? Number(ymd.replaceAll('-', '')) : 0; }
 			case 'gender': return (r.gender || '').toLowerCase();
 			case 'age': return r.age ?? -1;
@@ -589,18 +620,26 @@ export default function AppointmentsPage() {
 		sortKey, sortDir,
 		fDateFrom, fDateTo, fStatus, fLabId,
 		fTpaId, fVisitType, fServiceType,
-		labs, vendors, insurers
+		labs, vendors, insurers,
 	]);
 
-	// ✅ Total Extra for footer
+	// ✅ Footer totals
 	const extraTotal = useMemo(() => {
-		return filtered.reduce((sum, r) => sum + (Number(r.extraChargeRs) || 0), 0);
+		return filtered.reduce((sum, r) => sum + money(r.extraChargeRs), 0);
+	}, [filtered]);
+
+	const testAmountTotal = useMemo(() => {
+		return filtered.reduce((sum, r) => sum + money(r.testAmountRs), 0);
+	}, [filtered]);
+
+	const totalAmountTotal = useMemo(() => {
+		return filtered.reduce((sum, r) => sum + getTotalAmount(r), 0);
 	}, [filtered]);
 
 	/** Trend data */
 	const trendData = useMemo(
 		() => buildTrend(rows, { labId: fLabId, from: fDateFrom, to: fDateTo }),
-		[rows, fLabId, fDateFrom, fDateTo]
+		[rows, fLabId, fDateFrom, fDateTo],
 	);
 
 	function sortBy(k: TableSortKey) {
@@ -648,6 +687,8 @@ export default function AppointmentsPage() {
 			{ key: 'serviceType', label: 'Service Type' },
 			{ key: 'payment', label: 'Payment Status' },
 			{ key: 'extra', label: 'Extra (Rs)' },
+			{ key: 'testAmount', label: 'Test Amount (Rs)' },
+			{ key: 'totalAmount', label: 'Total Amount (Rs)' },
 			{ key: 'paymentDate', label: 'Payment Date' },
 			{ key: 'tests', label: 'Tests' },
 		].filter(c => visibleCols[c.key]);
@@ -678,6 +719,8 @@ export default function AppointmentsPage() {
 					case 'serviceType': return a.serviceType ?? '';
 					case 'payment': return a.paymentStatus ?? '';
 					case 'extra': return a.extraChargeRs != null ? String(a.extraChargeRs) : '';
+					case 'testAmount': return a.testAmountRs != null ? String(a.testAmountRs) : '';
+					case 'totalAmount': return String(getTotalAmount(a));
 					case 'paymentDate': return formatDateOnly(a.paymentDate);
 					case 'tests': return a.testSummary ?? formatTestCodes(a);
 					default: return '';
@@ -686,10 +729,6 @@ export default function AppointmentsPage() {
 
 			return cols.map(c => cell(c.key));
 		});
-
-		// Footer only if Extra is visible
-		const showExtraTotal = cols.some(c => c.key === 'extra');
-		const extraSum = rowsToExport.reduce((sum, r) => sum + (Number(r.extraChargeRs) || 0), 0);
 
 		autoTable(doc, {
 			startY: 140,
@@ -701,10 +740,25 @@ export default function AppointmentsPage() {
 			didDrawPage: () => { },
 		});
 
-		if (showExtraTotal) {
-			const endY = (doc as any).lastAutoTable?.finalY ?? 140;
+		const endY = (doc as any).lastAutoTable?.finalY ?? 140;
+		let footerY = endY + 18;
+
+		if (cols.some(c => c.key === 'extra')) {
+			const extraSum = rowsToExport.reduce((sum, r) => sum + money(r.extraChargeRs), 0);
 			doc.setFontSize(10);
-			doc.text(`Total Extra (Rs): ${extraSum}`, 40, endY + 18);
+			doc.text(`Total Extra (Rs): ${extraSum}`, 40, footerY);
+			footerY += 14;
+		}
+		if (cols.some(c => c.key === 'testAmount')) {
+			const testSum = rowsToExport.reduce((sum, r) => sum + money(r.testAmountRs), 0);
+			doc.setFontSize(10);
+			doc.text(`Total Test Amount (Rs): ${testSum}`, 40, footerY);
+			footerY += 14;
+		}
+		if (cols.some(c => c.key === 'totalAmount')) {
+			const totalSum = rowsToExport.reduce((sum, r) => sum + (money(r.extraChargeRs) + money(r.testAmountRs)), 0);
+			doc.setFontSize(10);
+			doc.text(`Total Amount (Rs): ${totalSum}`, 40, footerY);
 		}
 
 		const fileName = `appointments_${new Date().toISOString().slice(0, 10)}.pdf`;
@@ -772,6 +826,10 @@ export default function AppointmentsPage() {
 					serviceType: serviceType || null,
 					paymentStatus,
 					extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
+
+					// ✅ NEW
+					testAmountRs: testAmountRs ? Number(testAmountRs) : null,
+
 					paymentDate: paymentDate ? `${paymentDate}T00:00:00` : null,
 
 					source: 'INSURANCE',
@@ -944,10 +1002,11 @@ export default function AppointmentsPage() {
 					</div>
 
 					{/* Row 3 */}
-					<div className="grid grid-cols-1 md:grid-cols-[130px_90px_170px_180px_160px_120px_170px_auto] gap-3 px-4 py-2 items-end">
+					{/* ✅ Reduced dropdown widths + added Test Amount */}
+					<div className="grid grid-cols-1 md:grid-cols-[110px_80px_150px_160px_135px_130px_140px_150px_auto] gap-3 px-4 py-2 items-end">
 						<div>
 							<label className="block text-sm mb-1">Gender</label>
-							<select className="w-full border rounded px-3 py-2" value={gender} onChange={(e) => setGender(e.target.value)}>
+							<select className="w-full border rounded px-2 py-2 text-sm" value={gender} onChange={(e) => setGender(e.target.value)}>
 								<option value="">-- Select --</option>
 								{GENDER_OPTS.map(g => <option key={g} value={g}>{g}</option>)}
 							</select>
@@ -962,14 +1021,14 @@ export default function AppointmentsPage() {
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Service Type</label>
-							<select className="w-full border rounded px-3 py-2" value={serviceType} onChange={(e) => setServiceType(e.target.value)}>
+							<select className="w-full border rounded px-2 py-2 text-sm" value={serviceType} onChange={(e) => setServiceType(e.target.value)}>
 								<option value="">-- Select --</option>
 								{SERVICE_TYPE_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
 							</select>
 						</div>
 						<div>
 							<label className="block text-sm mb-1">Payment Status</label>
-							<select className="w-full border rounded px-3 py-2" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
+							<select className="w-full border rounded px-2 py-2 text-sm" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
 								{PAYMENT_STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
 							</select>
 						</div>
@@ -989,6 +1048,19 @@ export default function AppointmentsPage() {
 								value={extraChargeRs}
 								onChange={(e) => setExtraChargeRs(e.target.value)}
 								placeholder={isOuter ? 'Required for Outer' : ''}
+							/>
+						</div>
+
+						{/* ✅ NEW Test Amount */}
+						<div>
+							<label className="block text-sm mb-1">Test Amount (Rs)</label>
+							<input
+								type="number"
+								min={0}
+								className="w-full border rounded px-3 py-2"
+								value={testAmountRs}
+								onChange={(e) => setTestAmountRs(e.target.value)}
+								placeholder="0"
 							/>
 						</div>
 
@@ -1073,7 +1145,7 @@ export default function AppointmentsPage() {
 							</select>
 						</div>
 
-						{/* ✅ Service Type filter (replaces Location filter) */}
+						{/* Service Type filter */}
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">Service Type</label>
 							<select
@@ -1171,7 +1243,7 @@ export default function AppointmentsPage() {
 				{/* Table */}
 				<div className="w-full overflow-x-auto">
 					<div className="max-h-[560px] overflow-y-auto">
-						<table className="w-full min-w-[1200px] border rounded">
+						<table className="w-full min-w-[1400px] border rounded">
 							<thead className="sticky top-0 z-10 bg-white">
 								<tr>
 									{visibleCols.date && <SortTh k="date" label="Date" />}
@@ -1189,6 +1261,8 @@ export default function AppointmentsPage() {
 									{visibleCols.serviceType && <SortTh k="serviceType" label="Service Type" />}
 									{visibleCols.payment && <SortTh k="payment" label="Payment Status" />}
 									{visibleCols.extra && <SortTh k="extra" label="Extra (Rs)" align="right" />}
+									{visibleCols.testAmount && <SortTh k="testAmount" label="Test Amount (Rs)" align="right" />}
+									{visibleCols.totalAmount && <SortTh k="totalAmount" label="Total Amount (Rs)" align="right" />}
 									{visibleCols.paymentDate && <SortTh k="paymentDate" label="Payment Date" />}
 									{visibleCols.tests && <SortTh k="tests" label="Test" />}
 								</tr>
@@ -1249,6 +1323,12 @@ export default function AppointmentsPage() {
 													{visibleCols.serviceType && <td className="px-3 py-2 text-sm">{a.serviceType ?? ''}</td>}
 													{visibleCols.payment && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.paymentStatus ?? ''}</td>}
 													{visibleCols.extra && <td className="px-3 py-2 text-sm text-right">{a.extraChargeRs ?? ''}</td>}
+													{visibleCols.testAmount && <td className="px-3 py-2 text-sm text-right">{a.testAmountRs ?? ''}</td>}
+													{visibleCols.totalAmount && (
+														<td className="px-3 py-2 text-sm text-right font-medium">
+															{getTotalAmount(a)}
+														</td>
+													)}
 													{visibleCols.paymentDate && <td className="px-3 py-2 text-sm whitespace-nowrap">{formatDateOnly(a.paymentDate)}</td>}
 													{visibleCols.tests && (
 														<td className="px-3 py-2 text-sm whitespace-nowrap">
@@ -1262,20 +1342,48 @@ export default function AppointmentsPage() {
 								)}
 							</tbody>
 
-							{/* ✅ Footer total only when Extra column is visible */}
-							{visibleCols.extra && (
+							{/* ✅ Footer totals: show only for visible columns */}
+							{(visibleCols.extra || visibleCols.testAmount || visibleCols.totalAmount) && (
 								<tfoot className="sticky bottom-0 bg-white">
-									<tr className="border-t">
-										<td
-											colSpan={Math.max(visibleColCount - 1, 1)}
-											className="px-3 py-2 text-sm font-semibold text-right bg-gray-50"
-										>
-											Total Extra (Rs)
-										</td>
-										<td className="px-3 py-2 text-sm font-semibold text-right bg-gray-50">
-											{extraTotal}
-										</td>
-									</tr>
+									{visibleCols.extra && (
+										<tr className="border-t">
+											<td
+												colSpan={Math.max(visibleColCount - 1, 1)}
+												className="px-3 py-2 text-sm font-semibold text-right bg-gray-50"
+											>
+												Total Extra (Rs)
+											</td>
+											<td className="px-3 py-2 text-sm font-semibold text-right bg-gray-50">
+												{extraTotal}
+											</td>
+										</tr>
+									)}
+									{visibleCols.testAmount && (
+										<tr className="border-t">
+											<td
+												colSpan={Math.max(visibleColCount - 1, 1)}
+												className="px-3 py-2 text-sm font-semibold text-right bg-gray-50"
+											>
+												Total Test Amount (Rs)
+											</td>
+											<td className="px-3 py-2 text-sm font-semibold text-right bg-gray-50">
+												{testAmountTotal}
+											</td>
+										</tr>
+									)}
+									{visibleCols.totalAmount && (
+										<tr className="border-t">
+											<td
+												colSpan={Math.max(visibleColCount - 1, 1)}
+												className="px-3 py-2 text-sm font-semibold text-right bg-gray-50"
+											>
+												Total Amount (Rs)
+											</td>
+											<td className="px-3 py-2 text-sm font-semibold text-right bg-gray-50">
+												{totalAmountTotal}
+											</td>
+										</tr>
+									)}
 								</tfoot>
 							)}
 						</table>
@@ -1516,7 +1624,12 @@ function ColumnsDropdown({
 	colsOpen: boolean;
 	setColsOpen: (v: boolean) => void;
 	colsRef: React.RefObject<HTMLDivElement>;
-	visibleCols: Record<'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal' | 'mobile' | 'visit' | 'location' | 'status' | 'extra' | 'payment' | 'gender' | 'age' | 'serviceType' | 'paymentDate' | 'tests', boolean>;
+	visibleCols: Record<
+		'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal' | 'mobile' | 'visit' | 'location' | 'status' |
+		'extra' | 'testAmount' | 'totalAmount' |
+		'payment' | 'gender' | 'age' | 'serviceType' | 'paymentDate' | 'tests',
+		boolean
+	>;
 	toggleCol: (k: any) => void;
 }>) {
 	const items: [keyof typeof visibleCols, string][] = [
@@ -1525,9 +1638,11 @@ function ColumnsDropdown({
 		['visit', 'Visit Type'], ['location', 'Location'],
 		['gender', 'Gender'], ['age', 'Age'], ['mobile', 'Mobile'],
 		['serviceType', 'Service Type'], ['payment', 'Payment Status'],
-		['extra', 'Extra Rs'], ['paymentDate', 'Payment Date'],
+		['extra', 'Extra Rs'], ['testAmount', 'Test Amount Rs'], ['totalAmount', 'Total Amount Rs'],
+		['paymentDate', 'Payment Date'],
 		['tests', 'Test'],
 	];
+
 	return (
 		<div ref={colsRef} className="relative">
 			<label className="block text-xs text-gray-600 mb-1 invisible">Columns</label>
@@ -1542,7 +1657,7 @@ function ColumnsDropdown({
 			</button>
 
 			{colsOpen && (
-				<div className="absolute right-0 z-20 mt-1 w-[300px] rounded border bg-white shadow p-2">
+				<div className="absolute right-0 z-20 mt-1 w-[320px] rounded border bg-white shadow p-2">
 					<div className="grid grid-cols-2 gap-1 text-sm">
 						{items.map(([k, label]) => (
 							<label key={k} className="inline-flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 cursor-pointer">
