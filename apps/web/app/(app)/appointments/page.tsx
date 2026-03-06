@@ -98,7 +98,7 @@ function statusClasses(s?: string | null) {
 		case 'not responding': return 'bg-yellow-100 text-yellow-800';
 		case 'waiting for response': return 'bg-gray-100 text-gray-800';
 		case 'rescheduled': return 'bg-red-100 text-red-800';
-		case 'need confirmation': return 'bg-slate-200 text-slate-900';
+		case 'need confirmation': return 'bg-orange-100 text-orange-800';
 		case 'appointment confirmed':
 		case 'confirmed': return 'bg-cyan-100 text-cyan-800';
 		case 'sample collected': return 'bg-orange-100 text-orange-800';
@@ -111,6 +111,46 @@ function statusClasses(s?: string | null) {
 		case 'report - submitted':
 		case 'submitted': return 'bg-green-100 text-green-800';
 		default: return 'bg-gray-100 text-gray-800';
+	}
+}
+
+function statusPdfStyle(s?: string | null): {
+	fillColor: [number, number, number];
+	textColor: [number, number, number];
+} {
+	const key = (s || '').trim().toLowerCase();
+
+	switch (key) {
+		case 'tbi':
+			return { fillColor: [243, 232, 255], textColor: [107, 33, 168] }; // purple-100 / purple-800
+		case 'on hold':
+		case 'not responding':
+			return { fillColor: [254, 249, 195], textColor: [133, 77, 14] }; // yellow-100 / yellow-800
+		case 'waiting for response':
+			return { fillColor: [243, 244, 246], textColor: [31, 41, 55] }; // gray-100 / gray-800
+		case 'rescheduled':
+			return { fillColor: [254, 226, 226], textColor: [153, 27, 27] }; // red-100 / red-800
+		case 'need confirmation':
+			return { fillColor: [252, 231, 243], textColor: [131, 24, 67] }; // pink-100 / pink-900
+		case 'appointment confirmed':
+		case 'confirmed':
+			return { fillColor: [207, 250, 254], textColor: [21, 94, 117] }; // cyan-100 / cyan-800
+		case 'sample collected':
+			return { fillColor: [255, 237, 213], textColor: [154, 52, 18] }; // orange-100 / orange-800
+		case 'medical done':
+			return { fillColor: [219, 234, 254], textColor: [30, 64, 175] }; // blue-100 / blue-800
+		case 'cancelled':
+			return { fillColor: [191, 219, 254], textColor: [30, 58, 138] }; // blue-200 / blue-900
+		case 'report - inprogress':
+		case 'onprocess':
+			return { fillColor: [254, 240, 138], textColor: [17, 24, 39] }; // yellow-200 / near-black
+		case 'report - completed':
+		case 'completed':
+		case 'report - submitted':
+		case 'submitted':
+			return { fillColor: [220, 252, 231], textColor: [22, 101, 52] }; // green-100 / green-800
+		default:
+			return { fillColor: [243, 244, 246], textColor: [31, 41, 55] }; // gray-100 / gray-800
 	}
 }
 
@@ -287,8 +327,8 @@ export default function AppointmentsPage() {
 		serviceType: false,
 		payment: false,
 		extra: false,
-		testAmount: false,   // ✅ NEW (default hidden; you can set true if you want)
-		totalAmount: true,   // ✅ NEW (default visible)
+		testAmount: false,
+		totalAmount: true,
 		paymentDate: false,
 		tests: false,
 	});
@@ -387,7 +427,7 @@ export default function AppointmentsPage() {
 		setServiceType('');
 		setPaymentStatus('TBI');
 		setExtraChargeRs('');
-		setTestAmountRs(''); // ✅ NEW
+		setTestAmountRs('');
 		setPaymentDate('');
 		setFormOk(null);
 
@@ -415,7 +455,7 @@ export default function AppointmentsPage() {
 		const isOuter = (serviceType || '').trim().toLowerCase() === 'outer';
 		const extraNum = extraChargeRs === '' ? NaN : Number(extraChargeRs);
 		const extraValid = Number.isFinite(extraNum) && extraNum > 0;
-		if (isOuter && !extraValid) missing.push('Extra Charge (Rs)');
+		if (isOuter && !extraValid) missing.push('Travel Charge (Rs)');
 
 		return missing;
 	}
@@ -432,12 +472,12 @@ export default function AppointmentsPage() {
 				'Client ID / Proposal No',
 				'Gender',
 				'Service Type',
-				'Extra Charge (Rs)',
+				'Travel Charge (Rs)',
 			];
 			const display = ordered.filter(x => missing.includes(x));
 			setReqList(display.length ? display : missing);
 			setReqOpen(true);
-			if (missing.includes('Extra Charge (Rs)')) setTimeout(() => extraRef.current?.focus(), 0);
+			if (missing.includes('Travel Charge (Rs)')) setTimeout(() => extraRef.current?.focus(), 0);
 			return;
 		}
 
@@ -468,7 +508,6 @@ export default function AppointmentsPage() {
 			paymentStatus,
 			extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
 
-			// ✅ NEW
 			testAmountRs: testAmountRs ? Number(testAmountRs) : null,
 
 			paymentDate: paymentDate ? `${paymentDate}T00:00:00` : null,
@@ -520,7 +559,6 @@ export default function AppointmentsPage() {
 		setPaymentStatus(a.paymentStatus || 'TBI');
 		setExtraChargeRs(a.extraChargeRs != null ? String(a.extraChargeRs) : '');
 
-		// ✅ NEW
 		setTestAmountRs(a.testAmountRs != null ? String(a.testAmountRs) : '');
 
 		setPaymentDate(formatDateOnly(a.paymentDate));
@@ -547,8 +585,6 @@ export default function AppointmentsPage() {
 	}
 
 	const getTotalAmount = (r: Appointment) => {
-		// ✅ Requested: Outer => Extra + Test Amount.
-		// For non-Outer, Extra usually 0, so this still behaves correctly.
 		return money(r.extraChargeRs) + money(r.testAmountRs);
 	};
 
@@ -581,7 +617,6 @@ export default function AppointmentsPage() {
 		}
 	};
 
-	// ✅ Filters (searchbox ONLY: client/proposal/mobile) + new filters (TPA, VisitType, ServiceType)
 	const filtered = useMemo(() => {
 		const term = q.trim().toLowerCase();
 
@@ -623,7 +658,6 @@ export default function AppointmentsPage() {
 		labs, vendors, insurers,
 	]);
 
-	// ✅ Footer totals
 	const extraTotal = useMemo(() => {
 		return filtered.reduce((sum, r) => sum + money(r.extraChargeRs), 0);
 	}, [filtered]);
@@ -636,7 +670,6 @@ export default function AppointmentsPage() {
 		return filtered.reduce((sum, r) => sum + getTotalAmount(r), 0);
 	}, [filtered]);
 
-	/** Trend data */
 	const trendData = useMemo(
 		() => buildTrend(rows, { labId: fLabId, from: fDateFrom, to: fDateTo }),
 		[rows, fLabId, fDateFrom, fDateTo],
@@ -647,7 +680,7 @@ export default function AppointmentsPage() {
 		else { setSortKey(k); setSortDir('asc'); }
 	}
 
-	// ✅ Export PDF using jsPDF (no print dialog)
+	// ✅ Export PDF using jsPDF with status color support
 	function exportFilteredToPdf(rowsToExport: Appointment[]) {
 		const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
 
@@ -670,7 +703,6 @@ export default function AppointmentsPage() {
 		doc.text(`Search (Client/Proposal/Mobile): ${searchText}`, 40, 105);
 		doc.text(`Rows: ${rowsToExport.length}`, 40, 120);
 
-		// columns = currently visible columns
 		const ALL_COLS = [
 			{ key: 'date', label: 'Date' },
 			{ key: 'lab', label: 'Lab' },
@@ -694,6 +726,7 @@ export default function AppointmentsPage() {
 		] as const satisfies ReadonlyArray<{ key: ColKey; label: string }>;
 
 		const cols = ALL_COLS.filter(c => visibleCols[c.key]);
+		const statusColIndex = cols.findIndex(c => c.key === 'status');
 
 		const head = [cols.map(c => c.label)];
 
@@ -736,9 +769,40 @@ export default function AppointmentsPage() {
 			startY: 140,
 			head,
 			body,
-			styles: { fontSize: 8, cellPadding: 4 },
-			headStyles: { fontSize: 8 },
+			styles: {
+				fontSize: 8,
+				cellPadding: 4,
+				valign: 'middle',
+			},
+			headStyles: {
+				fontSize: 8,
+				fillColor: [18, 225, 147],
+				textColor: [41, 51, 63],
+				lineColor: [109, 113, 119],
+				lineWidth: 0.5,
+				fontStyle: 'bold',
+			},
+			bodyStyles: {
+				lineColor: [129, 131, 135],
+				lineWidth: 0.75,
+			},
 			theme: 'grid',
+			didParseCell: (data) => {
+				if (
+					data.section === 'body' &&
+					statusColIndex >= 0 &&
+					data.column.index === statusColIndex
+				) {
+					const statusTextValue = String(data.cell.raw || '').trim();
+					const style = statusPdfStyle(statusTextValue);
+
+					data.cell.styles.fillColor = style.fillColor;
+					data.cell.styles.textColor = style.textColor;
+					data.cell.styles.fontStyle = 'bold';
+					data.cell.styles.halign = 'center';
+					data.cell.styles.valign = 'middle';
+				}
+			},
 			didDrawPage: () => { },
 		});
 
@@ -798,13 +862,13 @@ export default function AppointmentsPage() {
 						'Client ID / Proposal No',
 						'Gender',
 						'Service Type',
-						'Extra Charge (Rs)',
+						'Travel Charge (Rs)',
 					];
 					const display = ordered.filter(x => missing.includes(x));
 					setReqList(display.length ? display : missing);
 					setReqOpen(true);
 
-					if (missing.includes('Extra Charge (Rs)')) setTimeout(() => extraRef.current?.focus(), 0);
+					if (missing.includes('Travel Charge (Rs)')) setTimeout(() => extraRef.current?.focus(), 0);
 					return;
 				}
 
@@ -829,7 +893,6 @@ export default function AppointmentsPage() {
 					paymentStatus,
 					extraChargeRs: extraChargeRs ? Number(extraChargeRs) : null,
 
-					// ✅ NEW
 					testAmountRs: testAmountRs ? Number(testAmountRs) : null,
 
 					paymentDate: paymentDate ? `${paymentDate}T00:00:00` : null,
@@ -1004,7 +1067,6 @@ export default function AppointmentsPage() {
 					</div>
 
 					{/* Row 3 */}
-					{/* ✅ Reduced dropdown widths + added Test Amount */}
 					<div className="grid grid-cols-1 md:grid-cols-[110px_80px_150px_160px_135px_130px_140px_150px_auto] gap-3 px-4 py-2 items-end">
 						<div>
 							<label className="block text-sm mb-1">Gender</label>
@@ -1037,7 +1099,7 @@ export default function AppointmentsPage() {
 
 						<div>
 							<label className="block text-sm mb-1">
-								Extra Charge (Rs) {isOuter ? <span className="text-red-600">*</span> : null}
+								Travel Charge (Rs) {isOuter ? <span className="text-red-600">*</span> : null}
 							</label>
 							<input
 								ref={extraRef}
@@ -1053,7 +1115,6 @@ export default function AppointmentsPage() {
 							/>
 						</div>
 
-						{/* ✅ NEW Test Amount */}
 						<div>
 							<label className="block text-sm mb-1">Test Amount (Rs)</label>
 							<input
@@ -1344,7 +1405,6 @@ export default function AppointmentsPage() {
 								)}
 							</tbody>
 
-							{/* ✅ Footer totals: show only for visible columns */}
 							{(visibleCols.extra || visibleCols.testAmount || visibleCols.totalAmount) && (
 								<tfoot className="sticky bottom-0 bg-white">
 									{visibleCols.extra && (
@@ -1449,7 +1509,7 @@ export default function AppointmentsPage() {
 				</div>
 			)}
 
-			{/* Tests modal (unchanged UI) */}
+			{/* Tests modal */}
 			{testsOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
 					<div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden">
@@ -1547,6 +1607,19 @@ export default function AppointmentsPage() {
 					</div>
 				</div>
 			)}
+
+			{/* Optional trend chart block kept from original imports */}
+			<div className="hidden">
+				<ResponsiveContainer width="100%" height={200}>
+					<LineChart data={trendData}>
+						<CartesianGrid strokeDasharray="3 3" />
+						<XAxis dataKey="date" />
+						<YAxis />
+						<Tooltip />
+						<Line type="monotone" dataKey="count" strokeWidth={2} />
+					</LineChart>
+				</ResponsiveContainer>
+			</div>
 		</div>
 	);
 }
