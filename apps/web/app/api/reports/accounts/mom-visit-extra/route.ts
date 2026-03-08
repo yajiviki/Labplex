@@ -7,15 +7,16 @@ function parseYmdStart(v?: string | null) {
 	if (!m) return null;
 	return new Date(+m[1], +m[2] - 1, +m[3], 0, 0, 0, 0);
 }
+
 function endOfDay(d: Date) {
 	return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 }
+
 function yyyymm(d: Date) {
 	const p = (n: number) => String(n).padStart(2, '0');
 	return `${d.getFullYear()}-${p(d.getMonth() + 1)}`;
 }
 
-// ✅ Converts Prisma Decimal | number | string | null to number
 function toNum(v: unknown): number {
 	if (v === null || v === undefined) return 0;
 	if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
@@ -23,7 +24,6 @@ function toNum(v: unknown): number {
 		const n = Number(v);
 		return Number.isFinite(n) ? n : 0;
 	}
-	// Prisma Decimal has toNumber()
 	if (typeof v === 'object' && v && typeof (v as any).toNumber === 'function') {
 		const n = (v as any).toNumber();
 		return typeof n === 'number' && Number.isFinite(n) ? n : 0;
@@ -32,11 +32,48 @@ function toNum(v: unknown): number {
 	return Number.isFinite(n) ? n : 0;
 }
 
-type Bucket = {
-	centerWithExtra: { count: number; amount: number };
-	localHomeWithExtra: { count: number; amount: number };
-	outerHomeWithExtra: { count: number; amount: number };
+type BucketMetric = {
+	count: number;
+	amount: number;
+	travelAmount: number;
+	testAmount: number;
+	totalAmount: number;
 };
+
+type Bucket = {
+	centerWithExtra: BucketMetric;
+	localHomeWithExtra: BucketMetric;
+	outerHomeWithExtra: BucketMetric;
+};
+
+function emptyMetric(): BucketMetric {
+	return {
+		count: 0,
+		amount: 0,
+		travelAmount: 0,
+		testAmount: 0,
+		totalAmount: 0,
+	};
+}
+
+function emptyBucket(): Bucket {
+	return {
+		centerWithExtra: emptyMetric(),
+		localHomeWithExtra: emptyMetric(),
+		outerHomeWithExtra: emptyMetric(),
+	};
+}
+
+function addToMetric(metric: BucketMetric, travel: number, test: number) {
+	const total = travel + test;
+	if (total <= 0) return;
+
+	metric.count += 1;
+	metric.travelAmount += travel;
+	metric.testAmount += test;
+	metric.totalAmount += total;
+	metric.amount += total; // backward compatibility
+}
 
 export async function POST(req: Request) {
 	try {
@@ -59,11 +96,13 @@ export async function POST(req: Request) {
 
 		const gte = parseYmdStart(from || undefined);
 		const lte0 = parseYmdStart(to || undefined);
+
 		if (gte || lte0) {
 			where.apptAt = {};
 			if (gte) where.apptAt.gte = gte;
 			if (lte0) where.apptAt.lte = endOfDay(lte0);
 		}
+
 		if (accountId) where.insuranceCompanyId = accountId;
 		if (labId) where.labId = labId;
 		if (vendorId) where.vendorId = vendorId;
@@ -75,6 +114,7 @@ export async function POST(req: Request) {
 				serviceType: true,
 				visitType: true,
 				extraChargeRs: true,
+				testAmountRs: true,
 			},
 			orderBy: { apptAt: 'desc' },
 			take: 500000,
@@ -86,35 +126,30 @@ export async function POST(req: Request) {
 			if (!r.apptAt) continue;
 
 			const month = yyyymm(new Date(r.apptAt));
-			const b = byMonth.get(month) ?? {
-				centerWithExtra: { count: 0, amount: 0 },
-				localHomeWithExtra: { count: 0, amount: 0 },
-				outerHomeWithExtra: { count: 0, amount: 0 },
-			};
+			const bucket = byMonth.get(month) ?? emptyBucket();
 
-			const visit = (r.visitType || '').toUpperCase();
-			const svc = (r.serviceType || '').toLowerCase();
+			const visit = (r.visitType || '').toUpperCase().trim();
+			const svc = (r.serviceType || '').toLowerCase().trim();
 
-			// ✅ FIX: normalize to number BEFORE comparing
-			const extraRaw = toNum(r.extraChargeRs);
-			const extra = extraRaw > 0 ? extraRaw : 0;
+			const travel = Math.max(0, toNum(r.extraChargeRs));
+			const test = Math.max(0, toNum(r.testAmountRs));
+			const total = travel + test;
 
-			if (extra > 0) {
+			if (total > 0) {
 				if (visit === 'CENTER') {
-					b.centerWithExtra.count += 1;
-					b.centerWithExtra.amount += extra;
+					addToMetric(bucket.centerWithExtra, travel, test);
 				}
+
 				if (svc === 'local' && visit === 'HOME') {
-					b.localHomeWithExtra.count += 1;
-					b.localHomeWithExtra.amount += extra;
+					addToMetric(bucket.localHomeWithExtra, travel, test);
 				}
+
 				if (svc === 'outer' && visit === 'HOME') {
-					b.outerHomeWithExtra.count += 1;
-					b.outerHomeWithExtra.amount += extra;
+					addToMetric(bucket.outerHomeWithExtra, travel, test);
 				}
 			}
 
-			byMonth.set(month, b);
+			byMonth.set(month, bucket);
 		}
 
 		const rowsOut = Array.from(byMonth.entries())

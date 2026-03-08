@@ -772,17 +772,17 @@ export default function AccountsReportClient({
 					tone="blue"
 				/>
 				<StatCard
-					title="Travel Amount Received"
+					title="Total Travel Amount"
 					value={formatMoney(cards.totalTravelAmount)}
 					tone="emerald"
 				/>
 				<StatCard
-					title="Test Amount Received"
+					title="Total Test Amount"
 					value={formatMoney(cards.totalTestAmount)}
 					tone="amber"
 				/>
 				<StatCard
-					title="Total Amount Received"
+					title="Total Amount (Travel + Test)"
 					value={formatMoney(cards.totalReceivedAmount)}
 					tone="violet"
 				/>
