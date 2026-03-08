@@ -4,10 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
 	Building2, Workflow, CalendarRange, Undo2, X,
-	ChevronDown, ChevronUp, Download, Image as ImageIcon, FileDown
+	ChevronDown, ChevronUp, Image as ImageIcon, FileDown
 } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts';
 import VisitWithExtraMoM from '../../../../../components/VisitWithExtraMoM';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 type LabLite = { id: string; name: string };
 type VendorLite = { id: string; tpaName: string };
@@ -83,7 +85,15 @@ function money(n: any) {
 	return Number.isFinite(num) ? num : 0;
 }
 function formatMoney(n: number) {
-	return `₹${money(n).toLocaleString()}`;
+	return "₹" + `${money(n).toLocaleString()}`;
+}
+
+function toNumString(n: number) {
+	return money(n).toLocaleString('en-IN');
+}
+
+function formatMoneyPdf(n: number) {
+	return `Rs. ${money(n).toLocaleString('en-IN')}`;
 }
 
 function StatCard({
@@ -434,44 +444,92 @@ export default function AccountsReportClient({
 		}, 0);
 	}
 
-	async function exportAllMissingCSV() {
-		try {
-			const effLabId = labId || null;
-			const effVenId = vendorId || null;
-			const res = await fetch('/api/reports/accounts/details', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ from, to, labId: effLabId, vendorId: effVenId, extraMissing: true }),
-			});
-			const data = await res.json();
-			if (!res.ok) throw new Error(data?.error || 'Failed to load details for CSV');
+	function exportSummaryPdf() {
+		const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
 
-			const rows = Array.isArray(data?.rows) ? data.rows : [];
-			const headers = [
-				{ key: 'apptAt', label: 'App. Date' },
-				{ key: 'tpaName', label: 'TPA Name' },
-				{ key: 'labName', label: 'Lab Name' },
-				{ key: 'insuranceNickName', label: 'Insurance Nick name' },
-				{ key: 'clientName', label: 'Client Name' },
-				{ key: 'status', label: 'Status' },
-				{ key: 'visitType', label: 'Visit Type' },
-				{ key: 'serviceType', label: 'Service Type' },
-				{ key: 'extraChargeRs', label: 'Travel Amount' },
-				{ key: 'testAmountRs', label: 'Test Amount' },
-				{ key: 'totalAmountRs', label: 'Total Amount' },
-			];
-			const normalized = rows.map((r: any) => ({
-				...r,
-				apptAt: new Date(r.apptAt).toLocaleDateString(),
-				extraChargeRs: r.extraChargeRs != null ? r.extraChargeRs : '',
-				testAmountRs: r.testAmountRs != null ? r.testAmountRs : '',
-				totalAmountRs: r.totalAmountRs != null ? r.totalAmountRs : (money(r.extraChargeRs) + money(r.testAmountRs)),
-			}));
-			const csv = toDelimited(normalized, headers, ',');
-			downloadBlob(csv, 'text/csv;charset=utf-8', 'missing-extra-appointments.csv');
-		} catch (e: any) {
-			alert(e?.message || 'Failed to export CSV');
-		}
+		const labText = labId ? (labs.find(l => l.id === labId)?.name || 'Selected Lab') : 'All Labs';
+		const tpaText = vendorId ? (vendors.find(v => v.id === vendorId)?.tpaName || 'Selected TPA') : 'All TPA';
+		const focusedLabText = focused?.labId ? (labs.find(l => l.id === focused.labId)?.name || 'Selected Lab') : null;
+		const focusedTpaText = focused?.vendorId ? (vendors.find(v => v.id === focused.vendorId)?.tpaName || 'Selected TPA') : null;
+
+		doc.setFont('helvetica', 'bold');
+		doc.setFontSize(15);
+		doc.text('Extra Amount Summary', 28, 34);
+
+		doc.setFont('helvetica', 'normal');
+		doc.setFontSize(10);
+		doc.text(`Date Range: ${from} to ${to}`, 28, 54);
+		doc.text(`Lab: ${focusedLabText ?? labText}`, 28, 69);
+		doc.text(`TPA: ${focusedTpaText ?? tpaText}`, 220, 69);
+		doc.text(`Rows: ${sortedTable.length}`, 28, 84);
+
+		const head = [[
+			'Lab Name',
+			'TPA Name',
+			'Travel Amount',
+			'Test Amount',
+			'Total Amount',
+		]];
+
+		const body = sortedTable.map((r) => [
+			r.labName ?? '',
+			r.tpaName ?? '',
+			toNumString(r.totalExtra),
+			toNumString(r.totalTestAmount),
+			toNumString(r.totalAmount || (money(r.totalExtra) + money(r.totalTestAmount))),
+		]);
+
+		autoTable(doc, {
+			startY: 102,
+			head,
+			body,
+			margin: { left: 28, right: 28, top: 24, bottom: 24 },
+			styles: {
+				font: 'helvetica',
+				fontSize: 8,
+				cellPadding: 3,
+				valign: 'middle',
+				overflow: 'linebreak',
+				textColor: [31, 41, 55],
+				lineColor: [156, 163, 175],
+				lineWidth: 0.4,
+			},
+			headStyles: {
+				font: 'helvetica',
+				fontStyle: 'bold',
+				fontSize: 8.5,
+				fillColor: [18, 225, 147],
+				textColor: [41, 51, 63],
+				lineColor: [109, 113, 119],
+				lineWidth: 0.5,
+			},
+			bodyStyles: {
+				font: 'helvetica',
+				lineColor: [156, 163, 175],
+				lineWidth: 0.4,
+			},
+			columnStyles: {
+				0: { cellWidth: 70 },
+				1: { cellWidth: 70 },
+				2: { cellWidth: 78, halign: 'right' },
+				3: { cellWidth: 78, halign: 'right' },
+				4: { cellWidth: 86, halign: 'right' },
+			},
+			theme: 'grid',
+		});
+
+		const endY = (doc as any).lastAutoTable?.finalY ?? 102;
+		let footerY = endY + 18;
+
+		doc.setFont('helvetica', 'bold');
+		doc.setFontSize(10);
+		doc.text(`Total Travel Amount: ${formatMoneyPdf(summaryTotals.travel)}`, 28, footerY);
+		footerY += 15;
+		doc.text(`Total Test Amount: ${formatMoneyPdf(summaryTotals.test)}`, 28, footerY);
+		footerY += 15;
+		doc.text(`Total Amount: ${formatMoneyPdf(summaryTotals.total)}`, 28, footerY);
+
+		doc.save(`extra-amount-summary_${from}_to_${to}.pdf`);
 	}
 
 	function downloadCSV() {
@@ -558,16 +616,18 @@ export default function AccountsReportClient({
 	const SummarySortHdr = ({
 		k,
 		align = 'left',
+		className = '',
 		children,
 	}: {
 		k: SummarySortKey;
 		align?: 'left' | 'right';
+		className?: string;
 		children: React.ReactNode;
 	}) => {
 		const active = sSortKey === k;
 		return (
 			<th
-				className={`px-3 py-2 text-${align} font-semibold cursor-pointer select-none whitespace-nowrap`}
+				className={`px-2 py-1.5 text-${align} font-semibold cursor-pointer select-none whitespace-nowrap ${className}`}
 				onClick={() => toggleSummarySort(k)}
 				title="Sort"
 			>
@@ -802,36 +862,36 @@ export default function AccountsReportClient({
 						<h3 className="font-semibold">Extra Amount Summary</h3>
 						<button
 							type="button"
-							onClick={exportAllMissingCSV}
+							onClick={exportSummaryPdf}
 							className="inline-flex items-center gap-2 text-sm px-2.5 py-1.5 border rounded hover:bg-gray-50"
-							title="Download all missing-extra appointments (CSV)"
+							title="Export Extra Amount Summary to PDF"
 						>
-							<Download className="h-4 w-4" />
-							Download
+							<FileDown className="h-4 w-4" />
+							Export PDF
 						</button>
 					</div>
 
 					<div className="overflow-x-auto">
 						<div className="border rounded max-h-72 overflow-y-auto">
-							<table className="min-w-full text-sm">
+							<table className="w-full text-xs table-fixed">
 								<thead className="bg-gray-50 sticky top-0 z-10">
 									<tr>
 										<SummarySortHdr k="tpa">TPA</SummarySortHdr>
 										<SummarySortHdr k="lab">Lab</SummarySortHdr>
-										<SummarySortHdr k="travel" align="right">Travel (₹)</SummarySortHdr>
-										<SummarySortHdr k="test" align="right">Test (₹)</SummarySortHdr>
-										<SummarySortHdr k="total" align="right">Total (₹)</SummarySortHdr>
-										<SummarySortHdr k="missing" align="right">Missing Cnt</SummarySortHdr>
+										<SummarySortHdr k="travel" align="right" >Travel</SummarySortHdr>
+										<SummarySortHdr k="test" align="right" >Test</SummarySortHdr>
+										<SummarySortHdr k="total" align="right">Total</SummarySortHdr>
+										<SummarySortHdr k="missing" align="right">Missing</SummarySortHdr>
 									</tr>
 								</thead>
 								<tbody>
 									{loading ? (
 										<tr>
-											<td className="px-3 py-4 text-center" colSpan={6}>Loading…</td>
+											<td className="px-2 py-2 text-center" colSpan={6}>Loading…</td>
 										</tr>
 									) : sortedTable.length === 0 ? (
 										<tr>
-											<td className="px-3 py-4 text-center text-gray-500" colSpan={6}>No data</td>
+											<td className="px-2 py-2 text-center text-gray-500" colSpan={6}>No data</td>
 										</tr>
 									) : (
 										sortedTable.map((r, idx) => (
@@ -839,21 +899,31 @@ export default function AccountsReportClient({
 												key={`${r.vendorId ?? 'all'}-${r.labId ?? 'all'}-${idx}`}
 												className="border-t hover:bg-gray-50"
 											>
-												<td className="px-3 py-2 cursor-pointer" onClick={() => focusRow(r)} title="Focus trend on this TPA/Lab">
+												<td
+													className="px-2 py-1.5 cursor-pointer truncate"
+													onClick={() => focusRow(r)}
+													title={r.tpaNickName ?? r.tpaName}
+												>
 													{r.tpaNickName ?? r.tpaName}
 												</td>
-												<td className="px-3 py-2 cursor-pointer" onClick={() => focusRow(r)} title="Focus trend on this TPA/Lab">
+												<td
+													className="px-2 py-1.5 cursor-pointer truncate"
+													onClick={() => focusRow(r)}
+													title={r.labNickName ?? r.labName}
+												>
 													{r.labNickName ?? r.labName}
 												</td>
-												<td className="px-3 py-2 text-right">{formatMoney(r.totalExtra)}</td>
-												<td className="px-3 py-2 text-right">{formatMoney(r.totalTestAmount)}</td>
-												<td className="px-3 py-2 text-right font-medium">{formatMoney(r.totalAmount || (money(r.totalExtra) + money(r.totalTestAmount)))}</td>
+												<td className="px-2 py-1.5 text-right">{formatMoney(r.totalExtra)}</td>
+												<td className="px-2 py-1.5 text-right">{formatMoney(r.totalTestAmount)}</td>
+												<td className="px-2 py-1.5 text-right font-medium">
+													{formatMoney(r.totalAmount || (money(r.totalExtra) + money(r.totalTestAmount)))}
+												</td>
 												<td
-													className="px-3 py-2 text-right cursor-pointer hover:underline"
-													title="Show details without extra amount"
+													className="px-2 py-1.5 text-right cursor-pointer hover:underline"
+													title="Show home visit details without travel amount"
 													onClick={() => openDetails(
-														`${r.tpaNickName ?? r.tpaName} → ${r.labNickName ?? r.labName} • No Travel Amount`,
-														{ vendorId: r.vendorId, labId: r.labId, extraMissing: true }
+														`${r.tpaNickName ?? r.tpaName} → ${r.labNickName ?? r.labName} • Home Visit • No Travel Amount`,
+														{ vendorId: r.vendorId, labId: r.labId, extraMissing: true, visitType: 'HOME' }
 													)}
 												>
 													{(r.missingExtraCount ?? 0).toLocaleString()}
@@ -866,12 +936,12 @@ export default function AccountsReportClient({
 								{sortedTable.length > 0 && (
 									<tfoot className="bg-gray-50 sticky bottom-0">
 										<tr className="border-t">
-											<td className="px-3 py-2 font-semibold">Total</td>
-											<td className="px-3 py-2" />
-											<td className="px-3 py-2 text-right font-semibold">{formatMoney(summaryTotals.travel)}</td>
-											<td className="px-3 py-2 text-right font-semibold">{formatMoney(summaryTotals.test)}</td>
-											<td className="px-3 py-2 text-right font-semibold">{formatMoney(summaryTotals.total)}</td>
-											<td className="px-3 py-2 text-right font-semibold">{summaryTotals.missing.toLocaleString()}</td>
+											<td className="px-2 py-1.5 font-semibold">Total</td>
+											<td className="px-2 py-1.5" />
+											<td className="px-2 py-1.5 text-right font-semibold">{formatMoney(summaryTotals.travel)}</td>
+											<td className="px-2 py-1.5 text-right font-semibold">{formatMoney(summaryTotals.test)}</td>
+											<td className="px-2 py-1.5 text-right font-semibold">{formatMoney(summaryTotals.total)}</td>
+											<td className="px-2 py-1.5 text-right font-semibold">{summaryTotals.missing.toLocaleString()}</td>
 										</tr>
 									</tfoot>
 								)}

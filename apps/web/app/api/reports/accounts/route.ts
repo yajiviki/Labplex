@@ -86,7 +86,7 @@ export async function POST(req: Request) {
 		// 1. Travel total
 		// 2. Test total
 		// 3. Combined total
-		// 4. Missing extra count
+		// 4. Missing extra count (HOME only)
 		// 5. Cards
 		const summaryRows = await prisma.appointment.findMany({
 			where: whereBase,
@@ -96,6 +96,7 @@ export async function POST(req: Request) {
 				status: true,
 				extraChargeRs: true,
 				testAmountRs: true,
+				visitType: true,
 			},
 			orderBy: [{ vendorId: 'asc' }, { labId: 'asc' }],
 			take: 500000,
@@ -121,6 +122,7 @@ export async function POST(req: Request) {
 			const travel = toNum(r.extraChargeRs);
 			const test = toNum(r.testAmountRs);
 			const total = travel + test;
+			const visitType = normalizeVisitType(r.visitType);
 
 			const k = keyOf(r.labId ?? null, r.vendorId ?? null);
 			const cur = aggMap.get(k) ?? {
@@ -135,7 +137,11 @@ export async function POST(req: Request) {
 			cur.totalExtra += travel;
 			cur.totalTestAmount += test;
 			cur.totalAmount += total;
-			if (travel <= 0) cur.missingExtraCount += 1;
+
+			// Missing Extra only for HOME visits, CENTER ignored
+			if (visitType === 'HOME' && travel <= 0) {
+				cur.missingExtraCount += 1;
+			}
 
 			aggMap.set(k, cur);
 
