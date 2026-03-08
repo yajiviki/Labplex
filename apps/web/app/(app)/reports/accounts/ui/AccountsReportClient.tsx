@@ -7,14 +7,18 @@ import {
 	ChevronDown, ChevronUp, Download, Image as ImageIcon, FileDown
 } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts';
-import ExtraOuterPivot from '../../../../../components/ExtraOuterPivot';
-import OuterVsExtraMoM from '../../../../../components/OuterVsExtraMoM';
 import VisitWithExtraMoM from '../../../../../components/VisitWithExtraMoM';
 
 type LabLite = { id: string; name: string };
 type VendorLite = { id: string; tpaName: string };
 
-// === include nick names + missing count ===
+type SummaryCards = {
+	totalCompletedCases: number;
+	totalTravelAmount: number;
+	totalTestAmount: number;
+	totalReceivedAmount: number;
+};
+
 type TableRow = {
 	labId: string | null;
 	labName: string;
@@ -23,11 +27,13 @@ type TableRow = {
 	tpaName: string;
 	tpaNickName?: string | null;
 	totalExtra: number;
+	totalTestAmount: number;
+	totalAmount: number;
 	missingExtraCount: number;
 };
+
 type TrendRow = { date: string; amount: number };
 
-// ---------- PIVOT TYPES ----------
 type PivotRow = {
 	vendorId: string | null;
 	tpaName: string;
@@ -36,8 +42,9 @@ type PivotRow = {
 	localTotal: number;
 	outerTotal: number;
 	rowTotal: number;
-	cells: Record<string, number>; // key = `${serviceType}__${visitType}`
+	cells: Record<string, number>;
 };
+
 type PivotPayload = {
 	serviceTypes: string[];
 	visits: string[];
@@ -52,15 +59,58 @@ type PresetKey =
 	| 'today' | 'yesterday' | 'prev-week' | 'prev-7' | 'prev-30'
 	| 'this-month' | 'prev-month' | 'prev-3m' | 'prev-12m';
 
-// ----- date helpers -----
 function toYmd(d: Date) {
 	const pad = (n: number) => String(n).padStart(2, '0');
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 function startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
 function endOfToday() { const d = new Date(); d.setHours(23, 59, 59, 999); return d; }
-function startOfWeekMonday(d = new Date()) { const x = new Date(d); const dow = (x.getDay() + 6) % 7; x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - dow); return x; }
-function endOfWeekFromStart(s: Date) { const e = new Date(s); e.setDate(s.getDate() + 6); e.setHours(23, 59, 59, 999); return e; }
+function startOfWeekMonday(d = new Date()) {
+	const x = new Date(d);
+	const dow = (x.getDay() + 6) % 7;
+	x.setHours(0, 0, 0, 0);
+	x.setDate(x.getDate() - dow);
+	return x;
+}
+function endOfWeekFromStart(s: Date) {
+	const e = new Date(s);
+	e.setDate(s.getDate() + 6);
+	e.setHours(23, 59, 59, 999);
+	return e;
+}
+function money(n: any) {
+	const num = Number(n);
+	return Number.isFinite(num) ? num : 0;
+}
+function formatMoney(n: number) {
+	return `₹${money(n).toLocaleString()}`;
+}
+
+function StatCard({
+	title,
+	value,
+	tone,
+}: Readonly<{
+	title: string;
+	value: string;
+	tone: 'blue' | 'emerald' | 'amber' | 'violet';
+}>) {
+	const toneClass =
+		tone === 'blue'
+			? 'bg-blue-50 border-blue-200 text-blue-700'
+			: tone === 'emerald'
+				? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+				: tone === 'amber'
+					? 'bg-amber-50 border-amber-200 text-amber-700'
+					: 'bg-violet-50 border-violet-200 text-violet-700';
+
+	return (
+		<div className={`rounded-xl border p-4 shadow-sm ${toneClass}`}>
+			<div className="text-xs font-medium uppercase tracking-wide opacity-80">{title}</div>
+			<div className="mt-2 text-2xl font-bold text-gray-900">{value}</div>
+		</div>
+	);
+}
 
 export default function AccountsReportClient({
 	labs, vendors, initialFrom, initialTo, initialLabId, initialVendorId, initialData,
@@ -71,16 +121,19 @@ export default function AccountsReportClient({
 	initialTo: string;
 	initialLabId: string;
 	initialVendorId: string;
-	initialData: { table: TableRow[]; trend: TrendRow[]; pivot?: PivotPayload };
+	initialData: {
+		table: TableRow[];
+		trend: TrendRow[];
+		pivot?: PivotPayload;
+		cards?: SummaryCards;
+	};
 }) {
-	// Toolbar filters (for summary & trend)
 	const [labId, setLabId] = useState<string>(initialLabId ?? '');
 	const [vendorId, setVendorId] = useState<string>(initialVendorId ?? '');
 	const [from, setFrom] = useState<string>(initialFrom);
 	const [to, setTo] = useState<string>(initialTo);
 	const [preset, setPreset] = useState<PresetKey | ''>('');
 
-	// Focused trend (when clicking a summary row)
 	const [focused, setFocused] = useState<{ labId: string | null; vendorId: string | null } | null>(null);
 
 	const [loading, setLoading] = useState(false);
@@ -90,11 +143,31 @@ export default function AccountsReportClient({
 	const [trend, setTrend] = useState<TrendRow[]>(Array.isArray(initialData?.trend) ? initialData.trend : []);
 	const [pivot, setPivot] = useState<PivotPayload | null>(initialData?.pivot ?? null);
 
-	// ---------- Pivot Lab multi-select state ----------
-	const [pivotLabOpen, setPivotLabOpen] = useState(false);
-	const [pivotLabIds, setPivotLabIds] = useState<string[]>([]); // selected labs for pivot
+	const fallbackCards = useMemo<SummaryCards>(() => {
+		const totalTravelAmount = table.reduce((s, r) => s + money(r.totalExtra), 0);
+		const totalTestAmount = table.reduce((s, r) => s + money(r.totalTestAmount), 0);
+		const totalReceivedAmount = table.reduce((s, r) => s + money(r.totalAmount || money(r.totalExtra) + money(r.totalTestAmount)), 0);
+		const totalCompletedCases = pivot?.grandTotal ?? 0;
 
-	// default: all labs EXCEPT “Vignash Lab”
+		return {
+			totalCompletedCases,
+			totalTravelAmount,
+			totalTestAmount,
+			totalReceivedAmount,
+		};
+	}, [table, pivot]);
+
+	const [cards, setCards] = useState<SummaryCards>(initialData?.cards ?? fallbackCards);
+
+	useEffect(() => {
+		if (!initialData?.cards) {
+			setCards(fallbackCards);
+		}
+	}, [fallbackCards, initialData?.cards]);
+
+	const [pivotLabOpen, setPivotLabOpen] = useState(false);
+	const [pivotLabIds, setPivotLabIds] = useState<string[]>([]);
+
 	useEffect(() => {
 		if (!labs?.length) return;
 		const deselectName = 'vignash lab';
@@ -117,7 +190,6 @@ export default function AccountsReportClient({
 		else setPivotLabIds([]);
 	}
 
-	// ---------- DETAIL MODAL ----------
 	type DetailRow = {
 		id: string;
 		apptAt: string;
@@ -129,15 +201,21 @@ export default function AccountsReportClient({
 		visitType: string | null;
 		serviceType: string | null;
 		extraChargeRs: number | null;
+		testAmountRs: number | null;
+		totalAmountRs: number | null;
 	};
+
 	const [detailOpen, setDetailOpen] = useState(false);
 	const [detailTitle, setDetailTitle] = useState('');
 	const [detailRows, setDetailRows] = useState<DetailRow[]>([]);
 	const [detailLoading, setDetailLoading] = useState(false);
 	const [detailErr, setDetailErr] = useState<string | null>(null);
+
 	type DetailSortKey =
 		| 'apptAt' | 'labName' | 'tpaName' | 'insuranceNickName'
-		| 'clientName' | 'status' | 'visitType' | 'serviceType' | 'extraChargeRs';
+		| 'clientName' | 'status' | 'visitType' | 'serviceType'
+		| 'extraChargeRs' | 'testAmountRs' | 'totalAmountRs';
+
 	const [dSortKey, setDSortKey] = useState<DetailSortKey>('apptAt');
 	const [dSortDir, setDSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -153,41 +231,84 @@ export default function AccountsReportClient({
 		return arr;
 	}, [detailRows, dSortKey, dSortDir]);
 
-	function toggleDSort(k: DetailSortKey) {
-		if (k === dSortKey) setDSortDir(dSortDir === 'asc' ? 'desc' : 'asc');
-		else { setDSortKey(k); setDSortDir('asc'); }
-	}
-
 	const chartTitle = useMemo(() => {
 		const curLabId = focused ? (focused.labId || '') : (labId || '');
 		const curVenId = focused ? (focused.vendorId || '') : (vendorId || '');
 		const labLbl = curLabId ? (labs.find(l => l.id === curLabId)?.name ?? 'Selected Lab') : 'All Labs';
 		const tpaLbl = curVenId ? (vendors.find(v => v.id === curVenId)?.tpaName ?? 'Selected TPA') : 'All TPA';
-		return `Amount Trend (${labLbl}, ${tpaLbl})`;
+		return `Amount Trend (Travel + Test) (${labLbl}, ${tpaLbl})`;
 	}, [focused, labId, vendorId, labs, vendors]);
 
 	function applyPreset(p: PresetKey) {
 		const now = new Date();
-		let f: Date; let t: Date;
+		let f: Date;
+		let t: Date;
+
 		switch (p) {
-			case 'today': f = startOfToday(); t = endOfToday(); break;
-			case 'yesterday': f = startOfToday(); f.setDate(f.getDate() - 1); t = endOfToday(); t.setDate(t.getDate() - 1); break;
-			case 'prev-week': { const s = startOfWeekMonday(now); f = new Date(s); f.setDate(s.getDate() - 7); t = endOfWeekFromStart(f); break; }
-			case 'prev-7': t = endOfToday(); f = new Date(t); f.setDate(t.getDate() - 6); f.setHours(0, 0, 0, 0); break;
-			case 'prev-30': t = endOfToday(); f = new Date(t); f.setDate(t.getDate() - 29); f.setHours(0, 0, 0, 0); break;
-			case 'this-month': { const y = now.getFullYear(), m = now.getMonth(); f = new Date(y, m, 1, 0, 0, 0, 0); t = new Date(y, m + 1, 0, 23, 59, 59, 999); break; }
-			case 'prev-month': { const y = now.getFullYear(), m = now.getMonth(); f = new Date(y, m - 1, 1, 0, 0, 0, 0); t = new Date(y, m, 0, 23, 59, 59, 999); break; }
-			case 'prev-3m': { const y = now.getFullYear(), m = now.getMonth(); f = new Date(y, m - 3, 1, 0, 0, 0, 0); t = new Date(y, m, 0, 23, 59, 59, 999); break; }
-			case 'prev-12m': { const y = now.getFullYear(), m = now.getMonth(); f = new Date(y, m - 12, 1, 0, 0, 0, 0); t = new Date(y, m, 0, 23, 59, 59, 999); break; }
+			case 'today':
+				f = startOfToday();
+				t = endOfToday();
+				break;
+			case 'yesterday':
+				f = startOfToday();
+				f.setDate(f.getDate() - 1);
+				t = endOfToday();
+				t.setDate(t.getDate() - 1);
+				break;
+			case 'prev-week': {
+				const s = startOfWeekMonday(now);
+				f = new Date(s);
+				f.setDate(s.getDate() - 7);
+				t = endOfWeekFromStart(f);
+				break;
+			}
+			case 'prev-7':
+				t = endOfToday();
+				f = new Date(t);
+				f.setDate(t.getDate() - 6);
+				f.setHours(0, 0, 0, 0);
+				break;
+			case 'prev-30':
+				t = endOfToday();
+				f = new Date(t);
+				f.setDate(t.getDate() - 29);
+				f.setHours(0, 0, 0, 0);
+				break;
+			case 'this-month': {
+				const y = now.getFullYear(), m = now.getMonth();
+				f = new Date(y, m, 1, 0, 0, 0, 0);
+				t = new Date(y, m + 1, 0, 23, 59, 59, 999);
+				break;
+			}
+			case 'prev-month': {
+				const y = now.getFullYear(), m = now.getMonth();
+				f = new Date(y, m - 1, 1, 0, 0, 0, 0);
+				t = new Date(y, m, 0, 23, 59, 59, 999);
+				break;
+			}
+			case 'prev-3m': {
+				const y = now.getFullYear(), m = now.getMonth();
+				f = new Date(y, m - 3, 1, 0, 0, 0, 0);
+				t = new Date(y, m, 0, 23, 59, 59, 999);
+				break;
+			}
+			case 'prev-12m': {
+				const y = now.getFullYear(), m = now.getMonth();
+				f = new Date(y, m - 12, 1, 0, 0, 0, 0);
+				t = new Date(y, m, 0, 23, 59, 59, 999);
+				break;
+			}
 		}
+
 		setPreset(p);
 		setFrom(toYmd(f));
 		setTo(toYmd(t));
 	}
 
-	// Loader (summary/trend use single lab/vendor; pivot also receives multi-lab list)
 	async function load() {
-		setLoading(true); setErr(null);
+		setLoading(true);
+		setErr(null);
+
 		try {
 			const effLabId = focused ? (focused.labId || null) : (labId || null);
 			const effVenId = focused ? (focused.vendorId || null) : (vendorId || null);
@@ -200,44 +321,76 @@ export default function AccountsReportClient({
 			const data = await res.json();
 			if (!res.ok) throw new Error(data?.error || 'Failed to load');
 
-			setTable(Array.isArray(data.table) ? data.table : []);
-			setTrend(Array.isArray(data.trend) ? data.trend : []);
-			setPivot(data.pivot ?? null);
+			const nextTable = Array.isArray(data.table) ? data.table : [];
+			const nextTrend = Array.isArray(data.trend) ? data.trend : [];
+			const nextPivot = data.pivot ?? null;
+
+			setTable(nextTable);
+			setTrend(nextTrend);
+			setPivot(nextPivot);
+
+			const nextCards: SummaryCards = data.cards ?? {
+				totalCompletedCases: nextPivot?.grandTotal ?? 0,
+				totalTravelAmount: nextTable.reduce((s: number, r: TableRow) => s + money(r.totalExtra), 0),
+				totalTestAmount: nextTable.reduce((s: number, r: TableRow) => s + money(r.totalTestAmount), 0),
+				totalReceivedAmount: nextTable.reduce((s: number, r: TableRow) => s + money(r.totalAmount || money(r.totalExtra) + money(r.totalTestAmount)), 0),
+			};
+			setCards(nextCards);
 		} catch (e: any) {
 			setErr(e?.message || 'Network error');
-			setTable([]); setTrend([]); setPivot(null);
-		} finally { setLoading(false); }
+			setTable([]);
+			setTrend([]);
+			setPivot(null);
+			setCards({
+				totalCompletedCases: 0,
+				totalTravelAmount: 0,
+				totalTestAmount: 0,
+				totalReceivedAmount: 0,
+			});
+		} finally {
+			setLoading(false);
+		}
 	}
-	useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [labId, vendorId, from, to, focused, pivotLabIds]);
 
-	function focusRow(r: TableRow) { setFocused({ labId: r.labId ?? null, vendorId: r.vendorId ?? null }); }
-	function clearFocus() { setFocused(null); }
+	useEffect(() => {
+		load();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [labId, vendorId, from, to, focused, pivotLabIds]);
 
-	// ---------- headers for pivot ----------
+	function focusRow(r: TableRow) {
+		setFocused({ labId: r.labId ?? null, vendorId: r.vendorId ?? null });
+	}
+	function clearFocus() {
+		setFocused(null);
+	}
+
 	const visitLabel = (v: string) => (v === 'HOME' ? 'Home Visit' : v === 'CENTER' ? 'Center Visit' : v);
+
 	const pivotKeysDetailed: string[] = useMemo(() => {
 		if (!pivot) return [];
 		const keys: string[] = [];
-		for (const st of pivot.serviceTypes) for (const vt of pivot.visits) {
-			keys.push(`${st}__${vt}`);
+		for (const st of pivot.serviceTypes) {
+			for (const vt of pivot.visits) {
+				keys.push(`${st}__${vt}`);
+			}
 		}
 		return keys;
 	}, [pivot]);
 
-	// ---------- DETAIL MODAL loader (with reportCompletedOnly=true for pivot clicks) ----------
 	async function openDetails(title: string, filters: {
 		labId?: string | null;
 		vendorId?: string | null;
 		serviceType?: string | null;
 		visitType?: string | null;
 		extraMissing?: boolean;
-		reportCompletedOnly?: boolean; // default true for pivot
+		reportCompletedOnly?: boolean;
 	}) {
 		setDetailTitle(title);
 		setDetailOpen(true);
 		setDetailLoading(true);
 		setDetailErr(null);
 		setDetailRows([]);
+
 		try {
 			const res = await fetch('/api/reports/accounts/details', {
 				method: 'POST',
@@ -249,10 +402,11 @@ export default function AccountsReportClient({
 			setDetailRows(Array.isArray(data?.rows) ? data.rows : []);
 		} catch (e: any) {
 			setDetailErr(e?.message || 'Network error');
-		} finally { setDetailLoading(false); }
+		} finally {
+			setDetailLoading(false);
+		}
 	}
 
-	// ---------- Download helpers ----------
 	function toDelimited(rows: any[], headers: { key: string; label: string }[], sep: string) {
 		const escape = (v: any) => {
 			const s = v == null ? '' : String(v);
@@ -265,13 +419,19 @@ export default function AccountsReportClient({
 		const lines = rows.map(r => headers.map(h => escape((r as any)[h.key])).join(sep));
 		return [header, ...lines].join('\r\n');
 	}
+
 	function downloadBlob(data: string, mime: string, filename: string) {
 		const blob = new Blob([data], { type: mime });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement('a');
-		a.href = url; a.download = filename; document.body.appendChild(a);
+		a.href = url;
+		a.download = filename;
+		document.body.appendChild(a);
 		a.click();
-		setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+		setTimeout(() => {
+			URL.revokeObjectURL(url);
+			a.remove();
+		}, 0);
 	}
 
 	async function exportAllMissingCSV() {
@@ -296,17 +456,21 @@ export default function AccountsReportClient({
 				{ key: 'status', label: 'Status' },
 				{ key: 'visitType', label: 'Visit Type' },
 				{ key: 'serviceType', label: 'Service Type' },
-				{ key: 'extraChargeRs', label: 'Extra Amount' },
+				{ key: 'extraChargeRs', label: 'Travel Amount' },
+				{ key: 'testAmountRs', label: 'Test Amount' },
+				{ key: 'totalAmountRs', label: 'Total Amount' },
 			];
 			const normalized = rows.map((r: any) => ({
 				...r,
 				apptAt: new Date(r.apptAt).toLocaleDateString(),
 				extraChargeRs: r.extraChargeRs != null ? r.extraChargeRs : '',
+				testAmountRs: r.testAmountRs != null ? r.testAmountRs : '',
+				totalAmountRs: r.totalAmountRs != null ? r.totalAmountRs : (money(r.extraChargeRs) + money(r.testAmountRs)),
 			}));
 			const csv = toDelimited(normalized, headers, ',');
 			downloadBlob(csv, 'text/csv;charset=utf-8', 'missing-extra-appointments.csv');
-		} catch (e) {
-			alert((e as any)?.message || 'Failed to export CSV');
+		} catch (e: any) {
+			alert(e?.message || 'Failed to export CSV');
 		}
 	}
 
@@ -320,34 +484,45 @@ export default function AccountsReportClient({
 			{ key: 'status', label: 'Status' },
 			{ key: 'visitType', label: 'Visit Type' },
 			{ key: 'serviceType', label: 'Service Type' },
-			{ key: 'extraChargeRs', label: 'Extra Amount' },
+			{ key: 'extraChargeRs', label: 'Travel Amount' },
+			{ key: 'testAmountRs', label: 'Test Amount' },
+			{ key: 'totalAmountRs', label: 'Total Amount' },
 		];
 		const rows = sortedDetailRows.map(r => ({
 			...r,
 			apptAt: new Date(r.apptAt).toLocaleDateString(),
 			extraChargeRs: r.extraChargeRs != null ? r.extraChargeRs : '',
+			testAmountRs: r.testAmountRs != null ? r.testAmountRs : '',
+			totalAmountRs: r.totalAmountRs != null ? r.totalAmountRs : (money(r.extraChargeRs) + money(r.testAmountRs)),
 		}));
 		const csv = toDelimited(rows, headers, ',');
 		downloadBlob(csv, 'text/csv;charset=utf-8', 'appointments.csv');
 	}
 
-	const overallMissingCount = useMemo(() => table.reduce((s, r) => s + (r.missingExtraCount || 0), 0), [table]);
+	const overallMissingCount = useMemo(
+		() => table.reduce((s, r) => s + (r.missingExtraCount || 0), 0),
+		[table]
+	);
 
-	// ====== SUMMARY TABLE SORTING ======
-	type SummarySortKey = 'tpa' | 'lab' | 'amount' | 'missing';
+	type SummarySortKey = 'tpa' | 'lab' | 'travel' | 'test' | 'total' | 'missing';
 	const [sSortKey, setSSortKey] = useState<SummarySortKey>('tpa');
 	const [sSortDir, setSSortDir] = useState<'asc' | 'desc'>('asc');
 
 	function toggleSummarySort(k: SummarySortKey) {
 		if (k === sSortKey) setSSortDir(prev => (prev === 'asc' ? 'desc' : 'asc'));
-		else { setSSortKey(k); setSSortDir('asc'); }
+		else {
+			setSSortKey(k);
+			setSSortDir('asc');
+		}
 	}
 
 	const sortedTable: TableRow[] = useMemo(() => {
 		const arr = [...table];
 		const safeStr = (v: string | null | undefined) => (v ?? '').toString().toLowerCase();
+
 		arr.sort((a, b) => {
 			let cmp = 0;
+
 			if (sSortKey === 'tpa') {
 				const av = safeStr(a.tpaNickName ?? a.tpaName);
 				const bv = safeStr(b.tpaNickName ?? b.tpaName);
@@ -356,25 +531,43 @@ export default function AccountsReportClient({
 				const av = safeStr(a.labNickName ?? a.labName);
 				const bv = safeStr(b.labNickName ?? b.labName);
 				cmp = av > bv ? 1 : av < bv ? -1 : 0;
-			} else if (sSortKey === 'amount') {
-				const av = a.totalExtra ?? 0;
-				const bv = b.totalExtra ?? 0;
-				cmp = av - bv;
+			} else if (sSortKey === 'travel') {
+				cmp = money(a.totalExtra) - money(b.totalExtra);
+			} else if (sSortKey === 'test') {
+				cmp = money(a.totalTestAmount) - money(b.totalTestAmount);
+			} else if (sSortKey === 'total') {
+				cmp = money(a.totalAmount) - money(b.totalAmount);
 			} else if (sSortKey === 'missing') {
-				const av = a.missingExtraCount ?? 0;
-				const bv = b.missingExtraCount ?? 0;
-				cmp = av - bv;
+				cmp = money(a.missingExtraCount) - money(b.missingExtraCount);
 			}
+
 			return sSortDir === 'asc' ? cmp : -cmp;
 		});
 		return arr;
 	}, [table, sSortKey, sSortDir]);
 
-	const SummarySortHdr = ({ k, align = 'left', children }: { k: SummarySortKey; align?: 'left' | 'right'; children: React.ReactNode }) => {
+	const summaryTotals = useMemo(() => {
+		return {
+			travel: sortedTable.reduce((s, r) => s + money(r.totalExtra), 0),
+			test: sortedTable.reduce((s, r) => s + money(r.totalTestAmount), 0),
+			total: sortedTable.reduce((s, r) => s + money(r.totalAmount || money(r.totalExtra) + money(r.totalTestAmount)), 0),
+			missing: sortedTable.reduce((s, r) => s + money(r.missingExtraCount), 0),
+		};
+	}, [sortedTable]);
+
+	const SummarySortHdr = ({
+		k,
+		align = 'left',
+		children,
+	}: {
+		k: SummarySortKey;
+		align?: 'left' | 'right';
+		children: React.ReactNode;
+	}) => {
 		const active = sSortKey === k;
 		return (
 			<th
-				className={`px-3 py-2 text-${align} font-semibold cursor-pointer select-none`}
+				className={`px-3 py-2 text-${align} font-semibold cursor-pointer select-none whitespace-nowrap`}
 				onClick={() => toggleSummarySort(k)}
 				title="Sort"
 			>
@@ -386,12 +579,18 @@ export default function AccountsReportClient({
 		);
 	};
 
-	const SortHdr = ({ k, children }: { k: any; children: React.ReactNode }) => {
+	const SortHdr = ({ k, children }: { k: DetailSortKey; children: React.ReactNode }) => {
 		const active = dSortKey === k;
 		return (
 			<th
 				className="px-3 py-2 text-left text-sm font-semibold text-gray-700 cursor-pointer select-none whitespace-nowrap"
-				onClick={() => { if (k === dSortKey) setDSortDir(dSortDir === 'asc' ? 'desc' : 'asc'); else { setDSortKey(k); setDSortDir('asc'); } }}
+				onClick={() => {
+					if (k === dSortKey) setDSortDir(dSortDir === 'asc' ? 'desc' : 'asc');
+					else {
+						setDSortKey(k);
+						setDSortDir('asc');
+					}
+				}}
 				title="Sort"
 			>
 				<div className="inline-flex items-center gap-1">
@@ -402,23 +601,21 @@ export default function AccountsReportClient({
 		);
 	};
 
-	// ====== EXPORT PNG/PDF (whole pivot, not just visible viewport) ======
 	const pivotRef = useRef<HTMLDivElement | null>(null);
 
 	async function withPivotExpanded<T>(fn: () => Promise<T>): Promise<T> {
 		if (!pivotRef.current) return fn();
-		// The scroll container we use in JSX below
+
 		const scroller = pivotRef.current.querySelector<HTMLElement>('[data-pivot-scroll]');
-		// Any sticky header rows
 		const stickies = Array.from(pivotRef.current.querySelectorAll<HTMLElement>('[data-sticky]'));
 
-		// Save inline styles to restore later
 		const restore: Array<[HTMLElement, Partial<CSSStyleDeclaration>]> = [];
 		if (scroller) {
 			restore.push([scroller, { maxHeight: scroller.style.maxHeight, overflowY: scroller.style.overflowY }]);
 			scroller.style.maxHeight = 'unset';
 			scroller.style.overflowY = 'visible';
 		}
+
 		stickies.forEach(el => {
 			restore.push([el, { position: el.style.position, top: el.style.top, zIndex: el.style.zIndex, background: el.style.background }]);
 			el.style.position = 'static';
@@ -427,13 +624,11 @@ export default function AccountsReportClient({
 			el.style.background = 'transparent';
 		});
 
-		// Wait a tick for layout to settle
 		await new Promise(r => setTimeout(r, 0));
 
 		try {
 			return await fn();
 		} finally {
-			// restore styles
 			restore.forEach(([el, st]) => {
 				if ('maxHeight' in st && st.maxHeight !== undefined) el.style.maxHeight = st.maxHeight as string;
 				if ('overflowY' in st && st.overflowY !== undefined) el.style.overflowY = st.overflowY as string;
@@ -454,13 +649,15 @@ export default function AccountsReportClient({
 				scale: 2,
 				useCORS: true,
 				backgroundColor: '#ffffff',
-				scrollY: -window.scrollY, // avoid offset
+				scrollY: -window.scrollY,
 			});
 			const dataUrl = canvas.toDataURL('image/png');
 			const a = document.createElement('a');
 			a.href = dataUrl;
 			a.download = `appointments-pivot-${from}_to_${to}.png`;
-			document.body.appendChild(a); a.click(); a.remove();
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
 		});
 	}
 
@@ -496,25 +693,19 @@ export default function AccountsReportClient({
 		});
 	}
 
-	// ---------- read accountId from URL and pass current filters to pivot ----------
 	const sp = useSearchParams();
 	const accountId = sp.get('accountId');
-	const selectedLabId = labId || null;
-	const selectedVendorId = vendorId || null;
 
 	return (
 		<div className="space-y-4">
-			{/* Header */}
 			<div className="rounded-xl border bg-white p-4 shadow-sm">
 				<h1 className="text-xl font-semibold">Reports → Accounts</h1>
-				<p className="text-sm text-gray-600 mt-1">Extra amount (Rs) summary &amp; daily trend.</p>
+				<p className="text-sm text-gray-600 mt-1">Travel amount, test amount, total received summary and daily trend.</p>
 			</div>
 
-			{/* Toolbar */}
 			<div className="-mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-white/60 bg-white/90">
 				<div className="rounded-none border-x-0 border-t border-b bg-white p-4 shadow-sm w-full">
 					<div className="flex flex-wrap items-end gap-3">
-						{/* Lab (single) */}
 						<div className="flex flex-col">
 							<label className="text-xs text-gray-600 mb-1">Lab</label>
 							<div className="inline-flex items-center gap-2">
@@ -526,7 +717,6 @@ export default function AccountsReportClient({
 							</div>
 						</div>
 
-						{/* TPA */}
 						<div className="flex flex-col">
 							<label className="text-xs text-gray-600 mb-1">TPA</label>
 							<div className="inline-flex items-center gap-2">
@@ -538,7 +728,6 @@ export default function AccountsReportClient({
 							</div>
 						</div>
 
-						{/* Date range */}
 						<div className="flex flex-col">
 							<label className="text-xs text-gray-600 mb-1">From</label>
 							<div className="inline-flex items-center gap-2">
@@ -546,12 +735,12 @@ export default function AccountsReportClient({
 								<input type="date" className="border rounded px-3 py-2" value={from} onChange={(e) => { setPreset(''); setFrom(e.target.value); }} />
 							</div>
 						</div>
+
 						<div className="flex flex-col">
 							<label className="text-xs text-gray-600 mb-1">To</label>
 							<input type="date" className="border rounded px-3 py-2" value={to} onChange={(e) => { setPreset(''); setTo(e.target.value); }} />
 						</div>
 
-						{/* Quick range */}
 						<div className="flex flex-col">
 							<label className="text-xs text-gray-600 mb-1">Quick range</label>
 							<select className="border rounded px-3 py-2 min-w-[220px]" value={preset} onChange={(e) => applyPreset(e.target.value as PresetKey)}>
@@ -576,20 +765,28 @@ export default function AccountsReportClient({
 				</div>
 			</div>
 
-			{/* PIVOT ON TOP OF SUMMARY CARD */}
-			{/* <ExtraOuterPivot
-				insuranceCompanyId={accountId || null}
-				labId={selectedLabId}
-				vendorId={selectedVendorId}
-			/> */}
-
-			{/* <OuterVsExtraMoM
-				accountId={null}
-				labId={labId || null}
-				vendorId={vendorId || null}
-				from={from}
-				to={to}
-			/> */}
+			<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+				<StatCard
+					title="Total Case Completed"
+					value={cards.totalCompletedCases.toLocaleString()}
+					tone="blue"
+				/>
+				<StatCard
+					title="Travel Amount Received"
+					value={formatMoney(cards.totalTravelAmount)}
+					tone="emerald"
+				/>
+				<StatCard
+					title="Test Amount Received"
+					value={formatMoney(cards.totalTestAmount)}
+					tone="amber"
+				/>
+				<StatCard
+					title="Total Amount Received"
+					value={formatMoney(cards.totalReceivedAmount)}
+					tone="violet"
+				/>
+			</div>
 
 			<VisitWithExtraMoM
 				accountId={accountId || null}
@@ -599,9 +796,7 @@ export default function AccountsReportClient({
 				to={to}
 			/>
 
-			{/* Table + Chart */}
 			<div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-				{/* Summary + table */}
 				<div className="rounded-xl border bg-white p-4 shadow-sm lg:col-span-1">
 					<div className="flex items-center justify-between mb-3">
 						<h3 className="font-semibold">Extra Amount Summary</h3>
@@ -615,22 +810,29 @@ export default function AccountsReportClient({
 							Download
 						</button>
 					</div>
+
 					<div className="overflow-x-auto">
-						<div className="border rounded max-h-60 overflow-y-auto">
+						<div className="border rounded max-h-72 overflow-y-auto">
 							<table className="min-w-full text-sm">
 								<thead className="bg-gray-50 sticky top-0 z-10">
 									<tr>
 										<SummarySortHdr k="tpa">TPA</SummarySortHdr>
 										<SummarySortHdr k="lab">Lab</SummarySortHdr>
-										<SummarySortHdr k="amount" align="right">Amount (₹)</SummarySortHdr>
+										<SummarySortHdr k="travel" align="right">Travel (₹)</SummarySortHdr>
+										<SummarySortHdr k="test" align="right">Test (₹)</SummarySortHdr>
+										<SummarySortHdr k="total" align="right">Total (₹)</SummarySortHdr>
 										<SummarySortHdr k="missing" align="right">Missing Cnt</SummarySortHdr>
 									</tr>
 								</thead>
 								<tbody>
 									{loading ? (
-										<tr><td className="px-3 py-4 text-center" colSpan={4}>Loading…</td></tr>
+										<tr>
+											<td className="px-3 py-4 text-center" colSpan={6}>Loading…</td>
+										</tr>
 									) : sortedTable.length === 0 ? (
-										<tr><td className="px-3 py-4 text-center text-gray-500" colSpan={4}>No data</td></tr>
+										<tr>
+											<td className="px-3 py-4 text-center text-gray-500" colSpan={6}>No data</td>
+										</tr>
 									) : (
 										sortedTable.map((r, idx) => (
 											<tr
@@ -643,12 +845,14 @@ export default function AccountsReportClient({
 												<td className="px-3 py-2 cursor-pointer" onClick={() => focusRow(r)} title="Focus trend on this TPA/Lab">
 													{r.labNickName ?? r.labName}
 												</td>
-												<td className="px-3 py-2 text-right">₹{(r.totalExtra ?? 0).toLocaleString()}</td>
+												<td className="px-3 py-2 text-right">{formatMoney(r.totalExtra)}</td>
+												<td className="px-3 py-2 text-right">{formatMoney(r.totalTestAmount)}</td>
+												<td className="px-3 py-2 text-right font-medium">{formatMoney(r.totalAmount || (money(r.totalExtra) + money(r.totalTestAmount)))}</td>
 												<td
 													className="px-3 py-2 text-right cursor-pointer hover:underline"
 													title="Show details without extra amount"
 													onClick={() => openDetails(
-														`${r.tpaNickName ?? r.tpaName} → ${r.labNickName ?? r.labName} • No Extra Amount`,
+														`${r.tpaNickName ?? r.tpaName} → ${r.labNickName ?? r.labName} • No Travel Amount`,
 														{ vendorId: r.vendorId, labId: r.labId, extraMissing: true }
 													)}
 												>
@@ -658,20 +862,37 @@ export default function AccountsReportClient({
 										))
 									)}
 								</tbody>
+
+								{sortedTable.length > 0 && (
+									<tfoot className="bg-gray-50 sticky bottom-0">
+										<tr className="border-t">
+											<td className="px-3 py-2 font-semibold">Total</td>
+											<td className="px-3 py-2" />
+											<td className="px-3 py-2 text-right font-semibold">{formatMoney(summaryTotals.travel)}</td>
+											<td className="px-3 py-2 text-right font-semibold">{formatMoney(summaryTotals.test)}</td>
+											<td className="px-3 py-2 text-right font-semibold">{formatMoney(summaryTotals.total)}</td>
+											<td className="px-3 py-2 text-right font-semibold">{summaryTotals.missing.toLocaleString()}</td>
+										</tr>
+									</tfoot>
+								)}
 							</table>
 						</div>
 					</div>
+
 					<div className="mt-2 text-xs text-gray-800 mb-3">
 						Overall Missing: <span className="font-semibold">{overallMissingCount.toLocaleString()}</span>
 					</div>
 				</div>
 
-				{/* Trend */}
 				<div className="rounded-xl border bg-white p-4 shadow-sm lg:col-span-2">
 					<div className="flex items-center justify-between mb-3">
 						<h3 className="text-base font-semibold">{chartTitle}</h3>
 						{focused && (
-							<button type="button" onClick={clearFocus} className="inline-flex items-center gap-1.5 text-sm px-2.5 py-1.5 border rounded hover:bg-gray-50">
+							<button
+								type="button"
+								onClick={clearFocus}
+								className="inline-flex items-center gap-1.5 text-sm px-2.5 py-1.5 border rounded hover:bg-gray-50"
+							>
 								<Undo2 className="h-4 w-4" />
 								Back to filtered trend
 							</button>
@@ -685,20 +906,28 @@ export default function AccountsReportClient({
 								<YAxis allowDecimals={false} />
 								<Tooltip formatter={(v: any) => `₹${Number(v).toLocaleString()}`} />
 								<Legend />
-								<Area type="monotone" dataKey="amount" name="Amount" stroke="#0EA5E9" fill="#0EA5E9" fillOpacity={0.2} fontSize={8} />
+								<Area
+									type="monotone"
+									dataKey="amount"
+									name="Amount"
+									stroke="#0EA5E9"
+									fill="#0EA5E9"
+									fillOpacity={0.2}
+									fontSize={8}
+								/>
 							</AreaChart>
 						</ResponsiveContainer>
 					</div>
 				</div>
 			</div>
 
-			{/* ---------- PIVOT (only Report Completed) ---------- */}
 			<div className="rounded-xl border bg-white p-4 shadow-sm" ref={pivotRef}>
 				<div className="flex items-center justify-between mb-3">
-					<h3 className="text-base font-semibold">Appointments Informations <span className="text-gray-500 text-sm">(Report Completed)</span></h3>
+					<h3 className="text-base font-semibold">
+						Appointments Informations <span className="text-gray-500 text-sm">(Report Completed)</span>
+					</h3>
 
 					<div className="flex items-center gap-2">
-						{/* Export buttons */}
 						<button
 							type="button"
 							onClick={exportPivotPNG}
@@ -718,7 +947,6 @@ export default function AccountsReportClient({
 							PDF
 						</button>
 
-						{/* Pivot Lab multi-select */}
 						<div className="relative">
 							<button
 								type="button"
@@ -767,7 +995,6 @@ export default function AccountsReportClient({
 					<div className="text-sm text-gray-500">No data</div>
 				) : (
 					<div className="w-full overflow-x-auto">
-						{/* NOTE: this is the vertical scroller we temporarily disable during export */}
 						<div className="max-h-[520px] overflow-y-auto border rounded" data-pivot-scroll>
 							<table className="min-w-[1200px] text-sm">
 								<thead className="bg-gray-50 sticky top-0 z-10" data-sticky>
@@ -788,14 +1015,15 @@ export default function AccountsReportClient({
 								</thead>
 								<tbody>
 									{pivot.rows.length === 0 ? (
-										<tr><td colSpan={5 + pivotKeysDetailed.length} className="px-3 py-4 text-center text-gray-500">No data</td></tr>
+										<tr>
+											<td colSpan={5 + pivotKeysDetailed.length} className="px-3 py-4 text-center text-gray-500">No data</td>
+										</tr>
 									) : (
 										pivot.rows.map((r, idx) => (
 											<tr key={`${r.vendorId ?? 'all'}-${r.labId ?? 'all'}-${idx}`} className="border-t hover:bg-gray-50">
 												<td className="px-3 py-2">{r.tpaName}</td>
 												<td className="px-3 py-2">{r.labName}</td>
 
-												{/* Local (clickable) */}
 												<td
 													className="px-3 py-2 text-right cursor-pointer hover:underline"
 													title="Show details"
@@ -806,7 +1034,6 @@ export default function AccountsReportClient({
 													{r.localTotal.toLocaleString()}
 												</td>
 
-												{/* Outer (clickable) */}
 												<td
 													className="px-3 py-2 text-right cursor-pointer hover:underline"
 													title="Show details"
@@ -817,7 +1044,6 @@ export default function AccountsReportClient({
 													{r.outerTotal.toLocaleString()}
 												</td>
 
-												{/* Row total (clickable) */}
 												<td
 													className="px-3 py-2 text-right font-medium cursor-pointer hover:underline"
 													title="Show details"
@@ -828,7 +1054,6 @@ export default function AccountsReportClient({
 													{r.rowTotal.toLocaleString()}
 												</td>
 
-												{/* Detailed cells */}
 												{pivotKeysDetailed.map((k) => {
 													const [st, vt] = k.split('__');
 													return (
@@ -849,7 +1074,7 @@ export default function AccountsReportClient({
 									)}
 								</tbody>
 								{pivot.rows.length > 0 && (
-									<tfoot data-sticky /* also disable stickiness on export */>
+									<tfoot data-sticky>
 										<tr className="border-t bg-gray-50">
 											<td className="px-3 py-2 font-semibold">Over all Cases</td>
 											<td className="px-3 py-2" />
@@ -870,12 +1095,11 @@ export default function AccountsReportClient({
 				)}
 			</div>
 
-			{/* ---------- DETAIL MODAL ---------- */}
 			{detailOpen && (
 				<div className="fixed inset-0 z-50">
 					<div className="absolute inset-0 bg-black/40" onClick={() => setDetailOpen(false)} />
 					<div className="absolute inset-0 flex items-center justify-center p-4">
-						<div className="w-full max-w-6xl rounded-2xl bg-white shadow-xl border">
+						<div className="w-full max-w-7xl rounded-2xl bg-white shadow-xl border">
 							<div className="flex items-center justify-between px-4 py-3 border-b">
 								<div className="font-semibold">Appointments — {detailTitle}</div>
 								<div className="flex items-center gap-2">
@@ -896,19 +1120,21 @@ export default function AccountsReportClient({
 									<div className="text-sm text-gray-500">No appointments found for this slice.</div>
 								) : (
 									<div className="overflow-x-auto max-h-[60vh] border rounded">
-										<table className="min-w-[1200px] text-sm">
+										<table className="min-w-[1500px] text-sm">
 											<thead className="bg-gray-50 sticky top-0 z-10">
 												<tr>
 													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 w-16">S.No</th>
-													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">App. Date</th>
-													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">TPA Name</th>
-													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Lab Name</th>
-													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Insurance Nick name</th>
-													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Client Name</th>
-													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Status</th>
-													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Visit Type</th>
-													<th className="px-3 py-2 text-left text-sm font-semibold text-gray-700">Service Type</th>
-													<th className="px-3 py-2 text-right text-sm font-semibold text-gray-700">Extra Amount</th>
+													<SortHdr k="apptAt">App. Date</SortHdr>
+													<SortHdr k="tpaName">TPA Name</SortHdr>
+													<SortHdr k="labName">Lab Name</SortHdr>
+													<SortHdr k="insuranceNickName">Insurance Nick name</SortHdr>
+													<SortHdr k="clientName">Client Name</SortHdr>
+													<SortHdr k="status">Status</SortHdr>
+													<SortHdr k="visitType">Visit Type</SortHdr>
+													<SortHdr k="serviceType">Service Type</SortHdr>
+													<SortHdr k="extraChargeRs">Travel Amount</SortHdr>
+													<SortHdr k="testAmountRs">Test Amount</SortHdr>
+													<SortHdr k="totalAmountRs">Total Amount</SortHdr>
 												</tr>
 											</thead>
 											<tbody>
@@ -923,10 +1149,28 @@ export default function AccountsReportClient({
 														<td className="px-3 py-2">{r.status ?? ''}</td>
 														<td className="px-3 py-2">{r.visitType === 'HOME' ? 'Home' : r.visitType === 'CENTER' ? 'Center' : (r.visitType ?? '')}</td>
 														<td className="px-3 py-2">{r.serviceType ?? ''}</td>
-														<td className="px-3 py-2 text-right">{r.extraChargeRs != null ? `₹${Number(r.extraChargeRs).toLocaleString()}` : ''}</td>
+														<td className="px-3 py-2 text-right">{r.extraChargeRs != null ? `₹${money(r.extraChargeRs).toLocaleString()}` : ''}</td>
+														<td className="px-3 py-2 text-right">{r.testAmountRs != null ? `₹${money(r.testAmountRs).toLocaleString()}` : ''}</td>
+														<td className="px-3 py-2 text-right font-medium">
+															{`₹${money(r.totalAmountRs ?? (money(r.extraChargeRs) + money(r.testAmountRs))).toLocaleString()}`}
+														</td>
 													</tr>
 												))}
 											</tbody>
+											<tfoot className="bg-gray-50 sticky bottom-0">
+												<tr className="border-t">
+													<td colSpan={9} className="px-3 py-2 text-right font-semibold">Total</td>
+													<td className="px-3 py-2 text-right font-semibold">
+														₹{sortedDetailRows.reduce((s, r) => s + money(r.extraChargeRs), 0).toLocaleString()}
+													</td>
+													<td className="px-3 py-2 text-right font-semibold">
+														₹{sortedDetailRows.reduce((s, r) => s + money(r.testAmountRs), 0).toLocaleString()}
+													</td>
+													<td className="px-3 py-2 text-right font-semibold">
+														₹{sortedDetailRows.reduce((s, r) => s + money(r.totalAmountRs ?? (money(r.extraChargeRs) + money(r.testAmountRs))), 0).toLocaleString()}
+													</td>
+												</tr>
+											</tfoot>
 										</table>
 									</div>
 								)}
