@@ -31,7 +31,7 @@ type Appointment = {
 	age: number | null;
 	phone: string | null;
 
-	visitType: string | null; // CENTER | HOME
+	visitType: string | null;
 	location: string | null;
 	status: string | null;
 
@@ -39,13 +39,11 @@ type Appointment = {
 	paymentStatus: string | null;
 	extraChargeRs: number | null;
 
-	// ✅ NEW
 	testAmountRs?: number | null;
 
 	paymentDate: string | null;
 	createdAt: string;
 
-	// tests (should be returned by /api/appointments)
 	bloodTest?: 'FB' | 'B' | 'No' | null;
 	urineTest?: boolean | 'Yes' | 'No' | null;
 	ecg?: boolean | 'Yes' | 'No' | null;
@@ -122,39 +120,38 @@ function statusPdfStyle(s?: string | null): {
 
 	switch (key) {
 		case 'tbi':
-			return { fillColor: [243, 232, 255], textColor: [107, 33, 168] }; // purple-100 / purple-800
+			return { fillColor: [243, 232, 255], textColor: [107, 33, 168] };
 		case 'on hold':
 		case 'not responding':
-			return { fillColor: [254, 249, 195], textColor: [133, 77, 14] }; // yellow-100 / yellow-800
+			return { fillColor: [254, 249, 195], textColor: [133, 77, 14] };
 		case 'waiting for response':
-			return { fillColor: [243, 244, 246], textColor: [31, 41, 55] }; // gray-100 / gray-800
+			return { fillColor: [243, 244, 246], textColor: [31, 41, 55] };
 		case 'rescheduled':
-			return { fillColor: [254, 226, 226], textColor: [153, 27, 27] }; // red-100 / red-800
+			return { fillColor: [254, 226, 226], textColor: [153, 27, 27] };
 		case 'need confirmation':
-			return { fillColor: [252, 231, 243], textColor: [131, 24, 67] }; // pink-100 / pink-900
+			return { fillColor: [252, 231, 243], textColor: [131, 24, 67] };
 		case 'appointment confirmed':
 		case 'confirmed':
-			return { fillColor: [207, 250, 254], textColor: [21, 94, 117] }; // cyan-100 / cyan-800
+			return { fillColor: [207, 250, 254], textColor: [21, 94, 117] };
 		case 'sample collected':
-			return { fillColor: [255, 237, 213], textColor: [154, 52, 18] }; // orange-100 / orange-800
+			return { fillColor: [255, 237, 213], textColor: [154, 52, 18] };
 		case 'medical done':
-			return { fillColor: [219, 234, 254], textColor: [30, 64, 175] }; // blue-100 / blue-800
+			return { fillColor: [219, 234, 254], textColor: [30, 64, 175] };
 		case 'cancelled':
-			return { fillColor: [191, 219, 254], textColor: [30, 58, 138] }; // blue-200 / blue-900
+			return { fillColor: [191, 219, 254], textColor: [30, 58, 138] };
 		case 'report - inprogress':
 		case 'onprocess':
-			return { fillColor: [254, 240, 138], textColor: [17, 24, 39] }; // yellow-200 / near-black
+			return { fillColor: [254, 240, 138], textColor: [17, 24, 39] };
 		case 'report - completed':
 		case 'completed':
 		case 'report - submitted':
 		case 'submitted':
-			return { fillColor: [220, 252, 231], textColor: [22, 101, 52] }; // green-100 / green-800
+			return { fillColor: [220, 252, 231], textColor: [22, 101, 52] };
 		default:
-			return { fillColor: [243, 244, 246], textColor: [31, 41, 55] }; // gray-100 / gray-800
+			return { fillColor: [243, 244, 246], textColor: [31, 41, 55] };
 	}
 }
 
-/** Build daily trend counts from appointments; works for All Labs on first load */
 function buildTrend(
 	appts: Appointment[],
 	opts: { labId: string; from: string; to: string },
@@ -179,7 +176,6 @@ function buildTrend(
 		.map(([date, count]) => ({ date, count }));
 }
 
-/** Build a single code like "FB,U,ECG,TMT,MER" from the test fields */
 function formatTestCodes(a: Appointment): string {
 	const parts: string[] = [];
 	if (a.bloodTest === 'FB') parts.push('FB');
@@ -198,6 +194,13 @@ function formatTestCodes(a: Appointment): string {
 function money(n: any) {
 	const num = Number(n);
 	return Number.isFinite(num) ? num : 0;
+}
+
+function numberInputToNullable(value: string): number | null {
+	const v = value.trim();
+	if (v === '') return null;
+	const num = Number(v);
+	return Number.isFinite(num) ? num : null;
 }
 
 /* ========= Small UI bits ========= */
@@ -234,12 +237,11 @@ export default function AppointmentsPage() {
 	const [labs, setLabs] = useState<Lab[]>([]);
 	const [insurers, setInsurers] = useState<Insurance[]>([]);
 
-	// ---- form state
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [apptAt, setApptAt] = useState<string>(toDateLocalValue(new Date()));
 	const [labId, setLabId] = useState<string>('');
-	const [vendorId, setVendorId] = useState<string>(''); // optional
-	const [insuranceCompanyId, setInsuranceCompanyId] = useState<string>(''); // optional
+	const [vendorId, setVendorId] = useState<string>('');
+	const [insuranceCompanyId, setInsuranceCompanyId] = useState<string>('');
 
 	const [clientName, setClientName] = useState('');
 	const [clientRef, setClientRef] = useState('');
@@ -253,15 +255,11 @@ export default function AppointmentsPage() {
 	const [serviceType, setServiceType] = useState('');
 	const [paymentStatus, setPaymentStatus] = useState<string>('TBI');
 	const [extraChargeRs, setExtraChargeRs] = useState<string>('');
-
-	// ✅ NEW
 	const [testAmountRs, setTestAmountRs] = useState<string>('');
-
 	const [paymentDate, setPaymentDate] = useState<string>('');
 
 	const extraRef = useRef<HTMLInputElement | null>(null);
 
-	// Tests dialog state
 	const [testsOpen, setTestsOpen] = useState(false);
 	const [bloodTest, setBloodTest] = useState<'FB' | 'B' | 'No'>('No');
 	const [urineTest, setUrineTest] = useState<'Yes' | 'No'>('No');
@@ -271,28 +269,23 @@ export default function AppointmentsPage() {
 
 	const [pendingCreate, setPendingCreate] = useState(false);
 
-	// messages
 	const [formOk, setFormOk] = useState<string | null>(null);
 	const [listErr, setListErr] = useState<string | null>(null);
 
-	// REQUIRED-FIELDS MODAL
 	const [reqOpen, setReqOpen] = useState(false);
 	const [reqList, setReqList] = useState<string[]>([]);
 
-	// filters
 	const { from: monthFrom, to: monthTo } = getCurrentMonthBounds();
 	const [q, setQ] = useState('');
 	const [fDateFrom, setFDateFrom] = useState<string>(monthFrom);
 	const [fDateTo, setFDateTo] = useState<string>(monthTo);
 	const [fStatus, setFStatus] = useState<string>('');
-	const [fLabId, setFLabId] = useState<string>(''); // empty = All Labs
+	const [fLabId, setFLabId] = useState<string>('');
 
-	// ✅ Filters
-	const [fTpaId, setFTpaId] = useState<string>(''); // TPA
-	const [fVisitType, setFVisitType] = useState<string>(''); // Visit Type
-	const [fServiceType, setFServiceType] = useState<string>(''); // ServiceType filter
+	const [fTpaId, setFTpaId] = useState<string>('');
+	const [fVisitType, setFVisitType] = useState<string>('');
+	const [fServiceType, setFServiceType] = useState<string>('');
 
-	// sorting
 	type TableSortKey =
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
 		| 'mobile' | 'visit' | 'location' | 'status'
@@ -303,7 +296,6 @@ export default function AppointmentsPage() {
 	const [sortKey, setSortKey] = useState<TableSortKey>('date');
 	const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-	// columns
 	type ColKey =
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
 		| 'status' | 'visit' | 'location'
@@ -338,20 +330,25 @@ export default function AppointmentsPage() {
 		[visibleCols],
 	);
 
-	// dropdowns
 	const [colsOpen, setColsOpen] = useState(false);
 	const [rangeOpen, setRangeOpen] = useState(false);
 	const colsRef = useRef<HTMLDivElement | null>(null);
 	const rangeRef = useRef<HTMLDivElement | null>(null);
 
-	// row click = edit
 	const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
 	const suppressVendorResetRef = useRef(false);
 
-	// delete modal
 	const [delOpen, setDelOpen] = useState(false);
 	const [delLoading, setDelLoading] = useState(false);
 	const [delErr, setDelErr] = useState<string | null>(null);
+
+	type InlineAmountField = 'extraChargeRs' | 'testAmountRs';
+	const [inlineEdit, setInlineEdit] = useState<{
+		rowId: string;
+		field: InlineAmountField;
+		value: string;
+	} | null>(null);
+	const [inlineSaving, setInlineSaving] = useState(false);
 
 	useEffect(() => {
 		function onDoc(e: MouseEvent) {
@@ -366,7 +363,8 @@ export default function AppointmentsPage() {
 	const toggleCol = (k: ColKey) => setVisibleCols(v => ({ ...v, [k]: !v[k] }));
 
 	async function load() {
-		setLoading(true); setListErr(null);
+		setLoading(true);
+		setListErr(null);
 		try {
 			const [rVendors, rLabs, rAppts, rIns] = await Promise.all([
 				fetch('/api/vendors', { cache: 'no-store' }),
@@ -391,12 +389,16 @@ export default function AppointmentsPage() {
 			setInsurers(Array.isArray(insJson) ? insJson : []);
 		} catch (e: any) {
 			setListErr(e?.message || 'Network error');
-			setVendors([]); setLabs([]); setRows([]); setInsurers([]);
-		} finally { setLoading(false); }
+			setVendors([]);
+			setLabs([]);
+			setRows([]);
+			setInsurers([]);
+		} finally {
+			setLoading(false);
+		}
 	}
 	useEffect(() => { load(); }, []);
 
-	// clear vendor only on user lab change
 	useEffect(() => {
 		if (suppressVendorResetRef.current) {
 			suppressVendorResetRef.current = false;
@@ -405,19 +407,21 @@ export default function AppointmentsPage() {
 		setVendorId('');
 	}, [labId]);
 
-	// focus Extra when Outer and empty
 	useEffect(() => {
-		const isOuter = (serviceType || '').trim().toLowerCase() === 'outer';
+		const isOuterSvc = (serviceType || '').trim().toLowerCase() === 'outer';
 		const extraEmpty = !extraChargeRs || Number(extraChargeRs) <= 0;
-		if (isOuter && extraEmpty) setTimeout(() => extraRef.current?.focus(), 0);
+		if (isOuterSvc && extraEmpty) setTimeout(() => extraRef.current?.focus(), 0);
 	}, [serviceType, extraChargeRs]);
 
 	function resetForm() {
 		setEditingId(null);
 		setSelectedRowId(null);
 		setApptAt(toDateLocalValue(new Date()));
-		setLabId(''); setVendorId(''); setInsuranceCompanyId('');
-		setClientName(''); setClientRef('');
+		setLabId('');
+		setVendorId('');
+		setInsuranceCompanyId('');
+		setClientName('');
+		setClientRef('');
 		setStatus('TBI');
 		setVisitType('CENTER');
 		setLocation('');
@@ -438,6 +442,7 @@ export default function AppointmentsPage() {
 		setApplicationForm('MER');
 
 		setPendingCreate(false);
+		setInlineEdit(null);
 	}
 
 	function validateRequiredFields(): string[] {
@@ -452,10 +457,10 @@ export default function AppointmentsPage() {
 		if (!status) missing.push('Status');
 		if (!paymentStatus) missing.push('Payment Status');
 
-		const isOuter = (serviceType || '').trim().toLowerCase() === 'outer';
+		const isOuterSvc = (serviceType || '').trim().toLowerCase() === 'outer';
 		const extraNum = extraChargeRs === '' ? NaN : Number(extraChargeRs);
 		const extraValid = Number.isFinite(extraNum) && extraNum > 0;
-		if (isOuter && !extraValid) missing.push('Travel Charge (Rs)');
+		if (isOuterSvc && !extraValid) missing.push('Travel Charge (Rs)');
 
 		return missing;
 	}
@@ -558,7 +563,6 @@ export default function AppointmentsPage() {
 		setServiceType(a.serviceType || '');
 		setPaymentStatus(a.paymentStatus || 'TBI');
 		setExtraChargeRs(a.extraChargeRs != null ? String(a.extraChargeRs) : '');
-
 		setTestAmountRs(a.testAmountRs != null ? String(a.testAmountRs) : '');
 
 		setPaymentDate(formatDateOnly(a.paymentDate));
@@ -590,14 +594,23 @@ export default function AppointmentsPage() {
 
 	const getSortVal = (r: Appointment, key: any): string | number => {
 		switch (key) {
-			case 'date': { const ymd = formatDateOnly(r.apptAt); return ymd ? Number(ymd.replaceAll('-', '')) : 0; }
-			case 'lab': { const lab = labs.find(l => l.id === r.labId); return (lab?.name || '').toLowerCase(); }
+			case 'date': {
+				const ymd = formatDateOnly(r.apptAt);
+				return ymd ? Number(ymd.replaceAll('-', '')) : 0;
+			}
+			case 'lab': {
+				const lab = labs.find(l => l.id === r.labId);
+				return (lab?.name || '').toLowerCase();
+			}
 			case 'tpa': {
 				const lab = labs.find(l => l.id === r.labId);
 				const vendor = lab?.vendors?.find(v => v.id === r.vendorId) || vendors.find(v => v.id === r.vendorId);
 				return (vendor?.tpaName || '').toLowerCase();
 			}
-			case 'ins': { const ins = insurers.find(i => i.id === r.insuranceCompanyId); return (ins?.name || '').toLowerCase(); }
+			case 'ins': {
+				const ins = insurers.find(i => i.id === r.insuranceCompanyId);
+				return (ins?.name || '').toLowerCase();
+			}
 			case 'client': return (r.clientName || '').toLowerCase();
 			case 'proposal': return (r.clientRef || '').toLowerCase();
 			case 'mobile': return (r.phone || '').toLowerCase();
@@ -609,7 +622,10 @@ export default function AppointmentsPage() {
 			case 'extra': return r.extraChargeRs ?? -1;
 			case 'testAmount': return r.testAmountRs ?? -1;
 			case 'totalAmount': return getTotalAmount(r);
-			case 'paymentDate': { const ymd = formatDateOnly(r.paymentDate); return ymd ? Number(ymd.replaceAll('-', '')) : 0; }
+			case 'paymentDate': {
+				const ymd = formatDateOnly(r.paymentDate);
+				return ymd ? Number(ymd.replaceAll('-', '')) : 0;
+			}
 			case 'gender': return (r.gender || '').toLowerCase();
 			case 'age': return r.age ?? -1;
 			case 'tests': return formatTestCodes(r).toLowerCase();
@@ -677,10 +693,113 @@ export default function AppointmentsPage() {
 
 	function sortBy(k: TableSortKey) {
 		if (k === sortKey) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-		else { setSortKey(k); setSortDir('asc'); }
+		else {
+			setSortKey(k);
+			setSortDir('asc');
+		}
 	}
 
-	// ✅ Export PDF using jsPDF with status color support
+	function buildAppointmentPayloadFromRow(row: Appointment, overrides?: Partial<Appointment>) {
+		const merged = { ...row, ...overrides };
+
+		return {
+			apptAt: merged.apptAt,
+			labId: merged.labId || null,
+			vendorId: merged.vendorId || null,
+			insuranceVendorId: merged.vendorId || null,
+			insuranceCompanyId: merged.insuranceCompanyId || null,
+
+			clientName: merged.clientName || null,
+			clientRef: merged.clientRef || null,
+			gender: merged.gender || null,
+			age: merged.age != null ? Number(merged.age) : null,
+			phone: merged.phone || null,
+
+			visitType: merged.visitType || null,
+			location: merged.location || null,
+			status: merged.status || null,
+
+			serviceType: merged.serviceType || null,
+			paymentStatus: merged.paymentStatus || null,
+			extraChargeRs: merged.extraChargeRs != null ? Number(merged.extraChargeRs) : null,
+			testAmountRs: merged.testAmountRs != null ? Number(merged.testAmountRs) : null,
+
+			paymentDate: merged.paymentDate || null,
+
+			source: 'INSURANCE',
+			notes: null,
+		};
+	}
+
+	function beginInlineEdit(row: Appointment, field: InlineAmountField) {
+		setSelectedRowId(row.id);
+		setInlineEdit({
+			rowId: row.id,
+			field,
+			value: row[field] != null ? String(row[field]) : '',
+		});
+		setFormOk(null);
+	}
+
+	function cancelInlineEdit() {
+		setInlineEdit(null);
+		setInlineSaving(false);
+	}
+
+	async function saveInlineAmount() {
+		if (!inlineEdit) return;
+
+		const row = rows.find(r => r.id === inlineEdit.rowId);
+		if (!row) {
+			cancelInlineEdit();
+			return;
+		}
+
+		const parsedValue = numberInputToNullable(inlineEdit.value);
+		const patch: Partial<Appointment> =
+			inlineEdit.field === 'extraChargeRs'
+				? { extraChargeRs: parsedValue }
+				: { testAmountRs: parsedValue };
+
+		const payload = buildAppointmentPayloadFromRow(row, patch);
+
+		try {
+			setInlineSaving(true);
+
+			const res = await fetch(`/api/appointments/${row.id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error((data as any)?.error || 'Inline update failed');
+
+			setRows(prev => prev.map(r => (
+				r.id === row.id ? { ...r, ...patch } : r
+			)));
+
+			if (editingId === row.id) {
+				if (inlineEdit.field === 'extraChargeRs') {
+					setExtraChargeRs(parsedValue != null ? String(parsedValue) : '');
+				} else {
+					setTestAmountRs(parsedValue != null ? String(parsedValue) : '');
+				}
+			}
+
+			setInlineEdit(null);
+			setFormOk(
+				inlineEdit.field === 'extraChargeRs'
+					? 'Extra charge updated'
+					: 'Test amount updated',
+			);
+		} catch (e: any) {
+			setReqList([e?.message || 'Network error']);
+			setReqOpen(true);
+		} finally {
+			setInlineSaving(false);
+		}
+	}
+
 	function exportFilteredToPdf(rowsToExport: Appointment[]) {
 		const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
 
@@ -833,7 +952,8 @@ export default function AppointmentsPage() {
 
 	async function onDelete() {
 		if (!selectedRowId) return;
-		setDelLoading(true); setDelErr(null);
+		setDelLoading(true);
+		setDelErr(null);
 		try {
 			const res = await fetch(`/api/appointments/${selectedRowId}`, { method: 'DELETE' });
 			const data = await res.json().catch(() => ({}));
@@ -966,12 +1086,77 @@ export default function AppointmentsPage() {
 		);
 	};
 
+	function renderInlineEditableAmountCell(
+		row: Appointment,
+		field: InlineAmountField,
+		align: 'right' | 'left' = 'right',
+	) {
+		const isEditing = inlineEdit?.rowId === row.id && inlineEdit?.field === field;
+		const displayValue = row[field] ?? '';
+
+		if (isEditing) {
+			return (
+				<td
+					className={`px-3 py-2 text-sm ${align === 'right' ? 'text-right' : ''}`}
+					onClick={(e) => e.stopPropagation()}
+					onDoubleClick={(e) => e.stopPropagation()}
+					onMouseDown={(e) => {
+						e.stopPropagation();
+						setSelectedRowId(row.id);
+					}}
+				>
+					<input
+						autoFocus
+						type="number"
+						min={0}
+						step="any"
+						value={inlineEdit.value}
+						onChange={(e) => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)}
+						onKeyDown={(e) => {
+							e.stopPropagation();
+							if (e.key === 'Enter') {
+								e.preventDefault();
+								void saveInlineAmount();
+							}
+							if (e.key === 'Escape') {
+								e.preventDefault();
+								cancelInlineEdit();
+							}
+						}}
+						onBlur={() => cancelInlineEdit()}
+						disabled={inlineSaving}
+						className="w-28 rounded border px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-brand/50 focus:border-brand disabled:bg-gray-100"
+					/>
+				</td>
+			);
+		}
+
+		return (
+			<td
+				className={`px-3 py-2 text-sm ${align === 'right' ? 'text-right' : ''} ${inlineSaving ? 'opacity-70' : ''}`}
+				title="Double click to edit, press Enter to save"
+				onMouseDown={(e) => {
+					e.stopPropagation();
+					setSelectedRowId(row.id);
+				}}
+				onClick={(e) => e.stopPropagation()}
+				onDoubleClick={(e) => {
+					e.stopPropagation();
+					beginInlineEdit(row, field);
+				}}
+			>
+				<span className="inline-block min-w-[50px] rounded px-1 hover:bg-yellow-50">
+					{displayValue}
+				</span>
+			</td>
+		);
+	}
+
 	const isOuter = (serviceType || '').trim().toLowerCase() === 'outer';
 	const extraMissingForOuter = isOuter && (!extraChargeRs || Number(extraChargeRs) <= 0);
 
 	return (
 		<div className="mx-auto w-full max-w-[1600px] px-4 space-y-6">
-			{/* Title */}
 			<div className="rounded-xl border bg-white px-5 py-4 shadow-sm flex items-center gap-3">
 				<div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand/10 text-brand-600">
 					<CalendarPlus className="h-5 w-5" />
@@ -979,7 +1164,6 @@ export default function AppointmentsPage() {
 				<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Appointment Management</h1>
 			</div>
 
-			{/* ===== FORM ===== */}
 			<div className="rounded-xl border bg-white shadow-sm">
 				<div className="flex items-center justify-between p-4">
 					<h2 className="text-base font-semibold">{editingId ? 'Update Appointment' : 'New Appointment'}</h2>
@@ -989,7 +1173,6 @@ export default function AppointmentsPage() {
 				{formOk && <div className="px-4 -mt-2 text-sm text-green-600">{formOk}</div>}
 
 				<form onSubmit={onSubmit}>
-					{/* Row 1 */}
 					<div className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 pb-2">
 						<div className="md:col-span-3">
 							<label className="block text-sm mb-1">Appointment Date</label>
@@ -1033,7 +1216,6 @@ export default function AppointmentsPage() {
 						</div>
 					</div>
 
-					{/* Row 2 */}
 					<div className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 py-2">
 						<div className="md:col-span-3">
 							<label className="block text-sm mb-1">Client Name</label>
@@ -1066,7 +1248,6 @@ export default function AppointmentsPage() {
 						</div>
 					</div>
 
-					{/* Row 3 */}
 					<div className="grid grid-cols-1 md:grid-cols-[110px_80px_150px_160px_135px_130px_140px_150px_auto] gap-3 px-4 py-2 items-end">
 						<div>
 							<label className="block text-sm mb-1">Gender</label>
@@ -1150,12 +1331,9 @@ export default function AppointmentsPage() {
 				</form>
 			</div>
 
-			{/* ===== TABLE + FILTER BAR ===== */}
 			<div className="rounded-xl border bg-white p-4 shadow-sm">
-				{/* Filter bar */}
 				<div className="rounded-l border bg-white p-4 shadow-sm">
 					<div className="w-full flex flex-wrap items-end justify-center gap-3">
-						{/* Search */}
 						<div className="relative">
 							<label className="block text-xs text-gray-600 mb-1">Search</label>
 							<div>
@@ -1169,7 +1347,6 @@ export default function AppointmentsPage() {
 							</div>
 						</div>
 
-						{/* Lab filter */}
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">Lab</label>
 							<select
@@ -1182,7 +1359,6 @@ export default function AppointmentsPage() {
 							</select>
 						</div>
 
-						{/* TPA filter */}
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">TPA</label>
 							<select
@@ -1195,7 +1371,6 @@ export default function AppointmentsPage() {
 							</select>
 						</div>
 
-						{/* Visit Type filter */}
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">Visit Type</label>
 							<select
@@ -1208,7 +1383,6 @@ export default function AppointmentsPage() {
 							</select>
 						</div>
 
-						{/* Service Type filter */}
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">Service Type</label>
 							<select
@@ -1221,7 +1395,6 @@ export default function AppointmentsPage() {
 							</select>
 						</div>
 
-						{/* Date range dropdown */}
 						<DateRangeDropdown
 							rangeOpen={rangeOpen}
 							setRangeOpen={setRangeOpen}
@@ -1232,7 +1405,6 @@ export default function AppointmentsPage() {
 							rangeRef={rangeRef}
 						/>
 
-						{/* Status */}
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">Status</label>
 							<select className="border rounded px-3 py-2 min-w-[200px]" value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
@@ -1241,7 +1413,6 @@ export default function AppointmentsPage() {
 							</select>
 						</div>
 
-						{/* Columns dropdown */}
 						<ColumnsDropdown
 							colsOpen={colsOpen}
 							setColsOpen={setColsOpen}
@@ -1252,10 +1423,10 @@ export default function AppointmentsPage() {
 					</div>
 				</div>
 
-				{/* Table Toolbar */}
 				<div className="flex items-center justify-between px-1 pb-2">
 					<div className="text-sm text-gray-600">
 						{selectedRowId ? '1 row selected' : ''}
+						{inlineEdit ? ' • Inline edit mode' : ''}
 					</div>
 
 					<div className="flex items-center gap-2">
@@ -1303,7 +1474,6 @@ export default function AppointmentsPage() {
 					</div>
 				</div>
 
-				{/* Table */}
 				<div className="w-full overflow-x-auto">
 					<div className="max-h-[560px] overflow-y-auto">
 						<table className="w-full min-w-[1400px] border rounded">
@@ -1363,7 +1533,10 @@ export default function AppointmentsPage() {
 												<tr
 													key={a.id}
 													className={`border-t hover:bg-gray-50 ${selected ? 'bg-brand/5' : ''} cursor-pointer`}
-													onClick={() => startEdit(a)}
+													onClick={() => {
+														if (inlineEdit) return;
+														startEdit(a);
+													}}
 													title="Click row to edit"
 													onMouseDown={() => setSelectedRowId(a.id)}
 												>
@@ -1385,8 +1558,10 @@ export default function AppointmentsPage() {
 													{visibleCols.age && <td className="px-3 py-2 text-sm">{a.age ?? ''}</td>}
 													{visibleCols.serviceType && <td className="px-3 py-2 text-sm">{a.serviceType ?? ''}</td>}
 													{visibleCols.payment && <td className="px-3 py-2 text-sm whitespace-nowrap">{a.paymentStatus ?? ''}</td>}
-													{visibleCols.extra && <td className="px-3 py-2 text-sm text-right">{a.extraChargeRs ?? ''}</td>}
-													{visibleCols.testAmount && <td className="px-3 py-2 text-sm text-right">{a.testAmountRs ?? ''}</td>}
+
+													{visibleCols.extra && renderInlineEditableAmountCell(a, 'extraChargeRs', 'right')}
+													{visibleCols.testAmount && renderInlineEditableAmountCell(a, 'testAmountRs', 'right')}
+
 													{visibleCols.totalAmount && (
 														<td className="px-3 py-2 text-sm text-right font-medium">
 															{getTotalAmount(a)}
@@ -1455,7 +1630,6 @@ export default function AppointmentsPage() {
 				{listErr && <div className="mt-3 text-sm text-red-600">{listErr}</div>}
 			</div>
 
-			{/* Delete confirm modal */}
 			{delOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
 					<div className="bg-white rounded-xl shadow-lg w-full max-w-md">
@@ -1484,7 +1658,6 @@ export default function AppointmentsPage() {
 				</div>
 			)}
 
-			{/* Required fields modal */}
 			{reqOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
 					<div className="bg-white rounded-xl shadow-lg w-full max-w-lg">
@@ -1509,7 +1682,6 @@ export default function AppointmentsPage() {
 				</div>
 			)}
 
-			{/* Tests modal */}
 			{testsOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
 					<div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden">
@@ -1608,7 +1780,6 @@ export default function AppointmentsPage() {
 				</div>
 			)}
 
-			{/* Optional trend chart block kept from original imports */}
 			<div className="hidden">
 				<ResponsiveContainer width="100%" height={200}>
 					<LineChart data={trendData}>
