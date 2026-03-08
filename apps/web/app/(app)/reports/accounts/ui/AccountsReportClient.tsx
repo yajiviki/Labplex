@@ -509,11 +509,11 @@ export default function AccountsReportClient({
 				lineWidth: 0.4,
 			},
 			columnStyles: {
-				0: { cellWidth: 70 },
-				1: { cellWidth: 70 },
-				2: { cellWidth: 78, halign: 'right' },
-				3: { cellWidth: 78, halign: 'right' },
-				4: { cellWidth: 86, halign: 'right' },
+				0: { cellWidth: 100 },
+				1: { cellWidth: 100 },
+				2: { cellWidth: 75, halign: 'right' },
+				3: { cellWidth: 75, halign: 'right' },
+				4: { cellWidth: 75, halign: 'right' },
 			},
 			theme: 'grid',
 		});
