@@ -110,6 +110,14 @@ function vendorLabel(v: Vendor) {
 	return `${name}${code}`;
 }
 
+function normalizeStatus(v?: string | null) {
+	return (v || '').trim().toUpperCase();
+}
+
+function isReportCompletedStatus(v?: string | null) {
+	return normalizeStatus(v) === 'REPORT COMPLETED';
+}
+
 export default function OuterAssignmentsPage() {
 	const exportRef = useRef<HTMLDivElement | null>(null);
 
@@ -125,6 +133,7 @@ export default function OuterAssignmentsPage() {
 	const [staffFilter, setStaffFilter] = useState<string>('');
 
 	const [rows, setRows] = useState<AssignmentRow[]>([]);
+	const [allUsers, setAllUsers] = useState<UserRow[]>([]);
 	const [users, setUsers] = useState<UserRow[]>([]);
 
 	const [err, setErr] = useState<string | null>(null);
@@ -212,6 +221,7 @@ export default function OuterAssignmentsPage() {
 				setErr((data as any)?.error || 'Load failed');
 				setRows([]);
 				setUsers([]);
+				setAllUsers([]);
 				return;
 			}
 
@@ -219,12 +229,15 @@ export default function OuterAssignmentsPage() {
 				setErr('Load failed');
 				setRows([]);
 				setUsers([]);
+				setAllUsers([]);
 				return;
 			}
 
 			setRows(Array.isArray(data.rows) ? data.rows : []);
 
 			const all = Array.isArray(data.users) ? data.users : [];
+			setAllUsers(all);
+
 			const onlyUser = all.filter((u) => (u.role || '').toUpperCase() === 'USER');
 			setUsers(onlyUser);
 
@@ -242,6 +255,7 @@ export default function OuterAssignmentsPage() {
 			setErr(e?.message || 'Network error');
 			setRows([]);
 			setUsers([]);
+			setAllUsers([]);
 		} finally {
 			setLoading(false);
 		}
@@ -261,9 +275,9 @@ export default function OuterAssignmentsPage() {
 
 	const userMap = useMemo(() => {
 		const m = new Map<string, UserRow>();
-		for (const u of users) m.set(u.id, u);
+		for (const u of allUsers) m.set(u.id, u);
 		return m;
-	}, [users]);
+	}, [allUsers]);
 
 	function inRange(iso: string | null, from: string, to: string) {
 		if (!iso) return false;
@@ -289,7 +303,18 @@ export default function OuterAssignmentsPage() {
 		return (draftRemark[r.id] ?? r.addressRemark ?? '').trim();
 	}
 
+	function getAssignedUserName(r: AssignmentRow) {
+		const staffId = getCurrentAssignedToId(r);
+		if (!staffId) return '';
+		const u = userMap.get(staffId);
+		if (u) return userLabel(u);
+		return staffId;
+	}
+
 	function isRowChanged(r: AssignmentRow) {
+		const rowIsReportCompleted = isReportCompletedStatus(r.status);
+		if (rowIsReportCompleted) return false;
+
 		const originalAssignedToId = (r.assignedToId || '').trim();
 		const originalRemark = (r.addressRemark || '').trim();
 		const currentAssignedToId = getCurrentAssignedToId(r);
@@ -338,8 +363,8 @@ export default function OuterAssignmentsPage() {
 				case 'status':
 					return (r.status || '').toLowerCase();
 				case 'staff': {
-					const staffId = getCurrentAssignedToId(r);
-					return (userMap.get(staffId)?.name || '').toLowerCase();
+					const staffName = getAssignedUserName(r);
+					return staffName.toLowerCase();
 				}
 				case 'remark': {
 					const remark = getCurrentRemark(r);
@@ -388,7 +413,9 @@ export default function OuterAssignmentsPage() {
 			const staffName =
 				staffId === '__UNASSIGNED__'
 					? 'Unassigned'
-					: userMap.get(staffId)?.name || 'Unknown User';
+					: userMap.get(staffId)
+						? userLabel(userMap.get(staffId) as UserRow)
+						: staffId || 'Unknown User';
 			return { staffId, staffName, list };
 		});
 
@@ -523,7 +550,7 @@ export default function OuterAssignmentsPage() {
 
 	const selectedStaffLabel = staffFilter
 		? (() => {
-			const staff = users.find((u) => u.id === staffFilter);
+			const staff = allUsers.find((u) => u.id === staffFilter) || users.find((u) => u.id === staffFilter);
 			return staff ? userLabel(staff) : 'Selected Staff';
 		})()
 		: 'All Staff';
@@ -672,12 +699,12 @@ export default function OuterAssignmentsPage() {
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">Staff</label>
 							<select
-								className="border rounded px-2 py-2 w-[150px] text-sm"
+								className="border rounded px-2 py-2 w-[180px] text-sm"
 								value={staffFilter}
 								onChange={(e) => setStaffFilter(e.target.value)}
 							>
 								<option value="">All Staff</option>
-								{users.map((u) => (
+								{allUsers.map((u) => (
 									<option key={u.id} value={u.id}>
 										{userLabel(u)}
 									</option>
@@ -774,6 +801,8 @@ export default function OuterAssignmentsPage() {
 											const remark = draftRemark[r.id] ?? r.addressRemark ?? '';
 											const vt = normalizeVisitType(r.visitType || '');
 											const changed = isRowChanged(r);
+											const rowIsReportCompleted = isReportCompletedStatus(r.status);
+											const assignedStaffName = getAssignedUserName(r);
 
 											return (
 												<tr
@@ -800,20 +829,26 @@ export default function OuterAssignmentsPage() {
 													<td className="px-3 py-2 text-sm">{r.location}</td>
 
 													<td className="px-3 py-2 text-sm">
-														<select
-															className="w-full border rounded px-2 py-1.5 bg-white"
-															value={assignedToId}
-															onChange={(e) =>
-																setDraftAssignedTo((p) => ({ ...p, [r.id]: e.target.value }))
-															}
-														>
-															<option value="">Select User</option>
-															{users.map((u) => (
-																<option key={u.id} value={u.id}>
-																	{userLabel(u)}
-																</option>
-															))}
-														</select>
+														{rowIsReportCompleted ? (
+															<div className="min-h-[36px] w-full rounded border border-gray-200 bg-gray-50 px-2 py-2 text-sm text-gray-800">
+																{assignedStaffName || 'Unassigned'}
+															</div>
+														) : (
+															<select
+																className="w-full border rounded px-2 py-1.5 bg-white"
+																value={assignedToId}
+																onChange={(e) =>
+																	setDraftAssignedTo((p) => ({ ...p, [r.id]: e.target.value }))
+																}
+															>
+																<option value="">Select User</option>
+																{users.map((u) => (
+																	<option key={u.id} value={u.id}>
+																		{userLabel(u)}
+																	</option>
+																))}
+															</select>
+														)}
 													</td>
 
 													<td className="px-3 py-2 text-sm">

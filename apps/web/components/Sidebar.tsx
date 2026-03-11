@@ -7,7 +7,9 @@ import {
 	Receipt, Activity, Settings, Users, FlaskConical,
 	SlidersHorizontal, ChevronDown, ChevronRight, KeyRound,
 	PanelLeftClose, PanelRightClose, Building2, Stethoscope, KeySquare, ShieldCheck,
-	MapPin
+	MapPin,
+	CarTaxiFront,
+	Wallet
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useState, useMemo } from 'react';
@@ -19,6 +21,7 @@ type Role = 'USER' | 'STAFF' | 'ADMIN' | 'SUPER_ADMIN' | string;
 const appointmentChildren = [
 	{ href: '/appointments', icon: Stethoscope, label: 'TPA/DR/OP' },
 	{ href: '/appointments/outer-assign', icon: MapPin, label: 'Outer Assignments' }, // ✅ NEW
+	{ href: '/travel-settlement', icon: Wallet, label: 'Travel Settlement' }, // ✅ NEW
 ];
 
 /** Reports submenu */
