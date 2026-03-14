@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
 					lab: true,
 					vendor: true,
 					assignedTo: true,
-					travelExpenses: true,
+					TravelExpense: true,
 				},
 				orderBy: { apptAt: 'desc' },
 			}),
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
 		const totalPettyCashBalance = totalReceived - totalRepaid;
 
 		const rows = appointments.map((a) => {
-			const travel = a.travelExpenses?.[0];
+			const travel = a.TravelExpense?.[0];
 
 			const travelCost = asNum(travel?.fuelAmount);
 			const accommodationCost = asNum(travel?.accommodationAmount);

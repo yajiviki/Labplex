@@ -1017,7 +1017,10 @@ export default function TravelSettlementPage() {
 										<Bar
 											dataKey="amount"
 											radius={[6, 6, 0, 0]}
-											onClick={(data) => handleStaffBarClick(data as StaffChartRow)}
+											onClick={(data) => {
+												const row = (data as { payload?: StaffChartRow })?.payload;
+												if (row) handleStaffBarClick(row);
+											}}
 											cursor="pointer"
 										>
 											{staffChartData.map((entry) => (
@@ -1083,7 +1086,7 @@ export default function TravelSettlementPage() {
 										<Bar
 											dataKey="amount"
 											radius={[6, 6, 0, 0]}
-											onClick={(data) => handleDayBarClick(data as DayChartRow)}
+											onClick={(data) => handleDayBarClick(data as unknown as DayChartRow)}
 											cursor="pointer"
 										>
 											{dayChartData.map((entry) => (
