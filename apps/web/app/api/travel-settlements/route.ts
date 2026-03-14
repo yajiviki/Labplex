@@ -17,43 +17,10 @@ function normalizeVisitType(v?: string | null) {
 	return '';
 }
 
-function getSettlementStatus(balance: number): 'Balance to return' | 'Settled' | 'Extra claim' {
-	if (balance > 0) return 'Balance to return';
-	if (balance < 0) return 'Extra claim';
-	return 'Settled';
-}
-
 function getProfitLossStatus(value: number): 'Profit' | 'Loss' | 'Break-even' {
 	if (value > 0) return 'Profit';
 	if (value < 0) return 'Loss';
 	return 'Break-even';
-}
-
-function serializeRow(row: any) {
-	return {
-		id: row.id,
-		appointmentId: row.appointmentId,
-		staffId: row.staffId ?? '',
-		patientName: row.patientName ?? '',
-		vendorId: row.vendorId ?? '',
-		labId: row.labId ?? '',
-		appointmentDate: row.appointmentDate,
-		visitType: row.visitType ?? '',
-		location: row.location ?? '',
-		pettyCashGiven: asNum(row.pettyCashGiven),
-		travelCost: asNum(row.travelCost),
-		accommodationCost: asNum(row.accommodationCost),
-		totalSpent: asNum(row.totalSpent),
-		tpaReceivedAmount: asNum(row.tpaReceivedAmount),
-		pettyCashBalance: asNum(row.pettyCashBalance),
-		profitLossAmount: asNum(row.profitLossAmount),
-		settlementStatus: row.settlementStatus ?? 'Settled',
-		profitLossStatus: row.profitLossStatus ?? 'Break-even',
-		remarks: row.remarks ?? '',
-		createdBy: row.createdBy ?? '',
-		createdAt: row.createdAt,
-		updatedAt: row.updatedAt,
-	};
 }
 
 export async function GET(req: NextRequest) {
@@ -69,7 +36,7 @@ export async function GET(req: NextRequest) {
 
 		const apptWhere: any = {
 			status: {
-				in: ['Need Confirmation', 'Report completed', 'Report Completed'],
+				in: ['Need Confirmation', 'Need confirmation', 'Report - Completed', 'Report - InProgress'],
 			},
 		};
 
@@ -84,7 +51,7 @@ export async function GET(req: NextRequest) {
 			if (dateTo) apptWhere.apptAt.lte = new Date(`${dateTo}T23:59:59.999`);
 		}
 
-		const [appointments, settlements, users] = await Promise.all([
+		const [appointments, pettyCashRows] = await Promise.all([
 			prisma.appointment.findMany({
 				where: apptWhere,
 				orderBy: [{ apptAt: 'desc' }, { clientName: 'asc' as any }],
@@ -98,7 +65,7 @@ export async function GET(req: NextRequest) {
 					location: true as any,
 					status: true as any,
 					visitType: true as any,
-					extraRs: true as any,
+					extraChargeRs: true as any,
 					lab: {
 						select: {
 							id: true,
@@ -124,30 +91,8 @@ export async function GET(req: NextRequest) {
 					} as any,
 				},
 			}),
-			prisma.travelSettlement.findMany({
-				where: {
-					appointmentId: {
-						in: [],
-					},
-				},
-			}),
-			prisma.user.findMany({
-				orderBy: [{ name: 'asc' }],
-				select: {
-					id: true,
-					name: true,
-					userId: true as any,
-					phone: true as any,
-					role: true as any,
-					labId: true as any,
-					lab: {
-						select: {
-							name: true,
-							nickName: true as any,
-							labCode: true as any,
-						},
-					} as any,
-				},
+			prisma.pettyCashEntry.findMany({
+				orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
 			}),
 		]);
 
@@ -166,12 +111,20 @@ export async function GET(req: NextRequest) {
 
 		const rows = appointments.map((a: any) => {
 			const existing = settlementMap.get(a.id);
+			const travelCost = existing ? asNum(existing.travelCost) : 0;
+			const accommodationCost = existing ? asNum(existing.accommodationCost) : 0;
+			const totalSpent = travelCost + accommodationCost;
+			const tpaForecastAmount = existing
+				? asNum(existing.tpaForecastAmount)
+				: asNum(a.extraChargeRs);
+			const profitLossAmount = tpaForecastAmount - totalSpent;
 
 			return {
 				id: existing?.id ?? '',
 				appointmentId: a.id,
-				staffId: existing?.staffId ?? a.assignedToId ?? '',
+				staffId: a.assignedToId ?? '',
 				staffName: a.assignedTo?.name || '',
+				staffUserId: a.assignedTo?.userId || '',
 				patientName: a.clientName ?? '',
 				vendorId: a.vendorId ?? '',
 				vendorName: a.vendor?.nickName || a.vendor?.tpaName || a.vendor?.vendorId || '',
@@ -181,46 +134,63 @@ export async function GET(req: NextRequest) {
 				visitType: a.visitType ?? '',
 				location: a.location ?? '',
 				status: a.status ?? '',
-				pettyCashGiven: existing ? asNum(existing.pettyCashGiven) : 0,
-				travelCost: existing ? asNum(existing.travelCost) : 0,
-				accommodationCost: existing ? asNum(existing.accommodationCost) : 0,
-				totalSpent: existing ? asNum(existing.totalSpent) : 0,
-				tpaReceivedAmount: existing ? asNum(existing.tpaReceivedAmount) : asNum(a.extraRs),
-				pettyCashBalance: existing ? asNum(existing.pettyCashBalance) : 0,
-				profitLossAmount: existing ? asNum(existing.profitLossAmount) : asNum(a.extraRs),
-				settlementStatus: existing?.settlementStatus ?? 'Settled',
-				profitLossStatus: existing?.profitLossStatus ?? (asNum(a.extraRs) > 0 ? 'Profit' : 'Break-even'),
+				travelCost,
+				accommodationCost,
+				totalSpent,
+				tpaForecastAmount,
+				profitLossAmount,
+				profitLossStatus: existing?.profitLossStatus ?? getProfitLossStatus(profitLossAmount),
 				remarks: existing?.remarks ?? '',
 				createdAt: existing?.createdAt ?? null,
 				updatedAt: existing?.updatedAt ?? null,
 			};
 		});
 
-		const summary = rows.reduce(
-			(acc, r) => {
-				acc.totalRows += 1;
-				acc.totalPettyCash += asNum(r.pettyCashGiven);
-				acc.totalSpent += asNum(r.totalSpent);
-				acc.totalReceived += asNum(r.tpaReceivedAmount);
-				acc.totalBalance += asNum(r.pettyCashBalance);
-				acc.netProfitLoss += asNum(r.profitLossAmount);
-				return acc;
-			},
-			{
-				totalRows: 0,
-				totalPettyCash: 0,
-				totalSpent: 0,
-				totalReceived: 0,
-				totalBalance: 0,
-				netProfitLoss: 0,
-			}
-		);
+		const staffOptions = Array.from(
+			new Map(
+				rows
+					.filter((r) => r.staffId)
+					.map((r) => [
+						r.staffId,
+						{
+							id: r.staffId,
+							name: r.staffName || '',
+							userId: r.staffUserId || '',
+						},
+					])
+			).values()
+		).sort((a, b) => {
+			const al = `${a.name}${a.userId ? ` (${a.userId})` : ''}`.toLowerCase();
+			const bl = `${b.name}${b.userId ? ` (${b.userId})` : ''}`.toLowerCase();
+			return al.localeCompare(bl);
+		});
+
+		const totalPettyCash = pettyCashRows.reduce((sum: number, r: any) => sum + asNum(r.amount), 0);
+		const totalSpent = rows.reduce((sum: number, r: any) => sum + asNum(r.totalSpent), 0);
+		const totalForecast = rows.reduce((sum: number, r: any) => sum + asNum(r.tpaForecastAmount), 0);
+		const pendingPettyCash = totalPettyCash - totalSpent;
+		const netProfitLoss = totalForecast - totalSpent;
 
 		return NextResponse.json({
 			ok: true,
 			rows,
-			users,
-			summary,
+			staffOptions,
+			pettyCashRows: pettyCashRows.map((r: any) => ({
+				id: r.id,
+				entryDate: r.entryDate,
+				amount: asNum(r.amount),
+				description: r.description ?? '',
+				createdAt: r.createdAt,
+				updatedAt: r.updatedAt,
+			})),
+			summary: {
+				totalTransactions: rows.length,
+				totalPettyCash,
+				totalSpent,
+				totalForecast,
+				pendingPettyCash,
+				netProfitLoss,
+			},
 		});
 	} catch (error: any) {
 		console.error('GET /api/travel-settlements error:', error);
@@ -260,7 +230,7 @@ export async function POST(req: NextRequest) {
 				apptAt: true as any,
 				visitType: true as any,
 				location: true as any,
-				extraRs: true as any,
+				extraChargeRs: true as any,
 				assignedToId: true as any,
 			},
 		});
@@ -283,24 +253,20 @@ export async function POST(req: NextRequest) {
 				const appointmentId = String(item.appointmentId || '').trim();
 				const appt = apptMap.get(appointmentId);
 
-				const staffId = String(item.staffId || appt.assignedToId || '').trim() || null;
-				const pettyCashGiven = asNum(item.pettyCashGiven);
+				const staffId = appt.assignedToId ? String(appt.assignedToId).trim() : null;
 				const travelCost = asNum(item.travelCost);
 				const accommodationCost = asNum(item.accommodationCost);
 				const remarks = String(item.remarks || '').trim() || null;
 
 				const totalSpent = travelCost + accommodationCost;
-				const tpaReceivedAmount = asNum(appt.extraRs);
-				const pettyCashBalance = pettyCashGiven - totalSpent;
-				const profitLossAmount = tpaReceivedAmount - totalSpent;
-
-				const settlementStatus = getSettlementStatus(pettyCashBalance);
+				const tpaForecastAmount = asNum(appt.extraChargeRs);
+				const profitLossAmount = tpaForecastAmount - totalSpent;
 				const profitLossStatus = getProfitLossStatus(profitLossAmount);
 
 				return prisma.travelSettlement.upsert({
 					where: {
 						appointmentId,
-					} as any,
+					},
 					update: {
 						staffId,
 						patientName: appt.clientName ?? '',
@@ -309,14 +275,11 @@ export async function POST(req: NextRequest) {
 						appointmentDate: appt.apptAt ?? null,
 						visitType: appt.visitType ?? null,
 						location: appt.location ?? null,
-						pettyCashGiven,
 						travelCost,
 						accommodationCost,
 						totalSpent,
-						tpaReceivedAmount,
-						pettyCashBalance,
+						tpaForecastAmount,
 						profitLossAmount,
-						settlementStatus,
 						profitLossStatus,
 						remarks,
 					},
@@ -329,14 +292,11 @@ export async function POST(req: NextRequest) {
 						appointmentDate: appt.apptAt ?? null,
 						visitType: appt.visitType ?? null,
 						location: appt.location ?? null,
-						pettyCashGiven,
 						travelCost,
 						accommodationCost,
 						totalSpent,
-						tpaReceivedAmount,
-						pettyCashBalance,
+						tpaForecastAmount,
 						profitLossAmount,
-						settlementStatus,
 						profitLossStatus,
 						remarks,
 					},

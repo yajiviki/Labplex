@@ -2,14 +2,29 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-	CalendarDays,
+	Wallet,
 	RefreshCcw,
 	Save,
 	AlertTriangle,
 	ChevronDown,
 	ChevronUp,
-	Wallet,
+	IndianRupee,
+	TrendingDown,
+	Scale,
+	TrendingUp,
+	ReceiptText,
+	BarChart3,
+	CalendarDays,
 } from 'lucide-react';
+import {
+	ResponsiveContainer,
+	BarChart,
+	Bar,
+	CartesianGrid,
+	XAxis,
+	YAxis,
+	Tooltip,
+} from 'recharts';
 
 type Lab = {
 	id: string;
@@ -25,14 +40,10 @@ type Vendor = {
 	nickName?: string | null;
 };
 
-type UserRow = {
+type StaffOption = {
 	id: string;
 	name: string;
 	userId?: string | null;
-	phone?: string | null;
-	role?: string | null;
-	labId?: string | null;
-	lab?: { nickName?: string | null; name?: string | null; labCode?: string | null } | null;
 };
 
 type SettlementRow = {
@@ -40,6 +51,7 @@ type SettlementRow = {
 	appointmentId: string;
 	staffId: string;
 	staffName?: string;
+	staffUserId?: string;
 	patientName: string;
 	vendorId: string;
 	vendorName?: string;
@@ -49,27 +61,33 @@ type SettlementRow = {
 	visitType?: string | null;
 	location?: string | null;
 	status?: string | null;
-	pettyCashGiven: number;
 	travelCost: number;
 	accommodationCost: number;
 	totalSpent: number;
-	tpaReceivedAmount: number;
-	pettyCashBalance: number;
+	tpaForecastAmount: number;
 	profitLossAmount: number;
-	settlementStatus: string;
 	profitLossStatus: string;
 	remarks: string;
 	createdAt?: string | null;
 	updatedAt?: string | null;
 };
 
-type Summary = {
-	totalRows: number;
-	totalPettyCash: number;
+type SettlementSummary = {
+	totalTransactions: number;
+	pettyCashBalance?: number;
 	totalSpent: number;
-	totalReceived: number;
-	totalBalance: number;
+	totalForecast: number;
 	netProfitLoss: number;
+};
+
+type PettyCashDashboardResp = {
+	success: boolean;
+	kpis: {
+		totalReceived: number;
+		totalRepaid: number;
+		pendingBalance: number;
+		activeAccounts: number;
+	};
 };
 
 function formatDateOnly(iso?: string | null) {
@@ -94,6 +112,10 @@ function ymdToday() {
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+function ymToday() {
+	return ymdToday().slice(0, 7);
+}
+
 function normalizeVisitType(v?: string | null) {
 	const s = (v || '').toUpperCase().trim();
 	if (s === 'CENTER') return 'CENTER';
@@ -107,9 +129,9 @@ function vendorLabel(v: Vendor) {
 	return `${name}${code}`;
 }
 
-function userLabel(u: UserRow) {
-	const uid = u.userId ? ` (${u.userId})` : '';
-	return `${u.name}${uid}`;
+function staffLabel(s?: { name?: string | null; userId?: string | null }) {
+	if (!s?.name) return 'Unassigned';
+	return s.userId ? `${s.name} (${s.userId})` : s.name;
 }
 
 function fmtINR(n: number) {
@@ -126,13 +148,32 @@ function num(v: string | number | null | undefined) {
 	return Number.isFinite(n) ? n : 0;
 }
 
+function getMonthKeyFromIso(iso?: string | null) {
+	if (!iso) return '';
+	const d = new Date(iso);
+	if (Number.isNaN(d.getTime())) return '';
+	const y = d.getFullYear();
+	const m = String(d.getMonth() + 1).padStart(2, '0');
+	return `${y}-${m}`;
+}
+
+function getDayKeyFromIso(iso?: string | null) {
+	if (!iso) return '';
+	const d = new Date(iso);
+	if (Number.isNaN(d.getTime())) return '';
+	const y = d.getFullYear();
+	const m = String(d.getMonth() + 1).padStart(2, '0');
+	const day = String(d.getDate()).padStart(2, '0');
+	return `${y}-${m}-${day}`;
+}
+
 export default function TravelSettlementPage() {
 	const [loading, setLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
 
 	const [labs, setLabs] = useState<Lab[]>([]);
 	const [vendors, setVendors] = useState<Vendor[]>([]);
-	const [users, setUsers] = useState<UserRow[]>([]);
+	const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
 	const [rows, setRows] = useState<SettlementRow[]>([]);
 
 	const [err, setErr] = useState<string | null>(null);
@@ -144,21 +185,25 @@ export default function TravelSettlementPage() {
 	const [visitType, setVisitType] = useState<string>('');
 	const [dateFrom, setDateFrom] = useState<string>(() => ymdToday());
 	const [dateTo, setDateTo] = useState<string>(() => ymdToday());
+	const [chartMonth, setChartMonth] = useState<string>(() => ymToday());
 
-	const [summary, setSummary] = useState<Summary>({
-		totalRows: 0,
-		totalPettyCash: 0,
+	const [summary, setSummary] = useState<SettlementSummary>({
+		totalTransactions: 0,
 		totalSpent: 0,
-		totalReceived: 0,
-		totalBalance: 0,
+		totalForecast: 0,
 		netProfitLoss: 0,
 	});
 
-	const [draftPettyCash, setDraftPettyCash] = useState<Record<string, string>>({});
+	const [pettyCashKpis, setPettyCashKpis] = useState({
+		totalReceived: 0,
+		totalRepaid: 0,
+		pendingBalance: 0,
+		activeAccounts: 0,
+	});
+
 	const [draftTravel, setDraftTravel] = useState<Record<string, string>>({});
 	const [draftAccommodation, setDraftAccommodation] = useState<Record<string, string>>({});
 	const [draftRemark, setDraftRemark] = useState<Record<string, string>>({});
-	const [draftStaffId, setDraftStaffId] = useState<Record<string, string>>({});
 
 	type SortKey =
 		| 'appointmentDate'
@@ -166,14 +211,11 @@ export default function TravelSettlementPage() {
 		| 'visitType'
 		| 'location'
 		| 'staff'
-		| 'pettyCashGiven'
 		| 'travelCost'
 		| 'accommodationCost'
 		| 'totalSpent'
-		| 'tpaReceivedAmount'
-		| 'pettyCashBalance'
+		| 'tpaForecastAmount'
 		| 'profitLossAmount'
-		| 'settlementStatus'
 		| 'profitLossStatus';
 
 	const [sortKey, setSortKey] = useState<SortKey>('appointmentDate');
@@ -223,61 +265,81 @@ export default function TravelSettlementPage() {
 		return qs ? `?${qs}` : '';
 	}
 
-	async function loadRows() {
+	async function loadPageData() {
 		setLoading(true);
 		setErr(null);
 		setOk(null);
 
 		try {
 			const q = buildQuery();
-			const res = await fetch(`/api/travel-settlements${q}`, { cache: 'no-store' });
-			const data = await res.json().catch(() => null);
 
-			if (!res.ok || !data?.ok) {
-				setErr(data?.error || 'Load failed');
+			const [settlementRes, pettyCashRes] = await Promise.all([
+				fetch(`/api/travel-settlements${q}`, { cache: 'no-store' }),
+				fetch('/api/petty-cash/dashboard?period=month', { cache: 'no-store' }),
+			]);
+
+			const settlementData = await settlementRes.json().catch(() => null);
+			const pettyCashData = (await pettyCashRes.json().catch(() => null)) as PettyCashDashboardResp | null;
+
+			if (!settlementRes.ok || !settlementData?.ok) {
+				setErr(settlementData?.error || 'Load failed');
 				setRows([]);
-				setUsers([]);
+				setStaffOptions([]);
 				return;
 			}
 
-			const apiRows = Array.isArray(data.rows) ? data.rows : [];
-			const apiUsers = Array.isArray(data.users) ? data.users : [];
-			const apiSummary = data.summary || {
-				totalRows: 0,
-				totalPettyCash: 0,
+			const apiRows = Array.isArray(settlementData.rows) ? settlementData.rows : [];
+			const apiStaffOptions = Array.isArray(settlementData.staffOptions) ? settlementData.staffOptions : [];
+			const apiSummary = settlementData.summary || {
+				totalTransactions: 0,
 				totalSpent: 0,
-				totalReceived: 0,
-				totalBalance: 0,
+				totalForecast: 0,
 				netProfitLoss: 0,
 			};
 
 			setRows(apiRows);
-			setUsers(apiUsers);
+			setStaffOptions(apiStaffOptions);
 			setSummary(apiSummary);
 
-			const p: Record<string, string> = {};
+			if (pettyCashRes.ok && pettyCashData?.success && pettyCashData.kpis) {
+				setPettyCashKpis({
+					totalReceived: num(pettyCashData.kpis.totalReceived),
+					totalRepaid: num(pettyCashData.kpis.totalRepaid),
+					pendingBalance: num(pettyCashData.kpis.pendingBalance),
+					activeAccounts: num(pettyCashData.kpis.activeAccounts),
+				});
+			} else {
+				setPettyCashKpis({
+					totalReceived: 0,
+					totalRepaid: 0,
+					pendingBalance: 0,
+					activeAccounts: 0,
+				});
+			}
+
 			const t: Record<string, string> = {};
 			const a: Record<string, string> = {};
 			const r: Record<string, string> = {};
-			const s: Record<string, string> = {};
 
 			for (const row of apiRows) {
-				p[row.appointmentId] = String(row.pettyCashGiven ?? 0);
 				t[row.appointmentId] = String(row.travelCost ?? 0);
 				a[row.appointmentId] = String(row.accommodationCost ?? 0);
 				r[row.appointmentId] = row.remarks ?? '';
-				s[row.appointmentId] = row.staffId ?? '';
 			}
 
-			setDraftPettyCash(p);
 			setDraftTravel(t);
 			setDraftAccommodation(a);
 			setDraftRemark(r);
-			setDraftStaffId(s);
 		} catch (e: any) {
 			setErr(e?.message || 'Network error');
 			setRows([]);
-			setUsers([]);
+			setStaffOptions([]);
+			setPettyCashKpis({
+				totalReceived: 0,
+				totalRepaid: 0,
+				pendingBalance: 0,
+				activeAccounts: 0,
+			});
 		} finally {
 			setLoading(false);
 		}
@@ -286,18 +348,14 @@ export default function TravelSettlementPage() {
 	useEffect(() => {
 		loadLabs();
 		loadVendors();
-		loadRows();
+		loadPageData();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	useEffect(() => {
-		loadRows();
+		loadPageData();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [labId, vendorId, staffId, visitType, dateFrom, dateTo]);
-
-	function currentPettyCash(r: SettlementRow) {
-		return num(draftPettyCash[r.appointmentId]);
-	}
 
 	function currentTravel(r: SettlementRow) {
 		return num(draftTravel[r.appointmentId]);
@@ -311,27 +369,12 @@ export default function TravelSettlementPage() {
 		return draftRemark[r.appointmentId] ?? r.remarks ?? '';
 	}
 
-	function currentStaffId(r: SettlementRow) {
-		return draftStaffId[r.appointmentId] ?? r.staffId ?? '';
-	}
-
 	function currentTotalSpent(r: SettlementRow) {
 		return currentTravel(r) + currentAccommodation(r);
 	}
 
-	function currentBalance(r: SettlementRow) {
-		return currentPettyCash(r) - currentTotalSpent(r);
-	}
-
 	function currentProfitLoss(r: SettlementRow) {
-		return num(r.tpaReceivedAmount) - currentTotalSpent(r);
-	}
-
-	function currentSettlementStatus(r: SettlementRow) {
-		const bal = currentBalance(r);
-		if (bal > 0) return 'Balance to return';
-		if (bal < 0) return 'Extra claim';
-		return 'Settled';
+		return num(r.tpaForecastAmount) - currentTotalSpent(r);
 	}
 
 	function currentProfitStatus(r: SettlementRow) {
@@ -343,19 +386,11 @@ export default function TravelSettlementPage() {
 
 	function isRowChanged(r: SettlementRow) {
 		return (
-			num(r.pettyCashGiven) !== currentPettyCash(r) ||
 			num(r.travelCost) !== currentTravel(r) ||
 			num(r.accommodationCost) !== currentAccommodation(r) ||
-			(r.remarks ?? '') !== currentRemark(r) ||
-			(r.staffId ?? '') !== currentStaffId(r)
+			(r.remarks ?? '') !== currentRemark(r)
 		);
 	}
-
-	const userMap = useMemo(() => {
-		const m = new Map<string, UserRow>();
-		for (const u of users) m.set(u.id, u);
-		return m;
-	}, [users]);
 
 	const filteredSortedRows = useMemo(() => {
 		function val(r: SettlementRow, k: SortKey) {
@@ -369,23 +404,17 @@ export default function TravelSettlementPage() {
 				case 'location':
 					return (r.location || '').toLowerCase();
 				case 'staff':
-					return (userMap.get(currentStaffId(r))?.name || r.staffName || '').toLowerCase();
-				case 'pettyCashGiven':
-					return currentPettyCash(r);
+					return staffLabel({ name: r.staffName, userId: r.staffUserId }).toLowerCase();
 				case 'travelCost':
 					return currentTravel(r);
 				case 'accommodationCost':
 					return currentAccommodation(r);
 				case 'totalSpent':
 					return currentTotalSpent(r);
-				case 'tpaReceivedAmount':
-					return num(r.tpaReceivedAmount);
-				case 'pettyCashBalance':
-					return currentBalance(r);
+				case 'tpaForecastAmount':
+					return num(r.tpaForecastAmount);
 				case 'profitLossAmount':
 					return currentProfitLoss(r);
-				case 'settlementStatus':
-					return currentSettlementStatus(r).toLowerCase();
 				case 'profitLossStatus':
 					return currentProfitStatus(r).toLowerCase();
 				default:
@@ -400,31 +429,63 @@ export default function TravelSettlementPage() {
 			const cmp = va > vb ? 1 : -1;
 			return sortDir === 'asc' ? cmp : -cmp;
 		});
-	}, [rows, sortKey, sortDir, draftPettyCash, draftTravel, draftAccommodation, draftRemark, draftStaffId, userMap]);
+	}, [rows, sortKey, sortDir, draftTravel, draftAccommodation, draftRemark]);
 
 	const changedRows = useMemo(() => filteredSortedRows.filter((r) => isRowChanged(r)), [filteredSortedRows]);
 
 	const displaySummary = useMemo(() => {
-		return filteredSortedRows.reduce(
-			(acc, r) => {
-				acc.totalRows += 1;
-				acc.totalPettyCash += currentPettyCash(r);
-				acc.totalSpent += currentTotalSpent(r);
-				acc.totalReceived += num(r.tpaReceivedAmount);
-				acc.totalBalance += currentBalance(r);
-				acc.netProfitLoss += currentProfitLoss(r);
-				return acc;
-			},
-			{
-				totalRows: 0,
-				totalPettyCash: 0,
-				totalSpent: 0,
-				totalReceived: 0,
-				totalBalance: 0,
-				netProfitLoss: 0,
-			}
-		);
-	}, [filteredSortedRows, draftPettyCash, draftTravel, draftAccommodation]);
+		const totalSpent = filteredSortedRows.reduce((sum, r) => sum + currentTotalSpent(r), 0);
+		const totalForecast = filteredSortedRows.reduce((sum, r) => sum + num(r.tpaForecastAmount), 0);
+		const netProfitLoss = totalForecast - totalSpent;
+		const totalPettyCash = pettyCashKpis.pendingBalance;
+		const pettyCashBalance = totalPettyCash - totalSpent;
+
+		return {
+			totalTransactions: filteredSortedRows.length,
+			totalPettyCash,
+			totalSpent,
+			pettyCashBalance,
+			totalForecast,
+			netProfitLoss,
+		};
+	}, [filteredSortedRows, pettyCashKpis, draftTravel, draftAccommodation]);
+
+	const chartRows = useMemo(() => {
+		return filteredSortedRows.filter((r) => getMonthKeyFromIso(r.appointmentDate) === chartMonth);
+	}, [filteredSortedRows, chartMonth]);
+
+	const staffChartData = useMemo(() => {
+		const map = new Map<string, number>();
+
+		for (const row of chartRows) {
+			const label = staffLabel({ name: row.staffName, userId: row.staffUserId });
+			const spent = currentTotalSpent(row);
+			map.set(label, (map.get(label) || 0) + spent);
+		}
+
+		return Array.from(map.entries())
+			.map(([name, amount]) => ({ name, amount }))
+			.sort((a, b) => b.amount - a.amount);
+	}, [chartRows, draftTravel, draftAccommodation]);
+
+	const dayChartData = useMemo(() => {
+		const map = new Map<string, number>();
+
+		for (const row of chartRows) {
+			const dayKey = getDayKeyFromIso(row.appointmentDate);
+			if (!dayKey) continue;
+			const spent = currentTotalSpent(row);
+			map.set(dayKey, (map.get(dayKey) || 0) + spent);
+		}
+
+		return Array.from(map.entries())
+			.map(([day, amount]) => ({
+				day,
+				label: day.slice(8, 10),
+				amount,
+			}))
+			.sort((a, b) => a.day.localeCompare(b.day));
+	}, [chartRows, draftTravel, draftAccommodation]);
 
 	async function saveAll() {
 		setErr(null);
@@ -432,8 +493,6 @@ export default function TravelSettlementPage() {
 
 		const items = changedRows.map((r) => ({
 			appointmentId: r.appointmentId,
-			staffId: currentStaffId(r),
-			pettyCashGiven: currentPettyCash(r),
 			travelCost: currentTravel(r),
 			accommodationCost: currentAccommodation(r),
 			remarks: currentRemark(r),
@@ -460,7 +519,7 @@ export default function TravelSettlementPage() {
 			}
 
 			setOk(`Transactions saved (${items.length})`);
-			await loadRows();
+			await loadPageData();
 		} catch (e: any) {
 			setErr(e?.message || 'Network error');
 		} finally {
@@ -486,20 +545,17 @@ export default function TravelSettlementPage() {
 
 	return (
 		<div className="mx-auto w-full max-w-[1800px] px-4 space-y-6">
-			<div className="rounded-xl border bg-white px-5 py-4 shadow-sm flex items-start justify-between gap-4">
+			<div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 shadow-sm flex items-start justify-between gap-4">
 				<div className="flex items-start gap-3">
-					<div className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-brand/10 text-brand-600">
+					<div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
 						<Wallet className="h-5 w-5" />
 					</div>
 					<div>
-						<h1 className="text-2xl md:text-3xl font-bold tracking-tight">Travel Expense Settlement</h1>
+						<h1 className="text-2xl md:text-3xl font-bold tracking-tight text-gray-900">
+							Travel Expense Settlement
+						</h1>
 						<div className="text-xs text-gray-500 mt-1">
 							Range: <b>{dateFrom || '…'}</b> → <b>{dateTo || '…'}</b>
-							{visitType ? (
-								<span>
-									{' '}· Visit: <b>{visitType}</b>
-								</span>
-							) : null}
 						</div>
 					</div>
 				</div>
@@ -507,8 +563,8 @@ export default function TravelSettlementPage() {
 				<div className="flex items-center gap-2">
 					<button
 						type="button"
-						className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
-						onClick={loadRows}
+						className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+						onClick={loadPageData}
 						disabled={loading || saving}
 					>
 						<RefreshCcw className="h-4 w-4" />
@@ -517,7 +573,7 @@ export default function TravelSettlementPage() {
 
 					<button
 						type="button"
-						className="inline-flex items-center gap-2 rounded bg-brand text-white px-4 py-2 text-sm disabled:opacity-60"
+						className="inline-flex items-center gap-2 rounded-xl bg-blue-600 text-white px-4 py-2 text-sm hover:bg-blue-700 disabled:opacity-60"
 						onClick={saveAll}
 						disabled={loading || saving || filteredSortedRows.length === 0}
 					>
@@ -527,13 +583,54 @@ export default function TravelSettlementPage() {
 				</div>
 			</div>
 
-			<div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-6">
-				<Card title="Total Rows" value={String(displaySummary.totalRows)} />
-				<Card title="Total Petty Cash" value={fmtINR(displaySummary.totalPettyCash)} />
-				<Card title="Total Spent" value={fmtINR(displaySummary.totalSpent)} />
-				<Card title="TPA Received" value={fmtINR(displaySummary.totalReceived)} />
-				<Card title="Petty Cash Balance" value={fmtINR(displaySummary.totalBalance)} />
-				<Card title="Net Profit / Loss" value={fmtINR(displaySummary.netProfitLoss)} />
+			<div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+				<StatCard
+					title="Total Petty Cash"
+					value={fmtINR(displaySummary.totalPettyCash)}
+					icon={<IndianRupee className="h-4 w-4" />}
+					panelClass="bg-blue-50 border-blue-100"
+					iconClass="bg-blue-100 text-blue-700"
+				/>
+
+				<StatCard
+					title="Total Spent"
+					value={fmtINR(displaySummary.totalSpent)}
+					icon={<TrendingDown className="h-4 w-4" />}
+					panelClass="bg-rose-50 border-rose-100"
+					iconClass="bg-rose-100 text-rose-700"
+				/>
+
+				<StatCard
+					title="Petty Cash Balance"
+					value={fmtINR(displaySummary.pettyCashBalance)}
+					icon={<Scale className="h-4 w-4" />}
+					panelClass="bg-amber-50 border-amber-100"
+					iconClass="bg-amber-100 text-amber-700"
+				/>
+
+				<StatCard
+					title="TPA Forecast"
+					value={fmtINR(displaySummary.totalForecast)}
+					icon={<TrendingUp className="h-4 w-4" />}
+					panelClass="bg-emerald-50 border-emerald-100"
+					iconClass="bg-emerald-100 text-emerald-700"
+				/>
+
+				<StatCard
+					title="Net Profit / Loss"
+					value={fmtINR(displaySummary.netProfitLoss)}
+					icon={<Wallet className="h-4 w-4" />}
+					panelClass="bg-violet-50 border-violet-100"
+					iconClass="bg-violet-100 text-violet-700"
+				/>
+
+				<StatCard
+					title="Total Case Transactions"
+					value={String(displaySummary.totalTransactions)}
+					icon={<ReceiptText className="h-4 w-4" />}
+					panelClass="bg-slate-50 border-slate-200"
+					iconClass="bg-slate-100 text-slate-700"
+				/>
 			</div>
 
 			{err && (
@@ -549,12 +646,105 @@ export default function TravelSettlementPage() {
 				</div>
 			)}
 
-			<div className="rounded-xl border bg-white shadow-sm">
-				<div className="p-4 border-b flex flex-wrap items-end gap-2 justify-between">
+			<div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+				<div className="p-4 border-b border-gray-200 flex flex-wrap items-end justify-between gap-3">
 					<div>
-						<div className="text-base font-semibold">Settlement List</div>
+						<div className="text-base font-semibold text-gray-900">Spend Analysis</div>
 						<div className="text-xs text-gray-600 mt-1">
-							Enter <b>Petty Cash</b>, <b>Travel Cost</b>, <b>Accommodation Cost</b>, then click <b>Save All</b>.
+							Staff-wise and day-wise spend based on selected month.
+						</div>
+					</div>
+
+					<div className="flex items-end gap-2">
+						<div>
+							<label className="block text-xs text-gray-600 mb-1">Selected Month</label>
+							<div className="relative">
+								<input
+									type="month"
+									className="border rounded px-2 py-2 pr-9 w-[150px] text-sm"
+									value={chartMonth}
+									onChange={(e) => setChartMonth(e.target.value)}
+								/>
+								<CalendarDays className="pointer-events-none absolute right-2 top-2.5 h-4 w-4 text-gray-400" />
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div className="grid grid-cols-1 gap-4 p-4 xl:grid-cols-2">
+					<div className="rounded-xl border border-gray-200 bg-white p-4">
+						<div className="mb-3 flex items-center gap-2">
+							<div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
+								<BarChart3 className="h-4 w-4" />
+							</div>
+							<div>
+								<div className="text-sm font-semibold text-gray-900">Staff-wise Spend</div>
+								<div className="text-xs text-gray-500">Total spent by assigned staff</div>
+							</div>
+						</div>
+
+						<div className="h-[280px]">
+							{staffChartData.length === 0 ? (
+								<div className="flex h-full items-center justify-center text-sm text-gray-500">
+									No data for selected month.
+								</div>
+							) : (
+								<ResponsiveContainer width="100%" height="100%">
+									<BarChart data={staffChartData}>
+										<CartesianGrid strokeDasharray="3 3" vertical={false} />
+										<XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={60} />
+										<YAxis tick={{ fontSize: 11 }} />
+										<Tooltip
+											formatter={(value: number) => [fmtINR(Number(value || 0)), 'Spent']}
+										/>
+										<Bar dataKey="amount" fill="#2563eb" radius={[6, 6, 0, 0]} />
+									</BarChart>
+								</ResponsiveContainer>
+							)}
+						</div>
+					</div>
+
+					<div className="rounded-xl border border-gray-200 bg-white p-4">
+						<div className="mb-3 flex items-center gap-2">
+							<div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+								<BarChart3 className="h-4 w-4" />
+							</div>
+							<div>
+								<div className="text-sm font-semibold text-gray-900">Day-wise Spend</div>
+								<div className="text-xs text-gray-500">Total spent by day in selected month</div>
+							</div>
+						</div>
+
+						<div className="h-[280px]">
+							{dayChartData.length === 0 ? (
+								<div className="flex h-full items-center justify-center text-sm text-gray-500">
+									No data for selected month.
+								</div>
+							) : (
+								<ResponsiveContainer width="100%" height="100%">
+									<BarChart data={dayChartData}>
+										<CartesianGrid strokeDasharray="3 3" vertical={false} />
+										<XAxis dataKey="label" tick={{ fontSize: 11 }} />
+										<YAxis tick={{ fontSize: 11 }} />
+										<Tooltip
+											labelFormatter={(label) => `Day ${label}`}
+											formatter={(value: number) => [fmtINR(Number(value || 0)), 'Spent']}
+										/>
+										<Bar dataKey="amount" fill="#059669" radius={[6, 6, 0, 0]} />
+									</BarChart>
+								</ResponsiveContainer>
+							)}
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+				<div className="p-4 border-b border-gray-200 flex flex-wrap items-end gap-2 justify-between">
+					<div>
+						<div className="text-base font-semibold text-gray-900">Appointment Expense Transactions</div>
+						<div className="text-xs text-gray-600 mt-1">
+							Assigned staff is taken from Outer Assignment. Enter only <b>Travel Cost</b> and <b>Accommodation Cost</b>.
 						</div>
 					</div>
 
@@ -594,14 +784,14 @@ export default function TravelSettlementPage() {
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">Staff</label>
 							<select
-								className="border rounded px-2 py-2 w-[170px] text-sm"
+								className="border rounded px-2 py-2 w-[190px] text-sm"
 								value={staffId}
 								onChange={(e) => setStaffId(e.target.value)}
 							>
-								<option value="">All Staff</option>
-								{users.map((u) => (
-									<option key={u.id} value={u.id}>
-										{userLabel(u)}
+								<option value="">All Assigned Staff</option>
+								{staffOptions.map((s) => (
+									<option key={s.id} value={s.id}>
+										{staffLabel(s)}
 									</option>
 								))}
 							</select>
@@ -659,23 +849,20 @@ export default function TravelSettlementPage() {
 
 				<div className="p-4">
 					<div className="w-full overflow-x-auto">
-						<div className="max-h-[720px] overflow-y-auto rounded border">
-							<table className="w-full min-w-[2500px]">
+						<div className="max-h-[720px] overflow-y-auto rounded border border-gray-200">
+							<table className="w-full min-w-[2100px]">
 								<thead className="sticky top-0 z-10 bg-white">
 									<tr className="border-b bg-gray-50">
 										<SortTh k="appointmentDate" label="Appointment" />
 										<SortTh k="patientName" label="Patient Name" />
 										<SortTh k="visitType" label="Visit Type" />
 										<SortTh k="location" label="Location" />
-										<SortTh k="staff" label="Staff" />
-										<SortTh k="pettyCashGiven" label="Petty Cash Given" />
+										<SortTh k="staff" label="Assigned Staff" />
 										<SortTh k="travelCost" label="Travel Cost" />
 										<SortTh k="accommodationCost" label="Accommodation Cost" />
 										<SortTh k="totalSpent" label="Total Spent" />
-										<SortTh k="tpaReceivedAmount" label="TPA Received" />
-										<SortTh k="pettyCashBalance" label="Petty Cash Balance" />
+										<SortTh k="tpaForecastAmount" label="TPA Forecast" />
 										<SortTh k="profitLossAmount" label="Profit / Loss" />
-										<SortTh k="settlementStatus" label="Settlement Status" />
 										<SortTh k="profitLossStatus" label="P/L Status" />
 										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">
 											Remarks
@@ -686,25 +873,22 @@ export default function TravelSettlementPage() {
 								<tbody>
 									{loading ? (
 										<tr>
-											<td colSpan={15} className="px-3 py-6 text-center text-sm text-gray-500">
+											<td colSpan={12} className="px-3 py-6 text-center text-sm text-gray-500">
 												Loading…
 											</td>
 										</tr>
 									) : filteredSortedRows.length === 0 ? (
 										<tr>
-											<td colSpan={15} className="px-3 py-6 text-center text-sm text-gray-500">
+											<td colSpan={12} className="px-3 py-6 text-center text-sm text-gray-500">
 												No rows found for the current filter.
 											</td>
 										</tr>
 									) : (
 										filteredSortedRows.map((r) => {
 											const totalSpent = currentTotalSpent(r);
-											const balance = currentBalance(r);
 											const profitLoss = currentProfitLoss(r);
-											const settlementStatus = currentSettlementStatus(r);
 											const profitStatus = currentProfitStatus(r);
 											const changed = isRowChanged(r);
-											const selectedStaffId = currentStaffId(r);
 
 											return (
 												<tr key={r.appointmentId} className={`border-t hover:bg-gray-50 ${changed ? 'bg-amber-50/30' : ''}`}>
@@ -721,20 +905,9 @@ export default function TravelSettlementPage() {
 													<td className="px-3 py-2 text-sm">{r.location || '-'}</td>
 
 													<td className="px-3 py-2 text-sm">
-														<select
-															className="w-full border rounded px-2 py-1.5 bg-white min-w-[180px]"
-															value={selectedStaffId}
-															onChange={(e) =>
-																setDraftStaffId((p) => ({ ...p, [r.appointmentId]: e.target.value }))
-															}
-														>
-															<option value="">Select Staff</option>
-															{users.map((u) => (
-																<option key={u.id} value={u.id}>
-																	{userLabel(u)}
-																</option>
-															))}
-														</select>
+														<div className="w-[135px] rounded border border-gray-200 bg-gray-50 px-2 py-2 text-sm text-gray-800 truncate">
+															{staffLabel({ name: r.staffName, userId: r.staffUserId })}
+														</div>
 													</td>
 
 													<td className="px-3 py-2 text-sm">
@@ -742,20 +915,7 @@ export default function TravelSettlementPage() {
 															type="number"
 															step="0.01"
 															min="0"
-															className="w-[140px] border rounded px-2 py-1.5"
-															value={draftPettyCash[r.appointmentId] ?? '0'}
-															onChange={(e) =>
-																setDraftPettyCash((p) => ({ ...p, [r.appointmentId]: e.target.value }))
-															}
-														/>
-													</td>
-
-													<td className="px-3 py-2 text-sm">
-														<input
-															type="number"
-															step="0.01"
-															min="0"
-															className="w-[140px] border rounded px-2 py-1.5"
+															className="w-[95px] border rounded px-2 py-1.5"
 															value={draftTravel[r.appointmentId] ?? '0'}
 															onChange={(e) =>
 																setDraftTravel((p) => ({ ...p, [r.appointmentId]: e.target.value }))
@@ -768,7 +928,7 @@ export default function TravelSettlementPage() {
 															type="number"
 															step="0.01"
 															min="0"
-															className="w-[160px] border rounded px-2 py-1.5"
+															className="w-[115px] border rounded px-2 py-1.5"
 															value={draftAccommodation[r.appointmentId] ?? '0'}
 															onChange={(e) =>
 																setDraftAccommodation((p) => ({
@@ -784,42 +944,32 @@ export default function TravelSettlementPage() {
 													</td>
 
 													<td className="px-3 py-2 text-sm font-medium whitespace-nowrap">
-														{fmtINR(num(r.tpaReceivedAmount))}
+														{fmtINR(num(r.tpaForecastAmount))}
 													</td>
 
-													<td className={`px-3 py-2 text-sm font-medium whitespace-nowrap ${balance < 0 ? 'text-red-600' : 'text-gray-900'}`}>
-														{fmtINR(balance)}
-													</td>
-
-													<td className={`px-3 py-2 text-sm font-semibold whitespace-nowrap ${profitLoss > 0 ? 'text-green-600' : profitLoss < 0 ? 'text-red-600' : 'text-gray-700'}`}>
+													<td
+														className={`px-3 py-2 text-sm font-semibold whitespace-nowrap ${profitLoss > 0 ? 'text-green-600' : profitLoss < 0 ? 'text-red-600' : 'text-gray-700'
+															}`}
+													>
 														{fmtINR(profitLoss)}
 													</td>
 
 													<td className="px-3 py-2 text-sm whitespace-nowrap">
-														<span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${settlementStatus === 'Balance to return'
-																? 'bg-blue-100 text-blue-700'
-																: settlementStatus === 'Extra claim'
-																	? 'bg-red-100 text-red-700'
-																	: 'bg-gray-100 text-gray-700'
-															}`}>
-															{settlementStatus}
-														</span>
-													</td>
-
-													<td className="px-3 py-2 text-sm whitespace-nowrap">
-														<span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${profitStatus === 'Profit'
-																? 'bg-green-100 text-green-700'
-																: profitStatus === 'Loss'
-																	? 'bg-red-100 text-red-700'
-																	: 'bg-gray-100 text-gray-700'
-															}`}>
+														<span
+															className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${profitStatus === 'Profit'
+																	? 'bg-green-100 text-green-700'
+																	: profitStatus === 'Loss'
+																		? 'bg-red-100 text-red-700'
+																		: 'bg-gray-100 text-gray-700'
+																}`}
+														>
 															{profitStatus}
 														</span>
 													</td>
 
 													<td className="px-3 py-2 text-sm">
 														<input
-															className="w-[260px] border rounded px-2 py-1.5"
+															className="w-[230px] border rounded px-2 py-1.5"
 															placeholder="Enter remarks"
 															value={draftRemark[r.appointmentId] ?? ''}
 															onChange={(e) =>
@@ -837,7 +987,7 @@ export default function TravelSettlementPage() {
 					</div>
 
 					<div className="text-xs text-gray-500 mt-3">
-						TPA Received is pulled from Appointment Extra Rs. Profit / Loss = TPA Received - Total Spent.
+						Petty Cash Balance = Total Petty Cash - Total Spent. Profit / Loss = TPA Forecast - Total Spent.
 					</div>
 				</div>
 			</div>
@@ -845,11 +995,30 @@ export default function TravelSettlementPage() {
 	);
 }
 
-function Card({ title, value }: { title: string; value: string }) {
+function StatCard({
+	title,
+	value,
+	icon,
+	panelClass,
+	iconClass,
+}: {
+	title: string;
+	value: string;
+	icon: React.ReactNode;
+	panelClass: string;
+	iconClass: string;
+}) {
 	return (
-		<div className="rounded-xl border bg-white px-4 py-4 shadow-sm">
-			<div className="text-xs text-gray-500">{title}</div>
-			<div className="mt-2 text-xl font-bold text-gray-900">{value}</div>
+		<div className={`rounded-xl border px-3 py-3 shadow-sm ${panelClass}`}>
+			<div className="flex items-start justify-between gap-2">
+				<div className="min-w-0">
+					<div className="text-[11px] leading-4 text-gray-600 truncate">{title}</div>
+					<div className="mt-1.5 text-xl font-bold leading-6 text-gray-900">{value}</div>
+				</div>
+				<div className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${iconClass}`}>
+					{icon}
+				</div>
+			</div>
 		</div>
 	);
 }

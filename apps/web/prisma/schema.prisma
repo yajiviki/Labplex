@@ -190,24 +190,28 @@ model Billing {
 }
 
 model TravelExpense {
-  id                  String      @id
+  id                  String      @id @default(cuid())
   appointmentId       String
   patientName         String
   travelDate          DateTime?
   travelFrom          String?
   travelTo            String?
-  fuelAmount          Decimal     @default(0) @db.Decimal(10, 2)
-  foodAmount          Decimal     @default(0) @db.Decimal(10, 2)
-  accommodationAmount Decimal     @default(0) @db.Decimal(10, 2)
-  otherAmount         Decimal     @default(0) @db.Decimal(10, 2)
-  reimbursementAmount Decimal     @default(0) @db.Decimal(10, 2)
+  fuelAmount          Decimal     @default(0) @db.Decimal(12, 2)
+  foodAmount          Decimal     @default(0) @db.Decimal(12, 2)
+  accommodationAmount Decimal     @default(0) @db.Decimal(12, 2)
+  otherAmount         Decimal     @default(0) @db.Decimal(12, 2)
+  totalSpent          Decimal     @default(0) @db.Decimal(12, 2)
   notes               String?
   createdAt           DateTime    @default(now())
-  updatedAt           DateTime
-  Appointment         Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  updatedAt           DateTime    @updatedAt
+
+  appointment         Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 
   @@index([appointmentId])
+  @@index([travelDate])
 }
+
+
 
 enum BillingStatus {
   Paid
@@ -226,13 +230,20 @@ enum ApplicationForm {
   ALL
 }
 
-upsert({
-  where: { appointmentId }
-})
+model PettyCashEntry {
+  id          String   @id @default(uuid())
+  entryDate    DateTime
+  amount       Decimal  @default(0) @db.Decimal(12, 2)
+  description  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([entryDate])
+}
 
 model TravelSettlement {
   id                 String   @id @default(uuid())
-  appointmentId      String
+  appointmentId      String   @unique
   staffId            String?
 
   patientName        String
@@ -243,16 +254,12 @@ model TravelSettlement {
   visitType          String?
   location           String?
 
-  pettyCashGiven     Decimal  @default(0) @db.Decimal(12, 2)
   travelCost         Decimal  @default(0) @db.Decimal(12, 2)
   accommodationCost  Decimal  @default(0) @db.Decimal(12, 2)
   totalSpent         Decimal  @default(0) @db.Decimal(12, 2)
 
-  tpaReceivedAmount  Decimal  @default(0) @db.Decimal(12, 2)
-  pettyCashBalance   Decimal  @default(0) @db.Decimal(12, 2)
+  tpaForecastAmount  Decimal  @default(0) @db.Decimal(12, 2)
   profitLossAmount   Decimal  @default(0) @db.Decimal(12, 2)
-
-  settlementStatus   String   @default("Settled")
   profitLossStatus   String   @default("Break-even")
 
   remarks            String?
@@ -260,11 +267,57 @@ model TravelSettlement {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  @@index([appointmentId])
   @@index([staffId])
   @@index([vendorId])
   @@index([labId])
   @@index([appointmentDate])
-  @@index([settlementStatus])
   @@index([profitLossStatus])
+}
+
+enum PettyCashTxnType {
+  RECEIVE
+  REPAY
+}
+
+enum PettyCashAccountType {
+  VENDOR
+  PERSON
+  STAFF
+  OTHER
+}
+
+model PettyCashAccount {
+  id           String               @id @default(cuid())
+  name         String
+  accountType  PettyCashAccountType @default(OTHER)
+  phone        String?
+  notes        String?
+  isActive     Int                  @default(1)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  transactions PettyCashTransaction[]
+
+  @@index([name])
+  @@index([accountType])
+}
+
+model PettyCashTransaction {
+  id                 String            @id @default(cuid())
+  pettyCashAccountId String
+  txnDate            DateTime
+  txnType            PettyCashTxnType
+  amount             Decimal           @db.Decimal(12, 2)
+  referenceNo        String?
+  notes              String?
+  isActive           Int               @default(1)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  pettyCashAccount   PettyCashAccount  @relation(fields: [pettyCashAccountId], references: [id], onDelete: Cascade)
+
+  @@index([pettyCashAccountId])
+  @@index([txnDate])
+  @@index([txnType])
+  @@index([isActive])
 }
