@@ -15,6 +15,8 @@ import {
 	ReceiptText,
 	BarChart3,
 	CalendarDays,
+	Columns3,
+	FileDown,
 } from 'lucide-react';
 import {
 	ResponsiveContainer,
@@ -24,7 +26,11 @@ import {
 	XAxis,
 	YAxis,
 	Tooltip,
+	Cell,
+	LabelList,
 } from 'recharts';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 type Lab = {
 	id: string;
@@ -90,6 +96,37 @@ type PettyCashDashboardResp = {
 	};
 };
 
+type StaffChartRow = {
+	id: string;
+	name: string;
+	amount: number;
+	caseCount: number;
+	label: string;
+};
+
+type DayChartRow = {
+	id: string;
+	day: string;
+	label: string;
+	amount: number;
+	caseCount: number;
+	displayLabel: string;
+};
+
+type ColKey =
+	| 'appointment'
+	| 'patientName'
+	| 'visitType'
+	| 'location'
+	| 'assignedStaff'
+	| 'travelCost'
+	| 'accommodationCost'
+	| 'totalSpent'
+	| 'tpaForecast'
+	| 'profitLoss'
+	| 'profitLossStatus'
+	| 'remarks';
+
 function formatDateOnly(iso?: string | null) {
 	if (!iso) return '';
 	const d = new Date(iso);
@@ -110,6 +147,12 @@ function ymdToday() {
 	const d = new Date();
 	const pad = (n: number) => String(n).padStart(2, '0');
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function ymdMonthStart() {
+	const d = new Date();
+	const pad = (n: number) => String(n).padStart(2, '0');
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`;
 }
 
 function ymToday() {
@@ -143,6 +186,17 @@ function fmtINR(n: number) {
 	}).format(Number.isFinite(n) ? n : 0);
 }
 
+function fmtNum(n: number) {
+	return new Intl.NumberFormat('en-IN', {
+		maximumFractionDigits: 0,
+	}).format(Number.isFinite(n) ? n : 0);
+}
+
+function fmtPdfAmount(n: number) {
+	const val = Number.isFinite(n) ? n : 0;
+	return val.toFixed(2);
+}
+
 function num(v: string | number | null | undefined) {
 	const n = Number(v ?? 0);
 	return Number.isFinite(n) ? n : 0;
@@ -167,14 +221,50 @@ function getDayKeyFromIso(iso?: string | null) {
 	return `${y}-${m}-${day}`;
 }
 
+function chartValueLabel(amount: number, caseCount: number) {
+	return `${fmtNum(amount)} (${caseCount} case${caseCount > 1 ? 's' : ''})`;
+}
+
+const ALL_COLUMNS: Array<{ key: ColKey; label: string }> = [
+	{ key: 'appointment', label: 'Appointment' },
+	{ key: 'patientName', label: 'Patient Name' },
+	{ key: 'visitType', label: 'Visit Type' },
+	{ key: 'location', label: 'Location' },
+	{ key: 'assignedStaff', label: 'Assigned Staff' },
+	{ key: 'travelCost', label: 'Travel Cost' },
+	{ key: 'accommodationCost', label: 'Accommodation Cost' },
+	{ key: 'totalSpent', label: 'Total Spent' },
+	{ key: 'tpaForecast', label: 'TPA Forecast' },
+	{ key: 'profitLoss', label: 'Profit / Loss' },
+	{ key: 'profitLossStatus', label: 'P/L Status' },
+	{ key: 'remarks', label: 'Remarks' },
+];
+
+const DEFAULT_VISIBLE_COLUMNS: ColKey[] = [
+	'appointment',
+	'patientName',
+	'assignedStaff',
+	'travelCost',
+	'accommodationCost',
+	'totalSpent',
+	'tpaForecast',
+	'profitLoss',
+	'remarks',
+];
+
 export default function TravelSettlementPage() {
 	const [loading, setLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
+	const [exportingPdf, setExportingPdf] = useState(false);
 
 	const [labs, setLabs] = useState<Lab[]>([]);
 	const [vendors, setVendors] = useState<Vendor[]>([]);
 	const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
 	const [rows, setRows] = useState<SettlementRow[]>([]);
+
+	const [dateFrom, setDateFrom] = useState<string>(() => ymdMonthStart());
+	const [dateTo, setDateTo] = useState<string>(() => ymdToday());
+	const [chartMonth, setChartMonth] = useState<string>(() => ymToday());
 
 	const [err, setErr] = useState<string | null>(null);
 	const [ok, setOk] = useState<string | null>(null);
@@ -183,9 +273,12 @@ export default function TravelSettlementPage() {
 	const [vendorId, setVendorId] = useState<string>('');
 	const [staffId, setStaffId] = useState<string>('');
 	const [visitType, setVisitType] = useState<string>('');
-	const [dateFrom, setDateFrom] = useState<string>(() => ymdToday());
-	const [dateTo, setDateTo] = useState<string>(() => ymdToday());
-	const [chartMonth, setChartMonth] = useState<string>(() => ymToday());
+
+	const [activeStaffChartId, setActiveStaffChartId] = useState<string>('');
+	const [activeDayChartId, setActiveDayChartId] = useState<string>('');
+	const [showColumnMenu, setShowColumnMenu] = useState(false);
+
+	const [visibleColumns, setVisibleColumns] = useState<ColKey[]>(DEFAULT_VISIBLE_COLUMNS);
 
 	const [summary, setSummary] = useState<SettlementSummary>({
 		totalTransactions: 0,
@@ -384,6 +477,10 @@ export default function TravelSettlementPage() {
 		return 'Break-even';
 	}
 
+	function hasSpend(r: SettlementRow) {
+		return currentTotalSpent(r) > 0;
+	}
+
 	function isRowChanged(r: SettlementRow) {
 		return (
 			num(r.travelCost) !== currentTravel(r) ||
@@ -392,7 +489,7 @@ export default function TravelSettlementPage() {
 		);
 	}
 
-	const filteredSortedRows = useMemo(() => {
+	const sortedRows = useMemo(() => {
 		function val(r: SettlementRow, k: SortKey) {
 			switch (k) {
 				case 'appointmentDate':
@@ -431,6 +528,99 @@ export default function TravelSettlementPage() {
 		});
 	}, [rows, sortKey, sortDir, draftTravel, draftAccommodation, draftRemark]);
 
+	const chartRows = useMemo(() => {
+		return sortedRows.filter(
+			(r) => getMonthKeyFromIso(r.appointmentDate) === chartMonth && hasSpend(r)
+		);
+	}, [sortedRows, chartMonth, draftTravel, draftAccommodation]);
+
+	const staffChartData = useMemo<StaffChartRow[]>(() => {
+		const map = new Map<string, StaffChartRow>();
+
+		for (const row of chartRows) {
+			const id = row.staffId || '__UNASSIGNED__';
+			const name = staffLabel({ name: row.staffName, userId: row.staffUserId });
+			const spent = currentTotalSpent(row);
+
+			if (!map.has(id)) {
+				map.set(id, {
+					id,
+					name,
+					amount: 0,
+					caseCount: 0,
+					label: '',
+				});
+			}
+
+			const curr = map.get(id)!;
+			curr.amount += spent;
+			curr.caseCount += 1;
+		}
+
+		return Array.from(map.values())
+			.map((r) => ({
+				...r,
+				label: chartValueLabel(r.amount, r.caseCount),
+			}))
+			.sort((a, b) => b.amount - a.amount);
+	}, [chartRows, draftTravel, draftAccommodation]);
+
+	const dayChartData = useMemo<DayChartRow[]>(() => {
+		const map = new Map<string, DayChartRow>();
+
+		for (const row of chartRows) {
+			const id = getDayKeyFromIso(row.appointmentDate);
+			if (!id) continue;
+			const spent = currentTotalSpent(row);
+
+			if (!map.has(id)) {
+				map.set(id, {
+					id,
+					day: id,
+					label: id.slice(8, 10),
+					amount: 0,
+					caseCount: 0,
+					displayLabel: '',
+				});
+			}
+
+			const curr = map.get(id)!;
+			curr.amount += spent;
+			curr.caseCount += 1;
+		}
+
+		return Array.from(map.values())
+			.map((r) => ({
+				...r,
+				displayLabel: chartValueLabel(r.amount, r.caseCount),
+			}))
+			.sort((a, b) => a.day.localeCompare(b.day));
+	}, [chartRows, draftTravel, draftAccommodation]);
+
+	const filteredSortedRows = useMemo(() => {
+		let list = [...sortedRows];
+
+		if (activeStaffChartId || activeDayChartId) {
+			list = list.filter((r) => hasSpend(r));
+		}
+
+		if (activeStaffChartId) {
+			list = list.filter((r) => (r.staffId || '__UNASSIGNED__') === activeStaffChartId);
+		}
+
+		if (activeDayChartId) {
+			list = list.filter((r) => getDayKeyFromIso(r.appointmentDate) === activeDayChartId);
+		}
+
+		return list;
+	}, [
+		sortedRows,
+		activeStaffChartId,
+		activeDayChartId,
+		draftTravel,
+		draftAccommodation,
+	]);
+
 	const changedRows = useMemo(() => filteredSortedRows.filter((r) => isRowChanged(r)), [filteredSortedRows]);
 
 	const displaySummary = useMemo(() => {
@@ -450,42 +640,133 @@ export default function TravelSettlementPage() {
 		};
 	}, [filteredSortedRows, pettyCashKpis, draftTravel, draftAccommodation]);
 
-	const chartRows = useMemo(() => {
-		return filteredSortedRows.filter((r) => getMonthKeyFromIso(r.appointmentDate) === chartMonth);
-	}, [filteredSortedRows, chartMonth]);
+	function handleStaffBarClick(row: StaffChartRow) {
+		setActiveStaffChartId((prev) => (prev === row.id ? '' : row.id));
+	}
 
-	const staffChartData = useMemo(() => {
-		const map = new Map<string, number>();
+	function handleDayBarClick(row: DayChartRow) {
+		setActiveDayChartId((prev) => (prev === row.id ? '' : row.id));
+	}
 
-		for (const row of chartRows) {
-			const label = staffLabel({ name: row.staffName, userId: row.staffUserId });
-			const spent = currentTotalSpent(row);
-			map.set(label, (map.get(label) || 0) + spent);
+	function toggleColumn(key: ColKey) {
+		setVisibleColumns((prev) => {
+			if (prev.includes(key)) {
+				if (prev.length === 1) return prev;
+				return prev.filter((c) => c !== key);
+			}
+			return [...prev, key];
+		});
+	}
+
+	function visibleCol(key: ColKey) {
+		return visibleColumns.includes(key);
+	}
+
+	function getPdfCellValue(r: SettlementRow, key: ColKey) {
+		switch (key) {
+			case 'appointment':
+				return `${formatDateOnly(r.appointmentDate)} ${formatTime(r.appointmentDate)}`.trim();
+			case 'patientName':
+				return r.patientName || '-';
+			case 'visitType':
+				return normalizeVisitType(r.visitType || '') || '-';
+			case 'location':
+				return r.location || '-';
+			case 'assignedStaff':
+				return staffLabel({ name: r.staffName, userId: r.staffUserId });
+			case 'travelCost':
+				return fmtPdfAmount(currentTravel(r));
+			case 'accommodationCost':
+				return fmtPdfAmount(currentAccommodation(r));
+			case 'totalSpent':
+				return fmtPdfAmount(currentTotalSpent(r));
+			case 'tpaForecast':
+				return fmtPdfAmount(num(r.tpaForecastAmount));
+			case 'profitLoss':
+				return fmtPdfAmount(currentProfitLoss(r));
+			case 'profitLossStatus':
+				return currentProfitStatus(r);
+			case 'remarks':
+				return currentRemark(r) || '-';
+			default:
+				return '-';
 		}
+	}
 
-		return Array.from(map.entries())
-			.map(([name, amount]) => ({ name, amount }))
-			.sort((a, b) => b.amount - a.amount);
-	}, [chartRows, draftTravel, draftAccommodation]);
+	async function exportPdf() {
+		try {
+			const pdfRows = filteredSortedRows.filter(
+				(r) => currentTravel(r) > 0 || currentAccommodation(r) > 0
+			);
 
-	const dayChartData = useMemo(() => {
-		const map = new Map<string, number>();
+			if (!pdfRows.length) {
+				setErr('No spend rows available for export.');
+				return;
+			}
 
-		for (const row of chartRows) {
-			const dayKey = getDayKeyFromIso(row.appointmentDate);
-			if (!dayKey) continue;
-			const spent = currentTotalSpent(row);
-			map.set(dayKey, (map.get(dayKey) || 0) + spent);
+			if (!visibleColumns.length) {
+				setErr('Please select at least one column to export.');
+				return;
+			}
+
+			setErr(null);
+			setOk(null);
+			setExportingPdf(true);
+
+			const doc = new jsPDF('l', 'mm', 'a4');
+
+			doc.setFontSize(14);
+			doc.text('Travel Expense Settlement', 14, 12);
+
+			doc.setFontSize(9);
+			doc.text(`Range: ${dateFrom || 'All'} to ${dateTo || 'All'}`, 14, 18);
+
+			const chartFilterText = [
+				activeStaffChartId ? 'Staff Chart Filter Applied' : '',
+				activeDayChartId ? 'Day Chart Filter Applied' : '',
+			]
+				.filter(Boolean)
+				.join(' | ');
+
+			if (chartFilterText) {
+				doc.text(chartFilterText, 14, 23);
+			}
+
+			const head = [visibleColumns.map((c) => ALL_COLUMNS.find((x) => x.key === c)?.label || c)];
+
+			const body = pdfRows.map((row) =>
+				visibleColumns.map((c) => getPdfCellValue(row, c))
+			);
+
+			autoTable(doc, {
+				startY: chartFilterText ? 28 : 23,
+				head,
+				body,
+				styles: {
+					fontSize: 8,
+					cellPadding: 2,
+					overflow: 'linebreak',
+				},
+				headStyles: {
+					fillColor: [18, 255, 147],
+					textColor: [0, 0, 0],
+					fontStyle: 'bold',
+				},
+				bodyStyles: {
+					textColor: [31, 41, 55],
+				},
+				margin: { left: 8, right: 8 },
+				tableWidth: 'auto',
+			});
+
+			doc.save(`travel-expense-settlement-${new Date().toISOString().slice(0, 10)}.pdf`);
+			setOk(`PDF exported successfully (${pdfRows.length} spend rows).`);
+		} catch (e: any) {
+			setErr(e?.message || 'PDF export failed');
+		} finally {
+			setExportingPdf(false);
 		}
-
-		return Array.from(map.entries())
-			.map(([day, amount]) => ({
-				day,
-				label: day.slice(8, 10),
-				amount,
-			}))
-			.sort((a, b) => a.day.localeCompare(b.day));
-	}, [chartRows, draftTravel, draftAccommodation]);
+	}
 
 	async function saveAll() {
 		setErr(null);
@@ -565,7 +846,7 @@ export default function TravelSettlementPage() {
 						type="button"
 						className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
 						onClick={loadPageData}
-						disabled={loading || saving}
+						disabled={loading || saving || exportingPdf}
 					>
 						<RefreshCcw className="h-4 w-4" />
 						Refresh
@@ -573,9 +854,19 @@ export default function TravelSettlementPage() {
 
 					<button
 						type="button"
+						className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+						onClick={exportPdf}
+						disabled={loading || saving || exportingPdf || filteredSortedRows.length === 0}
+					>
+						<FileDown className="h-4 w-4" />
+						{exportingPdf ? 'Exporting…' : 'Export PDF'}
+					</button>
+
+					<button
+						type="button"
 						className="inline-flex items-center gap-2 rounded-xl bg-blue-600 text-white px-4 py-2 text-sm hover:bg-blue-700 disabled:opacity-60"
 						onClick={saveAll}
-						disabled={loading || saving || filteredSortedRows.length === 0}
+						disabled={loading || saving || exportingPdf || filteredSortedRows.length === 0}
 					>
 						<Save className="h-4 w-4" />
 						{saving ? 'Saving…' : 'Save All'}
@@ -651,7 +942,7 @@ export default function TravelSettlementPage() {
 					<div>
 						<div className="text-base font-semibold text-gray-900">Spend Analysis</div>
 						<div className="text-xs text-gray-600 mt-1">
-							Staff-wise and day-wise spend based on selected month.
+							Staff-wise and day-wise spend based on selected month. Click a bar to filter the table below.
 						</div>
 					</div>
 
@@ -663,7 +954,11 @@ export default function TravelSettlementPage() {
 									type="month"
 									className="border rounded px-2 py-2 pr-9 w-[150px] text-sm"
 									value={chartMonth}
-									onChange={(e) => setChartMonth(e.target.value)}
+									onChange={(e) => {
+										setChartMonth(e.target.value);
+										setActiveStaffChartId('');
+										setActiveDayChartId('');
+									}}
 								/>
 								<CalendarDays className="pointer-events-none absolute right-2 top-2.5 h-4 w-4 text-gray-400" />
 							</div>
@@ -673,17 +968,29 @@ export default function TravelSettlementPage() {
 
 				<div className="grid grid-cols-1 gap-4 p-4 xl:grid-cols-2">
 					<div className="rounded-xl border border-gray-200 bg-white p-4">
-						<div className="mb-3 flex items-center gap-2">
-							<div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
-								<BarChart3 className="h-4 w-4" />
+						<div className="mb-3 flex items-center justify-between gap-2">
+							<div className="flex items-center gap-2">
+								<div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
+									<BarChart3 className="h-4 w-4" />
+								</div>
+								<div>
+									<div className="text-sm font-semibold text-gray-900">Staff-wise Spend</div>
+									<div className="text-xs text-gray-500">Amount and case count by assigned staff</div>
+								</div>
 							</div>
-							<div>
-								<div className="text-sm font-semibold text-gray-900">Staff-wise Spend</div>
-								<div className="text-xs text-gray-500">Total spent by assigned staff</div>
-							</div>
+
+							{activeStaffChartId ? (
+								<button
+									type="button"
+									className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+									onClick={() => setActiveStaffChartId('')}
+								>
+									Clear Staff Filter
+								</button>
+							) : null}
 						</div>
 
-						<div className="h-[280px]">
+						<div className="h-[300px]">
 							{staffChartData.length === 0 ? (
 								<div className="flex h-full items-center justify-center text-sm text-gray-500">
 									No data for selected month.
@@ -692,12 +999,40 @@ export default function TravelSettlementPage() {
 								<ResponsiveContainer width="100%" height="100%">
 									<BarChart data={staffChartData}>
 										<CartesianGrid strokeDasharray="3 3" vertical={false} />
-										<XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={60} />
+										<XAxis
+											dataKey="name"
+											tick={{ fontSize: 11 }}
+											interval={0}
+											angle={-15}
+											textAnchor="end"
+											height={60}
+										/>
 										<YAxis tick={{ fontSize: 11 }} />
 										<Tooltip
-											formatter={(value: number) => [fmtINR(Number(value || 0)), 'Spent']}
+											formatter={(value: number, _name, props: any) => [
+												`${fmtINR(Number(value || 0))} (${props?.payload?.caseCount || 0} case${(props?.payload?.caseCount || 0) > 1 ? 's' : ''})`,
+												'Spent',
+											]}
 										/>
-										<Bar dataKey="amount" fill="#2563eb" radius={[6, 6, 0, 0]} />
+										<Bar
+											dataKey="amount"
+											radius={[6, 6, 0, 0]}
+											onClick={(data) => handleStaffBarClick(data as StaffChartRow)}
+											cursor="pointer"
+										>
+											{staffChartData.map((entry) => (
+												<Cell
+													key={entry.id}
+													fill={activeStaffChartId === entry.id ? '#1d4ed8' : '#2563eb'}
+												/>
+											))}
+											<LabelList
+												dataKey="label"
+												position="top"
+												formatter={(value: string) => value}
+												style={{ fontSize: 10 }}
+											/>
+										</Bar>
 									</BarChart>
 								</ResponsiveContainer>
 							)}
@@ -705,17 +1040,29 @@ export default function TravelSettlementPage() {
 					</div>
 
 					<div className="rounded-xl border border-gray-200 bg-white p-4">
-						<div className="mb-3 flex items-center gap-2">
-							<div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
-								<BarChart3 className="h-4 w-4" />
+						<div className="mb-3 flex items-center justify-between gap-2">
+							<div className="flex items-center gap-2">
+								<div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+									<BarChart3 className="h-4 w-4" />
+								</div>
+								<div>
+									<div className="text-sm font-semibold text-gray-900">Day-wise Spend</div>
+									<div className="text-xs text-gray-500">Amount and case count by day</div>
+								</div>
 							</div>
-							<div>
-								<div className="text-sm font-semibold text-gray-900">Day-wise Spend</div>
-								<div className="text-xs text-gray-500">Total spent by day in selected month</div>
-							</div>
+
+							{activeDayChartId ? (
+								<button
+									type="button"
+									className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+									onClick={() => setActiveDayChartId('')}
+								>
+									Clear Day Filter
+								</button>
+							) : null}
 						</div>
 
-						<div className="h-[280px]">
+						<div className="h-[300px]">
 							{dayChartData.length === 0 ? (
 								<div className="flex h-full items-center justify-center text-sm text-gray-500">
 									No data for selected month.
@@ -728,9 +1075,30 @@ export default function TravelSettlementPage() {
 										<YAxis tick={{ fontSize: 11 }} />
 										<Tooltip
 											labelFormatter={(label) => `Day ${label}`}
-											formatter={(value: number) => [fmtINR(Number(value || 0)), 'Spent']}
+											formatter={(value: number, _name, props: any) => [
+												`${fmtINR(Number(value || 0))} (${props?.payload?.caseCount || 0} case${(props?.payload?.caseCount || 0) > 1 ? 's' : ''})`,
+												'Spent',
+											]}
 										/>
-										<Bar dataKey="amount" fill="#059669" radius={[6, 6, 0, 0]} />
+										<Bar
+											dataKey="amount"
+											radius={[6, 6, 0, 0]}
+											onClick={(data) => handleDayBarClick(data as DayChartRow)}
+											cursor="pointer"
+										>
+											{dayChartData.map((entry) => (
+												<Cell
+													key={entry.id}
+													fill={activeDayChartId === entry.id ? '#047857' : '#059669'}
+												/>
+											))}
+											<LabelList
+												dataKey="displayLabel"
+												position="top"
+												formatter={(value: string) => value}
+												style={{ fontSize: 10 }}
+											/>
+										</Bar>
 									</BarChart>
 								</ResponsiveContainer>
 							)}
@@ -745,10 +1113,42 @@ export default function TravelSettlementPage() {
 						<div className="text-base font-semibold text-gray-900">Appointment Expense Transactions</div>
 						<div className="text-xs text-gray-600 mt-1">
 							Assigned staff is taken from Outer Assignment. Enter only <b>Travel Cost</b> and <b>Accommodation Cost</b>.
+							{activeStaffChartId || activeDayChartId ? (
+								<span className="ml-2 text-blue-700 font-medium">Chart filter applied</span>
+							) : null}
 						</div>
 					</div>
 
 					<div className="flex flex-wrap items-end gap-2">
+						<div className="relative">
+							<button
+								type="button"
+								className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50 h-[38px]"
+								onClick={() => setShowColumnMenu((p) => !p)}
+							>
+								<Columns3 className="h-4 w-4" />
+								Columns
+							</button>
+
+							{showColumnMenu && (
+								<div className="absolute right-0 z-20 mt-2 w-[240px] rounded-xl border bg-white p-3 shadow-lg">
+									<div className="text-xs font-semibold text-gray-700 mb-2">Visible Columns</div>
+									<div className="space-y-2 max-h-[320px] overflow-y-auto">
+										{ALL_COLUMNS.map((col) => (
+											<label key={col.key} className="flex items-center gap-2 text-sm text-gray-700">
+												<input
+													type="checkbox"
+													checked={visibleColumns.includes(col.key)}
+													onChange={() => toggleColumn(col.key)}
+												/>
+												<span>{col.label}</span>
+											</label>
+										))}
+									</div>
+								</div>
+							)}
+						</div>
+
 						<div>
 							<label className="block text-xs text-gray-600 mb-1">Lab</label>
 							<select
@@ -840,6 +1240,8 @@ export default function TravelSettlementPage() {
 								setLabId('');
 								setVendorId('');
 								setVisitType('');
+								setActiveStaffChartId('');
+								setActiveDayChartId('');
 							}}
 						>
 							Clear
@@ -850,36 +1252,38 @@ export default function TravelSettlementPage() {
 				<div className="p-4">
 					<div className="w-full overflow-x-auto">
 						<div className="max-h-[720px] overflow-y-auto rounded border border-gray-200">
-							<table className="w-full min-w-[2100px]">
+							<table className="w-full min-w-[1400px]">
 								<thead className="sticky top-0 z-10 bg-white">
 									<tr className="border-b bg-gray-50">
-										<SortTh k="appointmentDate" label="Appointment" />
-										<SortTh k="patientName" label="Patient Name" />
-										<SortTh k="visitType" label="Visit Type" />
-										<SortTh k="location" label="Location" />
-										<SortTh k="staff" label="Assigned Staff" />
-										<SortTh k="travelCost" label="Travel Cost" />
-										<SortTh k="accommodationCost" label="Accommodation Cost" />
-										<SortTh k="totalSpent" label="Total Spent" />
-										<SortTh k="tpaForecastAmount" label="TPA Forecast" />
-										<SortTh k="profitLossAmount" label="Profit / Loss" />
-										<SortTh k="profitLossStatus" label="P/L Status" />
-										<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">
-											Remarks
-										</th>
+										{visibleCol('appointment') && <SortTh k="appointmentDate" label="Appointment" />}
+										{visibleCol('patientName') && <SortTh k="patientName" label="Patient Name" />}
+										{visibleCol('visitType') && <SortTh k="visitType" label="Visit Type" />}
+										{visibleCol('location') && <SortTh k="location" label="Location" />}
+										{visibleCol('assignedStaff') && <SortTh k="staff" label="Assigned Staff" />}
+										{visibleCol('travelCost') && <SortTh k="travelCost" label="Travel Cost" />}
+										{visibleCol('accommodationCost') && <SortTh k="accommodationCost" label="Accommodation Cost" />}
+										{visibleCol('totalSpent') && <SortTh k="totalSpent" label="Total Spent" />}
+										{visibleCol('tpaForecast') && <SortTh k="tpaForecastAmount" label="TPA Forecast" />}
+										{visibleCol('profitLoss') && <SortTh k="profitLossAmount" label="Profit / Loss" />}
+										{visibleCol('profitLossStatus') && <SortTh k="profitLossStatus" label="P/L Status" />}
+										{visibleCol('remarks') && (
+											<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">
+												Remarks
+											</th>
+										)}
 									</tr>
 								</thead>
 
 								<tbody>
 									{loading ? (
 										<tr>
-											<td colSpan={12} className="px-3 py-6 text-center text-sm text-gray-500">
+											<td colSpan={visibleColumns.length} className="px-3 py-6 text-center text-sm text-gray-500">
 												Loading…
 											</td>
 										</tr>
 									) : filteredSortedRows.length === 0 ? (
 										<tr>
-											<td colSpan={12} className="px-3 py-6 text-center text-sm text-gray-500">
+											<td colSpan={visibleColumns.length} className="px-3 py-6 text-center text-sm text-gray-500">
 												No rows found for the current filter.
 											</td>
 										</tr>
@@ -891,92 +1295,123 @@ export default function TravelSettlementPage() {
 											const changed = isRowChanged(r);
 
 											return (
-												<tr key={r.appointmentId} className={`border-t hover:bg-gray-50 ${changed ? 'bg-amber-50/30' : ''}`}>
-													<td className="px-3 py-2 text-sm whitespace-nowrap">
-														<div className="font-medium text-gray-900">
-															{formatDateOnly(r.appointmentDate)}{' '}
-															<span className="text-gray-500">{formatTime(r.appointmentDate)}</span>
-														</div>
-														<div className="text-xs text-gray-500">{r.labName || '-'}</div>
-													</td>
+												<tr
+													key={r.appointmentId}
+													className={`border-t hover:bg-gray-50 ${changed ? 'bg-amber-50/30' : ''}`}
+												>
+													{visibleCol('appointment') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">
+															<div className="font-medium text-gray-900">
+																{formatDateOnly(r.appointmentDate)}{' '}
+																<span className="text-gray-500">{formatTime(r.appointmentDate)}</span>
+															</div>
+															<div className="text-xs text-gray-500">{r.labName || '-'}</div>
+														</td>
+													)}
 
-													<td className="px-3 py-2 text-sm whitespace-nowrap">{r.patientName}</td>
-													<td className="px-3 py-2 text-sm whitespace-nowrap">{normalizeVisitType(r.visitType || '') || '-'}</td>
-													<td className="px-3 py-2 text-sm">{r.location || '-'}</td>
+													{visibleCol('patientName') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">{r.patientName}</td>
+													)}
 
-													<td className="px-3 py-2 text-sm">
-														<div className="w-[135px] rounded border border-gray-200 bg-gray-50 px-2 py-2 text-sm text-gray-800 truncate">
-															{staffLabel({ name: r.staffName, userId: r.staffUserId })}
-														</div>
-													</td>
+													{visibleCol('visitType') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">
+															{normalizeVisitType(r.visitType || '') || '-'}
+														</td>
+													)}
 
-													<td className="px-3 py-2 text-sm">
-														<input
-															type="number"
-															step="0.01"
-															min="0"
-															className="w-[95px] border rounded px-2 py-1.5"
-															value={draftTravel[r.appointmentId] ?? '0'}
-															onChange={(e) =>
-																setDraftTravel((p) => ({ ...p, [r.appointmentId]: e.target.value }))
-															}
-														/>
-													</td>
+													{visibleCol('location') && (
+														<td className="px-3 py-2 text-sm">{r.location || '-'}</td>
+													)}
 
-													<td className="px-3 py-2 text-sm">
-														<input
-															type="number"
-															step="0.01"
-															min="0"
-															className="w-[115px] border rounded px-2 py-1.5"
-															value={draftAccommodation[r.appointmentId] ?? '0'}
-															onChange={(e) =>
-																setDraftAccommodation((p) => ({
-																	...p,
-																	[r.appointmentId]: e.target.value,
-																}))
-															}
-														/>
-													</td>
+													{visibleCol('assignedStaff') && (
+														<td className="px-3 py-2 text-sm">
+															<div className="w-[135px] rounded border border-gray-200 bg-gray-50 px-2 py-2 text-sm text-gray-800 truncate">
+																{staffLabel({ name: r.staffName, userId: r.staffUserId })}
+															</div>
+														</td>
+													)}
 
-													<td className="px-3 py-2 text-sm font-medium whitespace-nowrap">
-														{fmtINR(totalSpent)}
-													</td>
+													{visibleCol('travelCost') && (
+														<td className="px-3 py-2 text-sm">
+															<input
+																type="number"
+																step="0.01"
+																min="0"
+																className="w-[95px] border rounded px-2 py-1.5"
+																value={draftTravel[r.appointmentId] ?? '0'}
+																onChange={(e) =>
+																	setDraftTravel((p) => ({ ...p, [r.appointmentId]: e.target.value }))
+																}
+															/>
+														</td>
+													)}
 
-													<td className="px-3 py-2 text-sm font-medium whitespace-nowrap">
-														{fmtINR(num(r.tpaForecastAmount))}
-													</td>
+													{visibleCol('accommodationCost') && (
+														<td className="px-3 py-2 text-sm">
+															<input
+																type="number"
+																step="0.01"
+																min="0"
+																className="w-[115px] border rounded px-2 py-1.5"
+																value={draftAccommodation[r.appointmentId] ?? '0'}
+																onChange={(e) =>
+																	setDraftAccommodation((p) => ({
+																		...p,
+																		[r.appointmentId]: e.target.value,
+																	}))
+																}
+															/>
+														</td>
+													)}
 
-													<td
-														className={`px-3 py-2 text-sm font-semibold whitespace-nowrap ${profitLoss > 0 ? 'text-green-600' : profitLoss < 0 ? 'text-red-600' : 'text-gray-700'
-															}`}
-													>
-														{fmtINR(profitLoss)}
-													</td>
+													{visibleCol('totalSpent') && (
+														<td className="px-3 py-2 text-sm font-medium whitespace-nowrap">
+															{fmtINR(totalSpent)}
+														</td>
+													)}
 
-													<td className="px-3 py-2 text-sm whitespace-nowrap">
-														<span
-															className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${profitStatus === 'Profit'
+													{visibleCol('tpaForecast') && (
+														<td className="px-3 py-2 text-sm font-medium whitespace-nowrap">
+															{fmtINR(num(r.tpaForecastAmount))}
+														</td>
+													)}
+
+													{visibleCol('profitLoss') && (
+														<td
+															className={`px-3 py-2 text-sm font-semibold whitespace-nowrap ${profitLoss > 0 ? 'text-green-600' : profitLoss < 0 ? 'text-red-600' : 'text-gray-700'
+																}`}
+														>
+															{fmtINR(profitLoss)}
+														</td>
+													)}
+
+													{visibleCol('profitLossStatus') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">
+															<span
+																className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${profitStatus === 'Profit'
 																	? 'bg-green-100 text-green-700'
 																	: profitStatus === 'Loss'
 																		? 'bg-red-100 text-red-700'
 																		: 'bg-gray-100 text-gray-700'
-																}`}
-														>
-															{profitStatus}
-														</span>
-													</td>
+																	}`}
+															>
+																{profitStatus}
+															</span>
+														</td>
+													)}
 
-													<td className="px-3 py-2 text-sm">
-														<input
-															className="w-[230px] border rounded px-2 py-1.5"
-															placeholder="Enter remarks"
-															value={draftRemark[r.appointmentId] ?? ''}
-															onChange={(e) =>
-																setDraftRemark((p) => ({ ...p, [r.appointmentId]: e.target.value }))
-															}
-														/>
-													</td>
+													{visibleCol('remarks') && (
+														<td className="px-3 py-2 text-sm">
+															<input
+																className="w-[230px] border rounded px-2 py-1.5"
+																placeholder="Enter remarks"
+																value={draftRemark[r.appointmentId] ?? ''}
+																onChange={(e) =>
+																	setDraftRemark((p) => ({ ...p, [r.appointmentId]: e.target.value }))
+																}
+															/>
+														</td>
+													)}
 												</tr>
 											);
 										})
@@ -987,7 +1422,7 @@ export default function TravelSettlementPage() {
 					</div>
 
 					<div className="text-xs text-gray-500 mt-3">
-						Petty Cash Balance = Total Petty Cash - Total Spent. Profit / Loss = TPA Forecast - Total Spent.
+						Petty Cash Balance = Total Petty Cash - Total Spent. Click chart bars to filter the table. Export PDF uses only current filtered rows and selected columns.
 					</div>
 				</div>
 			</div>
