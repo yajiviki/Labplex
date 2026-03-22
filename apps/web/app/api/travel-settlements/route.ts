@@ -105,7 +105,11 @@ async function buildVisitMetaForAppointments(
 		}
 	>();
 
-	for (const [, appts] of grouped) {
+	const groupedLists = Array.from(grouped.values());
+
+	for (let g = 0; g < groupedLists.length; g += 1) {
+		const appts = groupedLists[g];
+
 		appts.sort((a, b) => {
 			const at = a.apptAt ? new Date(a.apptAt as any).getTime() : 0;
 			const bt = b.apptAt ? new Date(b.apptAt as any).getTime() : 0;
