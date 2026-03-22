@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '../../../lib/db';
 
-
 function asNum(v: unknown): number {
 	if (v == null) return 0;
 	if (typeof v === 'number') return v;
 	if (typeof v === 'string') return Number(v) || 0;
 	if (typeof v === 'object' && v && 'toString' in v) return Number((v as any).toString()) || 0;
 	return 0;
+}
+
+function round2(n: number): number {
+	return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
 }
 
 function normalizeVisitType(v?: string | null) {
@@ -17,10 +20,138 @@ function normalizeVisitType(v?: string | null) {
 	return '';
 }
 
+function normalizeText(v?: string | null) {
+	return String(v || '')
+		.toLowerCase()
+		.trim()
+		.replace(/\s+/g, ' ')
+		.replace(/[,\-]/g, '');
+}
+
 function getProfitLossStatus(value: number): 'Profit' | 'Loss' | 'Break-even' {
 	if (value > 0) return 'Profit';
 	if (value < 0) return 'Loss';
 	return 'Break-even';
+}
+
+function getVisitKey(staffId?: string | null, location?: string | null) {
+	return `${String(staffId || '').trim()}__${normalizeText(location)}`;
+}
+
+async function buildVisitMetaForAppointments(
+	targetAppointments: Array<{
+		id: string;
+		assignedToId?: string | null;
+		location?: string | null;
+		apptAt?: Date | string | null;
+		extraChargeRs?: unknown;
+	}>
+) {
+	const targetIds = new Set(targetAppointments.map((x) => String(x.id)));
+
+	if (!targetAppointments.length) {
+		return new Map<
+			string,
+			{
+				visitNumber: number;
+				actualAmount: number;
+				advanceAmount: number;
+			}
+		>();
+	}
+
+	const staffIds = Array.from(
+		new Set(
+			targetAppointments
+				.map((a) => String(a.assignedToId || '').trim())
+				.filter(Boolean)
+		)
+	);
+
+	const historyAppointments = await prisma.appointment.findMany({
+		where: {
+			assignedToId: { in: staffIds as any },
+			status: {
+				in: ['Need Confirmation', 'Need confirmation', 'Report - Completed', 'Report - InProgress'],
+			},
+		},
+		select: {
+			id: true,
+			assignedToId: true as any,
+			location: true as any,
+			apptAt: true as any,
+			extraChargeRs: true as any,
+		},
+		orderBy: [{ apptAt: 'asc' }, { id: 'asc' }],
+	});
+
+	const grouped = new Map<string, typeof historyAppointments>();
+
+	for (const appt of historyAppointments) {
+		const key = getVisitKey(appt.assignedToId, appt.location);
+
+		if (!String(appt.assignedToId || '').trim() || !normalizeText(appt.location)) continue;
+
+		if (!grouped.has(key)) grouped.set(key, []);
+		grouped.get(key)!.push(appt);
+	}
+
+	const visitMetaMap = new Map<
+		string,
+		{
+			visitNumber: number;
+			actualAmount: number;
+			advanceAmount: number;
+		}
+	>();
+
+	for (const [, appts] of grouped) {
+		appts.sort((a, b) => {
+			const at = a.apptAt ? new Date(a.apptAt as any).getTime() : 0;
+			const bt = b.apptAt ? new Date(b.apptAt as any).getTime() : 0;
+			if (at !== bt) return at - bt;
+			return String(a.id).localeCompare(String(b.id));
+		});
+
+		let previousActual = 0;
+
+		for (let i = 0; i < appts.length; i += 1) {
+			const appt = appts[i];
+			const visitNumber = i + 1;
+			const forecast = round2(asNum(appt.extraChargeRs));
+
+			const actualAmount =
+				visitNumber === 1 ? round2(forecast * 0.3) : round2(previousActual * 0.5);
+
+			const advanceAmount = round2(actualAmount * 0.5);
+
+			if (targetIds.has(String(appt.id))) {
+				visitMetaMap.set(String(appt.id), {
+					visitNumber,
+					actualAmount,
+					advanceAmount,
+				});
+			}
+
+			previousActual = actualAmount;
+		}
+	}
+
+	for (const appt of targetAppointments) {
+		if (!visitMetaMap.has(String(appt.id))) {
+			const forecast = round2(asNum(appt.extraChargeRs));
+			const actualAmount = round2(forecast * 0.3);
+			const advanceAmount = round2(actualAmount * 0.5);
+
+			visitMetaMap.set(String(appt.id), {
+				visitNumber: 1,
+				actualAmount,
+				advanceAmount,
+			});
+		}
+	}
+
+	return visitMetaMap;
 }
 
 export async function GET(req: NextRequest) {
@@ -109,15 +240,32 @@ export async function GET(req: NextRequest) {
 		const settlementMap = new Map<string, any>();
 		for (const s of settlementRows) settlementMap.set(s.appointmentId, s);
 
+		const visitMetaMap = await buildVisitMetaForAppointments(
+			appointments.map((a: any) => ({
+				id: a.id,
+				assignedToId: a.assignedToId,
+				location: a.location,
+				apptAt: a.apptAt,
+				extraChargeRs: a.extraChargeRs,
+			}))
+		);
+
 		const rows = appointments.map((a: any) => {
 			const existing = settlementMap.get(a.id);
-			const travelCost = existing ? asNum(existing.travelCost) : 0;
-			const accommodationCost = existing ? asNum(existing.accommodationCost) : 0;
-			const totalSpent = travelCost + accommodationCost;
+			const visitMeta = visitMetaMap.get(String(a.id));
+
+			const travelCost = existing ? round2(asNum(existing.travelCost)) : 0;
+			const accommodationCost = existing ? round2(asNum(existing.accommodationCost)) : 0;
+			const totalSpent = round2(travelCost + accommodationCost);
+
 			const tpaForecastAmount = existing
-				? asNum(existing.tpaForecastAmount)
-				: asNum(a.extraChargeRs);
-			const profitLossAmount = tpaForecastAmount - totalSpent;
+				? round2(asNum(existing.tpaForecastAmount))
+				: round2(asNum(a.extraChargeRs));
+
+			const visitNumber = visitMeta?.visitNumber ?? 1;
+			const actualAmount = round2(visitMeta?.actualAmount ?? tpaForecastAmount * 0.3);
+			const advanceAmount = round2(visitMeta?.advanceAmount ?? actualAmount * 0.5);
+			const profitLossAmount = round2(actualAmount - totalSpent);
 
 			return {
 				id: existing?.id ?? '',
@@ -134,12 +282,15 @@ export async function GET(req: NextRequest) {
 				visitType: a.visitType ?? '',
 				location: a.location ?? '',
 				status: a.status ?? '',
+				visitNumber,
+				actualAmount,
+				advanceAmount,
 				travelCost,
 				accommodationCost,
 				totalSpent,
 				tpaForecastAmount,
 				profitLossAmount,
-				profitLossStatus: existing?.profitLossStatus ?? getProfitLossStatus(profitLossAmount),
+				profitLossStatus: getProfitLossStatus(profitLossAmount),
 				remarks: existing?.remarks ?? '',
 				createdAt: existing?.createdAt ?? null,
 				updatedAt: existing?.updatedAt ?? null,
@@ -165,11 +316,15 @@ export async function GET(req: NextRequest) {
 			return al.localeCompare(bl);
 		});
 
-		const totalPettyCash = pettyCashRows.reduce((sum: number, r: any) => sum + asNum(r.amount), 0);
-		const totalSpent = rows.reduce((sum: number, r: any) => sum + asNum(r.totalSpent), 0);
-		const totalForecast = rows.reduce((sum: number, r: any) => sum + asNum(r.tpaForecastAmount), 0);
-		const pendingPettyCash = totalPettyCash - totalSpent;
-		const netProfitLoss = totalForecast - totalSpent;
+		const totalPettyCash = round2(
+			pettyCashRows.reduce((sum: number, r: any) => sum + asNum(r.amount), 0)
+		);
+		const totalSpent = round2(rows.reduce((sum: number, r: any) => sum + asNum(r.totalSpent), 0));
+		const totalForecast = round2(rows.reduce((sum: number, r: any) => sum + asNum(r.tpaForecastAmount), 0));
+		const pendingPettyCash = round2(totalPettyCash - totalSpent);
+		const netProfitLoss = round2(
+			rows.reduce((sum: number, r: any) => sum + asNum(r.profitLossAmount), 0)
+		);
 
 		return NextResponse.json({
 			ok: true,
@@ -248,19 +403,31 @@ export async function POST(req: NextRequest) {
 			}
 		}
 
+		const visitMetaMap = await buildVisitMetaForAppointments(
+			appointments.map((a: any) => ({
+				id: a.id,
+				assignedToId: a.assignedToId,
+				location: a.location,
+				apptAt: a.apptAt,
+				extraChargeRs: a.extraChargeRs,
+			}))
+		);
+
 		await prisma.$transaction(
 			items.map((item: any) => {
 				const appointmentId = String(item.appointmentId || '').trim();
 				const appt = apptMap.get(appointmentId);
+				const visitMeta = visitMetaMap.get(appointmentId);
 
 				const staffId = appt.assignedToId ? String(appt.assignedToId).trim() : null;
-				const travelCost = asNum(item.travelCost);
-				const accommodationCost = asNum(item.accommodationCost);
+				const travelCost = round2(asNum(item.travelCost));
+				const accommodationCost = round2(asNum(item.accommodationCost));
 				const remarks = String(item.remarks || '').trim() || null;
 
-				const totalSpent = travelCost + accommodationCost;
-				const tpaForecastAmount = asNum(appt.extraChargeRs);
-				const profitLossAmount = tpaForecastAmount - totalSpent;
+				const totalSpent = round2(travelCost + accommodationCost);
+				const tpaForecastAmount = round2(asNum(appt.extraChargeRs));
+				const actualAmount = round2(visitMeta?.actualAmount ?? tpaForecastAmount * 0.3);
+				const profitLossAmount = round2(actualAmount - totalSpent);
 				const profitLossStatus = getProfitLossStatus(profitLossAmount);
 
 				return prisma.travelSettlement.upsert({

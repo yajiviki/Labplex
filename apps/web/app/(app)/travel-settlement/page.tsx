@@ -12,8 +12,6 @@ import {
 	TrendingDown,
 	Scale,
 	TrendingUp,
-	ReceiptText,
-	BarChart3,
 	CalendarDays,
 	Columns3,
 	FileDown,
@@ -67,6 +65,9 @@ type SettlementRow = {
 	visitType?: string | null;
 	location?: string | null;
 	status?: string | null;
+	visitNumber: number;
+	actualAmount: number;
+	advanceAmount: number;
 	travelCost: number;
 	accommodationCost: number;
 	totalSpent: number;
@@ -80,9 +81,12 @@ type SettlementRow = {
 
 type SettlementSummary = {
 	totalTransactions: number;
-	pettyCashBalance?: number;
+	totalPettyCash: number;
 	totalSpent: number;
 	totalForecast: number;
+	totalActualAmount: number;
+	totalAdvanceAmount: number;
+	pendingPettyCash: number;
 	netProfitLoss: number;
 };
 
@@ -119,6 +123,9 @@ type ColKey =
 	| 'visitType'
 	| 'location'
 	| 'assignedStaff'
+	| 'visitNumber'
+	| 'actualAmount'
+	| 'advanceAmount'
 	| 'travelCost'
 	| 'accommodationCost'
 	| 'totalSpent'
@@ -202,6 +209,10 @@ function num(v: string | number | null | undefined) {
 	return Number.isFinite(n) ? n : 0;
 }
 
+function round2(n: number) {
+	return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+}
+
 function getMonthKeyFromIso(iso?: string | null) {
 	if (!iso) return '';
 	const d = new Date(iso);
@@ -231,6 +242,9 @@ const ALL_COLUMNS: Array<{ key: ColKey; label: string }> = [
 	{ key: 'visitType', label: 'Visit Type' },
 	{ key: 'location', label: 'Location' },
 	{ key: 'assignedStaff', label: 'Assigned Staff' },
+	{ key: 'visitNumber', label: 'Visit No' },
+	{ key: 'actualAmount', label: 'Actual Amount' },
+	{ key: 'advanceAmount', label: 'Advance Amount' },
 	{ key: 'travelCost', label: 'Travel Cost' },
 	{ key: 'accommodationCost', label: 'Accommodation Cost' },
 	{ key: 'totalSpent', label: 'Total Spent' },
@@ -244,13 +258,43 @@ const DEFAULT_VISIBLE_COLUMNS: ColKey[] = [
 	'appointment',
 	'patientName',
 	'assignedStaff',
+	'visitNumber',
+	'actualAmount',
+	'advanceAmount',
 	'travelCost',
 	'accommodationCost',
 	'totalSpent',
-	'tpaForecast',
 	'profitLoss',
 	'remarks',
 ];
+
+function StatCard({
+	title,
+	value,
+	icon,
+	panelClass = '',
+	iconClass = '',
+}: {
+	title: string;
+	value: string;
+	icon: React.ReactNode;
+	panelClass?: string;
+	iconClass?: string;
+}) {
+	return (
+		<div className={`rounded-2xl border p-4 shadow-sm ${panelClass}`}>
+			<div className="flex items-start justify-between gap-3">
+				<div>
+					<div className="text-xs font-medium text-gray-600">{title}</div>
+					<div className="mt-2 text-lg font-semibold text-gray-900">{value}</div>
+				</div>
+				<div className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${iconClass}`}>
+					{icon}
+				</div>
+			</div>
+		</div>
+	);
+}
 
 export default function TravelSettlementPage() {
 	const [loading, setLoading] = useState(false);
@@ -277,13 +321,16 @@ export default function TravelSettlementPage() {
 	const [activeStaffChartId, setActiveStaffChartId] = useState<string>('');
 	const [activeDayChartId, setActiveDayChartId] = useState<string>('');
 	const [showColumnMenu, setShowColumnMenu] = useState(false);
-
 	const [visibleColumns, setVisibleColumns] = useState<ColKey[]>(DEFAULT_VISIBLE_COLUMNS);
 
 	const [summary, setSummary] = useState<SettlementSummary>({
 		totalTransactions: 0,
+		totalPettyCash: 0,
 		totalSpent: 0,
 		totalForecast: 0,
+		totalActualAmount: 0,
+		totalAdvanceAmount: 0,
+		pendingPettyCash: 0,
 		netProfitLoss: 0,
 	});
 
@@ -304,6 +351,9 @@ export default function TravelSettlementPage() {
 		| 'visitType'
 		| 'location'
 		| 'staff'
+		| 'visitNumber'
+		| 'actualAmount'
+		| 'advanceAmount'
 		| 'travelCost'
 		| 'accommodationCost'
 		| 'totalSpent'
@@ -318,7 +368,11 @@ export default function TravelSettlementPage() {
 		if (k === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
 		else {
 			setSortKey(k);
-			setSortDir(k === 'patientName' || k === 'location' || k === 'staff' ? 'asc' : 'desc');
+			setSortDir(
+				k === 'patientName' || k === 'location' || k === 'staff' || k === 'visitNumber'
+					? 'asc'
+					: 'desc'
+			);
 		}
 	}
 
@@ -385,8 +439,12 @@ export default function TravelSettlementPage() {
 			const apiStaffOptions = Array.isArray(settlementData.staffOptions) ? settlementData.staffOptions : [];
 			const apiSummary = settlementData.summary || {
 				totalTransactions: 0,
+				totalPettyCash: 0,
 				totalSpent: 0,
 				totalForecast: 0,
+				totalActualAmount: 0,
+				totalAdvanceAmount: 0,
+				pendingPettyCash: 0,
 				netProfitLoss: 0,
 			};
 
@@ -463,11 +521,19 @@ export default function TravelSettlementPage() {
 	}
 
 	function currentTotalSpent(r: SettlementRow) {
-		return currentTravel(r) + currentAccommodation(r);
+		return round2(currentTravel(r) + currentAccommodation(r));
+	}
+
+	function currentActualAmount(r: SettlementRow) {
+		return round2(num(r.actualAmount));
+	}
+
+	function currentAdvanceAmount(r: SettlementRow) {
+		return round2(num(r.advanceAmount));
 	}
 
 	function currentProfitLoss(r: SettlementRow) {
-		return num(r.tpaForecastAmount) - currentTotalSpent(r);
+		return round2(currentActualAmount(r) - currentTotalSpent(r));
 	}
 
 	function currentProfitStatus(r: SettlementRow) {
@@ -502,6 +568,12 @@ export default function TravelSettlementPage() {
 					return (r.location || '').toLowerCase();
 				case 'staff':
 					return staffLabel({ name: r.staffName, userId: r.staffUserId }).toLowerCase();
+				case 'visitNumber':
+					return num(r.visitNumber);
+				case 'actualAmount':
+					return currentActualAmount(r);
+				case 'advanceAmount':
+					return currentAdvanceAmount(r);
 				case 'travelCost':
 					return currentTravel(r);
 				case 'accommodationCost':
@@ -613,22 +685,34 @@ export default function TravelSettlementPage() {
 		}
 
 		return list;
-	}, [
-		sortedRows,
-		activeStaffChartId,
-		activeDayChartId,
-		draftTravel,
-		draftAccommodation,
-	]);
+	}, [sortedRows, activeStaffChartId, activeDayChartId, draftTravel, draftAccommodation]);
 
-	const changedRows = useMemo(() => filteredSortedRows.filter((r) => isRowChanged(r)), [filteredSortedRows]);
+	const changedRows = useMemo(
+		() => filteredSortedRows.filter((r) => isRowChanged(r)),
+		[filteredSortedRows]
+	);
+
+	const tableTotals = useMemo(() => {
+		return {
+			actualAmount: round2(filteredSortedRows.reduce((sum, r) => sum + currentActualAmount(r), 0)),
+			advanceAmount: round2(filteredSortedRows.reduce((sum, r) => sum + currentAdvanceAmount(r), 0)),
+			travelCost: round2(filteredSortedRows.reduce((sum, r) => sum + currentTravel(r), 0)),
+			accommodationCost: round2(
+				filteredSortedRows.reduce((sum, r) => sum + currentAccommodation(r), 0)
+			),
+			totalSpent: round2(filteredSortedRows.reduce((sum, r) => sum + currentTotalSpent(r), 0)),
+			profitLoss: round2(filteredSortedRows.reduce((sum, r) => sum + currentProfitLoss(r), 0)),
+		};
+	}, [filteredSortedRows]);
 
 	const displaySummary = useMemo(() => {
-		const totalSpent = filteredSortedRows.reduce((sum, r) => sum + currentTotalSpent(r), 0);
-		const totalForecast = filteredSortedRows.reduce((sum, r) => sum + num(r.tpaForecastAmount), 0);
-		const netProfitLoss = totalForecast - totalSpent;
-		const totalPettyCash = pettyCashKpis.pendingBalance;
-		const pettyCashBalance = totalPettyCash - totalSpent;
+		const totalSpent = round2(filteredSortedRows.reduce((sum, r) => sum + currentTotalSpent(r), 0));
+		const totalForecast = round2(filteredSortedRows.reduce((sum, r) => sum + num(r.tpaForecastAmount), 0));
+		const totalActualAmount = round2(filteredSortedRows.reduce((sum, r) => sum + currentActualAmount(r), 0));
+		const totalAdvanceAmount = round2(filteredSortedRows.reduce((sum, r) => sum + currentAdvanceAmount(r), 0));
+		const netProfitLoss = round2(totalActualAmount - totalSpent);
+		const totalPettyCash = round2(pettyCashKpis.pendingBalance);
+		const pettyCashBalance = round2(totalPettyCash - totalSpent);
 
 		return {
 			totalTransactions: filteredSortedRows.length,
@@ -636,6 +720,8 @@ export default function TravelSettlementPage() {
 			totalSpent,
 			pettyCashBalance,
 			totalForecast,
+			totalActualAmount,
+			totalAdvanceAmount,
 			netProfitLoss,
 		};
 	}, [filteredSortedRows, pettyCashKpis, draftTravel, draftAccommodation]);
@@ -674,6 +760,12 @@ export default function TravelSettlementPage() {
 				return r.location || '-';
 			case 'assignedStaff':
 				return staffLabel({ name: r.staffName, userId: r.staffUserId });
+			case 'visitNumber':
+				return String(r.visitNumber || 1);
+			case 'actualAmount':
+				return fmtPdfAmount(currentActualAmount(r));
+			case 'advanceAmount':
+				return fmtPdfAmount(currentAdvanceAmount(r));
 			case 'travelCost':
 				return fmtPdfAmount(currentTravel(r));
 			case 'accommodationCost':
@@ -818,11 +910,21 @@ export default function TravelSettlementPage() {
 			>
 				<span className="inline-flex items-center gap-1">
 					{label}
-					{active ? sortDir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" /> : null}
+					{active ? (
+						sortDir === 'asc' ? (
+							<ChevronUp className="h-3.5 w-3.5" />
+						) : (
+							<ChevronDown className="h-3.5 w-3.5" />
+						)
+					) : null}
 				</span>
 			</th>
 		);
 	};
+
+	const STICKY_TOP = 'top-14';
+	const TABLE_VIEWPORT_HEIGHT = 'h-[calc(100vh-340px)]';
+	const TABLE_MIN_HEIGHT = 'min-h-[420px]';
 
 	return (
 		<div className="mx-auto w-full max-w-[1800px] px-4 space-y-6">
@@ -874,109 +976,179 @@ export default function TravelSettlementPage() {
 				</div>
 			</div>
 
-			<div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-				<StatCard
-					title="Total Petty Cash"
-					value={fmtINR(displaySummary.totalPettyCash)}
-					icon={<IndianRupee className="h-4 w-4" />}
-					panelClass="bg-blue-50 border-blue-100"
-					iconClass="bg-blue-100 text-blue-700"
-				/>
+			<div
+				className={`sticky ${STICKY_TOP} z-30 -mx-4 px-4 pt-3 pb-3 bg-[#f8fafc]/95 backdrop-blur supports-[backdrop-filter]:bg-[#f8fafc]/85 border-b border-gray-200 shadow-sm`}
+			>
+				<div className="space-y-4">
+					<div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+						<div className="p-4 border-b border-gray-200 flex flex-wrap items-end gap-2 justify-between">
+							<div className="flex flex-wrap items-end gap-2">
+								<div className="relative" />
 
-				<StatCard
-					title="Total Spent"
-					value={fmtINR(displaySummary.totalSpent)}
-					icon={<TrendingDown className="h-4 w-4" />}
-					panelClass="bg-rose-50 border-rose-100"
-					iconClass="bg-rose-100 text-rose-700"
-				/>
+								<div>
+									<label className="block text-xs text-gray-600 mb-1">Lab</label>
+									<select
+										className="border rounded px-2 py-2 w-[130px] text-sm"
+										value={labId}
+										onChange={(e) => setLabId(e.target.value)}
+									>
+										<option value="">All Labs</option>
+										{labs.map((l) => (
+											<option key={l.id} value={l.id}>
+												{l.nickName || l.name} {l.labCode ? `(${l.labCode})` : ''}
+											</option>
+										))}
+									</select>
+								</div>
 
-				<StatCard
-					title="Petty Cash Balance"
-					value={fmtINR(displaySummary.pettyCashBalance)}
-					icon={<Scale className="h-4 w-4" />}
-					panelClass="bg-amber-50 border-amber-100"
-					iconClass="bg-amber-100 text-amber-700"
-				/>
+								<div>
+									<label className="block text-xs text-gray-600 mb-1">TPA Name</label>
+									<select
+										className="border rounded px-2 py-2 w-[150px] text-sm"
+										value={vendorId}
+										onChange={(e) => setVendorId(e.target.value)}
+									>
+										<option value="">All TPA</option>
+										{vendors.map((v) => (
+											<option key={v.id} value={v.id}>
+												{vendorLabel(v)}
+											</option>
+										))}
+									</select>
+								</div>
 
-				<StatCard
-					title="TPA Forecast"
-					value={fmtINR(displaySummary.totalForecast)}
-					icon={<TrendingUp className="h-4 w-4" />}
-					panelClass="bg-emerald-50 border-emerald-100"
-					iconClass="bg-emerald-100 text-emerald-700"
-				/>
+								<div>
+									<label className="block text-xs text-gray-600 mb-1">Staff</label>
+									<select
+										className="border rounded px-2 py-2 w-[190px] text-sm"
+										value={staffId}
+										onChange={(e) => setStaffId(e.target.value)}
+									>
+										<option value="">All Assigned Staff</option>
+										{staffOptions.map((s) => (
+											<option key={s.id} value={s.id}>
+												{staffLabel(s)}
+											</option>
+										))}
+									</select>
+								</div>
 
-				<StatCard
-					title="Net Profit / Loss"
-					value={fmtINR(displaySummary.netProfitLoss)}
-					icon={<Wallet className="h-4 w-4" />}
-					panelClass="bg-violet-50 border-violet-100"
-					iconClass="bg-violet-100 text-violet-700"
-				/>
+								<div>
+									<label className="block text-xs text-gray-600 mb-1">Visit Type</label>
+									<select
+										className="border rounded px-2 py-2 w-[110px] text-sm"
+										value={visitType}
+										onChange={(e) => setVisitType(normalizeVisitType(e.target.value))}
+									>
+										<option value="">All</option>
+										<option value="CENTER">Center</option>
+										<option value="HOME">Home</option>
+									</select>
+								</div>
 
-				<StatCard
-					title="Total Case Transactions"
-					value={String(displaySummary.totalTransactions)}
-					icon={<ReceiptText className="h-4 w-4" />}
-					panelClass="bg-slate-50 border-slate-200"
-					iconClass="bg-slate-100 text-slate-700"
-				/>
-			</div>
+								<div>
+									<label className="block text-xs text-gray-600 mb-1">From</label>
+									<input
+										type="date"
+										className="border rounded px-2 py-2 w-[135px] text-sm"
+										value={dateFrom}
+										onChange={(e) => setDateFrom(e.target.value)}
+									/>
+								</div>
 
-			{err && (
-				<div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-start gap-2">
-					<AlertTriangle className="h-4 w-4 mt-0.5" />
-					<div>{err}</div>
-				</div>
-			)}
+								<div>
+									<label className="block text-xs text-gray-600 mb-1">To</label>
+									<input
+										type="date"
+										className="border rounded px-2 py-2 w-[135px] text-sm"
+										value={dateTo}
+										onChange={(e) => setDateTo(e.target.value)}
+									/>
+								</div>
 
-			{ok && (
-				<div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-					{ok}
-				</div>
-			)}
-
-			<div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
-				<div className="p-4 border-b border-gray-200 flex flex-wrap items-end justify-between gap-3">
-					<div>
-						<div className="text-base font-semibold text-gray-900">Spend Analysis</div>
-						<div className="text-xs text-gray-600 mt-1">
-							Staff-wise and day-wise spend based on selected month. Click a bar to filter the table below.
-						</div>
-					</div>
-
-					<div className="flex items-end gap-2">
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">Selected Month</label>
-							<div className="relative">
-								<input
-									type="month"
-									className="border rounded px-2 py-2 pr-9 w-[150px] text-sm"
-									value={chartMonth}
-									onChange={(e) => {
-										setChartMonth(e.target.value);
+								<button
+									type="button"
+									className="rounded border px-3 py-2 text-sm hover:bg-gray-50 h-[38px]"
+									onClick={() => {
+										setDateFrom('');
+										setDateTo('');
+										setStaffId('');
+										setLabId('');
+										setVendorId('');
+										setVisitType('');
 										setActiveStaffChartId('');
 										setActiveDayChartId('');
 									}}
-								/>
-								<CalendarDays className="pointer-events-none absolute right-2 top-2.5 h-4 w-4 text-gray-400" />
+								>
+									Clear
+								</button>
 							</div>
 						</div>
 					</div>
-				</div>
 
-				<div className="grid grid-cols-1 gap-4 p-4 xl:grid-cols-2">
-					<div className="rounded-xl border border-gray-200 bg-white p-4">
-						<div className="mb-3 flex items-center justify-between gap-2">
-							<div className="flex items-center gap-2">
-								<div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
-									<BarChart3 className="h-4 w-4" />
-								</div>
-								<div>
-									<div className="text-sm font-semibold text-gray-900">Staff-wise Spend</div>
-									<div className="text-xs text-gray-500">Amount and case count by assigned staff</div>
-								</div>
+					<div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
+						<StatCard
+							title="Total Petty Cash"
+							value={fmtINR(displaySummary.totalPettyCash)}
+							icon={<IndianRupee className="h-4 w-4" />}
+							panelClass="bg-blue-50 border-blue-100"
+							iconClass="bg-blue-100 text-blue-700"
+						/>
+
+						<StatCard
+							title="Total Spent"
+							value={fmtINR(displaySummary.totalSpent)}
+							icon={<TrendingDown className="h-4 w-4" />}
+							panelClass="bg-rose-50 border-rose-100"
+							iconClass="bg-rose-100 text-rose-700"
+						/>
+
+						<StatCard
+							title="Petty Cash Balance"
+							value={fmtINR(displaySummary.pettyCashBalance)}
+							icon={<Scale className="h-4 w-4" />}
+							panelClass="bg-amber-50 border-amber-100"
+							iconClass="bg-amber-100 text-amber-700"
+						/>
+
+						<StatCard
+							title="TPA Forecast"
+							value={fmtINR(displaySummary.totalForecast)}
+							icon={<TrendingUp className="h-4 w-4" />}
+							panelClass="bg-emerald-50 border-emerald-100"
+							iconClass="bg-emerald-100 text-emerald-700"
+						/>
+
+						<StatCard
+							title="Net Profit / Loss"
+							value={fmtINR(displaySummary.netProfitLoss)}
+							icon={<Wallet className="h-4 w-4" />}
+							panelClass="bg-violet-50 border-violet-100"
+							iconClass="bg-violet-100 text-violet-700"
+						/>
+					</div>
+				</div>
+			</div>
+
+			<div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+				<div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+					<div className="mb-4 flex items-center justify-between gap-3">
+						<div>
+							<div className="text-base font-semibold text-gray-900">Spend by Staff</div>
+							<div className="text-xs text-gray-500 mt-1">
+								Chart month and table stay connected
+							</div>
+						</div>
+
+						<div className="flex items-center gap-2">
+							<div className="relative">
+								<CalendarDays className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+								<input
+									type="month"
+									className="rounded-xl border border-gray-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500"
+									value={chartMonth}
+									onChange={(e) => setChartMonth(e.target.value)}
+								/>
 							</div>
 
 							{activeStaffChartId ? (
@@ -989,69 +1161,68 @@ export default function TravelSettlementPage() {
 								</button>
 							) : null}
 						</div>
-
-						<div className="h-[300px]">
-							{staffChartData.length === 0 ? (
-								<div className="flex h-full items-center justify-center text-sm text-gray-500">
-									No data for selected month.
-								</div>
-							) : (
-								<ResponsiveContainer width="100%" height="100%">
-									<BarChart data={staffChartData}>
-										<CartesianGrid strokeDasharray="3 3" vertical={false} />
-										<XAxis
-											dataKey="name"
-											tick={{ fontSize: 11 }}
-											interval={0}
-											angle={-15}
-											textAnchor="end"
-											height={60}
-										/>
-										<YAxis tick={{ fontSize: 11 }} />
-										<Tooltip
-											formatter={(value: number, _name, props: any) => [
-												`${fmtINR(Number(value || 0))} (${props?.payload?.caseCount || 0} case${(props?.payload?.caseCount || 0) > 1 ? 's' : ''})`,
-												'Spent',
-											]}
-										/>
-										<Bar
-											dataKey="amount"
-											radius={[6, 6, 0, 0]}
-											onClick={(data) => {
-												const row = (data as { payload?: StaffChartRow })?.payload;
-												if (row) handleStaffBarClick(row);
-											}}
-											cursor="pointer"
-										>
-											{staffChartData.map((entry) => (
-												<Cell
-													key={entry.id}
-													fill={activeStaffChartId === entry.id ? '#1d4ed8' : '#2563eb'}
-												/>
-											))}
-											<LabelList
-												dataKey="label"
-												position="top"
-												formatter={(value: string) => value}
-												style={{ fontSize: 10 }}
-											/>
-										</Bar>
-									</BarChart>
-								</ResponsiveContainer>
-							)}
-						</div>
 					</div>
 
-					<div className="rounded-xl border border-gray-200 bg-white p-4">
-						<div className="mb-3 flex items-center justify-between gap-2">
-							<div className="flex items-center gap-2">
-								<div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
-									<BarChart3 className="h-4 w-4" />
-								</div>
-								<div>
-									<div className="text-sm font-semibold text-gray-900">Day-wise Spend</div>
-									<div className="text-xs text-gray-500">Amount and case count by day</div>
-								</div>
+					<div className="h-[300px]">
+						{staffChartData.length === 0 ? (
+							<div className="flex h-full items-center justify-center text-sm text-gray-500">
+								No data for selected month.
+							</div>
+						) : (
+							<ResponsiveContainer width="100%" height="100%">
+								<BarChart data={staffChartData}>
+									<CartesianGrid strokeDasharray="3 3" vertical={false} />
+									<XAxis dataKey="name" tick={{ fontSize: 11 }} />
+									<YAxis tick={{ fontSize: 11 }} />
+									<Tooltip
+										formatter={(value: number, _name, props: any) => [
+											`${fmtINR(Number(value || 0))} (${props?.payload?.caseCount || 0} case${(props?.payload?.caseCount || 0) > 1 ? 's' : ''})`,
+											'Spent',
+										]}
+									/>
+									<Bar
+										dataKey="amount"
+										radius={[6, 6, 0, 0]}
+										onClick={(data) => handleStaffBarClick(data as unknown as StaffChartRow)}
+										cursor="pointer"
+									>
+										{staffChartData.map((entry) => (
+											<Cell
+												key={entry.id}
+												fill={activeStaffChartId === entry.id ? '#1d4ed8' : '#2563eb'}
+											/>
+										))}
+										<LabelList
+											dataKey="label"
+											position="top"
+											formatter={(value: string) => value}
+											style={{ fontSize: 10 }}
+										/>
+									</Bar>
+								</BarChart>
+							</ResponsiveContainer>
+						)}
+					</div>
+				</div>
+
+				<div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+					<div className="mb-4 flex items-center justify-between gap-3">
+						<div>
+							<div className="text-base font-semibold text-gray-900">Spend by Day</div>
+							<div className="text-xs text-gray-500 mt-1">
+								Click a bar to filter the table
+							</div>
+						</div>
+
+						<div className="flex items-center gap-2">
+							<div className="relative">
+								<CalendarDays className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+								<input
+									type="month"
+									className="rounded-xl border border-gray-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500"
+									value={chartMonth}
+									onChange={(e) => setChartMonth(e.target.value)}
+								/>
 							</div>
 
 							{activeDayChartId ? (
@@ -1064,48 +1235,48 @@ export default function TravelSettlementPage() {
 								</button>
 							) : null}
 						</div>
+					</div>
 
-						<div className="h-[300px]">
-							{dayChartData.length === 0 ? (
-								<div className="flex h-full items-center justify-center text-sm text-gray-500">
-									No data for selected month.
-								</div>
-							) : (
-								<ResponsiveContainer width="100%" height="100%">
-									<BarChart data={dayChartData}>
-										<CartesianGrid strokeDasharray="3 3" vertical={false} />
-										<XAxis dataKey="label" tick={{ fontSize: 11 }} />
-										<YAxis tick={{ fontSize: 11 }} />
-										<Tooltip
-											labelFormatter={(label) => `Day ${label}`}
-											formatter={(value: number, _name, props: any) => [
-												`${fmtINR(Number(value || 0))} (${props?.payload?.caseCount || 0} case${(props?.payload?.caseCount || 0) > 1 ? 's' : ''})`,
-												'Spent',
-											]}
-										/>
-										<Bar
-											dataKey="amount"
-											radius={[6, 6, 0, 0]}
-											onClick={(data) => handleDayBarClick(data as unknown as DayChartRow)}
-											cursor="pointer"
-										>
-											{dayChartData.map((entry) => (
-												<Cell
-													key={entry.id}
-													fill={activeDayChartId === entry.id ? '#047857' : '#059669'}
-												/>
-											))}
-											<LabelList
-												dataKey="displayLabel"
-												position="top"
-												formatter={(value: string) => value}
-												style={{ fontSize: 10 }}
+					<div className="h-[300px]">
+						{dayChartData.length === 0 ? (
+							<div className="flex h-full items-center justify-center text-sm text-gray-500">
+								No data for selected month.
+							</div>
+						) : (
+							<ResponsiveContainer width="100%" height="100%">
+								<BarChart data={dayChartData}>
+									<CartesianGrid strokeDasharray="3 3" vertical={false} />
+									<XAxis dataKey="label" tick={{ fontSize: 11 }} />
+									<YAxis tick={{ fontSize: 11 }} />
+									<Tooltip
+										labelFormatter={(label) => `Day ${label}`}
+										formatter={(value: number, _name, props: any) => [
+											`${fmtINR(Number(value || 0))} (${props?.payload?.caseCount || 0} case${(props?.payload?.caseCount || 0) > 1 ? 's' : ''})`,
+											'Spent',
+										]}
+									/>
+									<Bar
+										dataKey="amount"
+										radius={[6, 6, 0, 0]}
+										onClick={(data) => handleDayBarClick(data as unknown as DayChartRow)}
+										cursor="pointer"
+									>
+										{dayChartData.map((entry) => (
+											<Cell
+												key={entry.id}
+												fill={activeDayChartId === entry.id ? '#047857' : '#059669'}
 											/>
-										</Bar>
-									</BarChart>
-								</ResponsiveContainer>
-							)}
-						</div>
+										))}
+										<LabelList
+											dataKey="displayLabel"
+											position="top"
+											formatter={(value: string) => value}
+											style={{ fontSize: 10 }}
+										/>
+									</Bar>
+								</BarChart>
+							</ResponsiveContainer>
+						)}
 					</div>
 				</div>
 			</div>
@@ -1113,7 +1284,14 @@ export default function TravelSettlementPage() {
 			<div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
 				<div className="p-4 border-b border-gray-200 flex flex-wrap items-end gap-2 justify-between">
 					<div>
-						<div className="text-base font-semibold text-gray-900">Appointment Expense Transactions</div>
+						<div className="flex flex-wrap items-center gap-3">
+							<div className="text-base font-semibold text-gray-900">
+								Appointment Expense Transactions
+							</div>
+							<div className="inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-sm font-bold text-indigo-700 border border-indigo-100">
+								Total Advance Amount: {fmtINR(tableTotals.advanceAmount)}
+							</div>
+						</div>
 						<div className="text-xs text-gray-600 mt-1">
 							Assigned staff is taken from Outer Assignment. Enter only <b>Travel Cost</b> and <b>Accommodation Cost</b>.
 							{activeStaffChartId || activeDayChartId ? (
@@ -1134,9 +1312,9 @@ export default function TravelSettlementPage() {
 							</button>
 
 							{showColumnMenu && (
-								<div className="absolute right-0 z-20 mt-2 w-[240px] rounded-xl border bg-white p-3 shadow-lg">
+								<div className="absolute right-0 z-20 mt-2 w-[260px] rounded-xl border bg-white p-3 shadow-lg">
 									<div className="text-xs font-semibold text-gray-700 mb-2">Visible Columns</div>
-									<div className="space-y-2 max-h-[320px] overflow-y-auto">
+									<div className="max-h-[320px] overflow-auto space-y-2">
 										{ALL_COLUMNS.map((col) => (
 											<label key={col.key} className="flex items-center gap-2 text-sm text-gray-700">
 												<input
@@ -1151,310 +1329,276 @@ export default function TravelSettlementPage() {
 								</div>
 							)}
 						</div>
-
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">Lab</label>
-							<select
-								className="border rounded px-2 py-2 w-[130px] text-sm"
-								value={labId}
-								onChange={(e) => setLabId(e.target.value)}
-							>
-								<option value="">All Labs</option>
-								{labs.map((l) => (
-									<option key={l.id} value={l.id}>
-										{l.nickName || l.name} {l.labCode ? `(${l.labCode})` : ''}
-									</option>
-								))}
-							</select>
-						</div>
-
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">TPA Name</label>
-							<select
-								className="border rounded px-2 py-2 w-[150px] text-sm"
-								value={vendorId}
-								onChange={(e) => setVendorId(e.target.value)}
-							>
-								<option value="">All TPA</option>
-								{vendors.map((v) => (
-									<option key={v.id} value={v.id}>
-										{vendorLabel(v)}
-									</option>
-								))}
-							</select>
-						</div>
-
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">Staff</label>
-							<select
-								className="border rounded px-2 py-2 w-[190px] text-sm"
-								value={staffId}
-								onChange={(e) => setStaffId(e.target.value)}
-							>
-								<option value="">All Assigned Staff</option>
-								{staffOptions.map((s) => (
-									<option key={s.id} value={s.id}>
-										{staffLabel(s)}
-									</option>
-								))}
-							</select>
-						</div>
-
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">Visit Type</label>
-							<select
-								className="border rounded px-2 py-2 w-[110px] text-sm"
-								value={visitType}
-								onChange={(e) => setVisitType(normalizeVisitType(e.target.value))}
-							>
-								<option value="">All</option>
-								<option value="CENTER">Center</option>
-								<option value="HOME">Home</option>
-							</select>
-						</div>
-
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">From</label>
-							<input
-								type="date"
-								className="border rounded px-2 py-2 w-[135px] text-sm"
-								value={dateFrom}
-								onChange={(e) => setDateFrom(e.target.value)}
-							/>
-						</div>
-
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">To</label>
-							<input
-								type="date"
-								className="border rounded px-2 py-2 w-[135px] text-sm"
-								value={dateTo}
-								onChange={(e) => setDateTo(e.target.value)}
-							/>
-						</div>
-
-						<button
-							type="button"
-							className="rounded border px-3 py-2 text-sm hover:bg-gray-50 h-[38px]"
-							onClick={() => {
-								setDateFrom('');
-								setDateTo('');
-								setStaffId('');
-								setLabId('');
-								setVendorId('');
-								setVisitType('');
-								setActiveStaffChartId('');
-								setActiveDayChartId('');
-							}}
-						>
-							Clear
-						</button>
 					</div>
 				</div>
 
-				<div className="p-4">
-					<div className="w-full overflow-x-auto">
-						<div className="max-h-[720px] overflow-y-auto rounded border border-gray-200">
-							<table className="w-full min-w-[1400px]">
-								<thead className="sticky top-0 z-10 bg-white">
-									<tr className="border-b bg-gray-50">
-										{visibleCol('appointment') && <SortTh k="appointmentDate" label="Appointment" />}
-										{visibleCol('patientName') && <SortTh k="patientName" label="Patient Name" />}
-										{visibleCol('visitType') && <SortTh k="visitType" label="Visit Type" />}
-										{visibleCol('location') && <SortTh k="location" label="Location" />}
-										{visibleCol('assignedStaff') && <SortTh k="staff" label="Assigned Staff" />}
-										{visibleCol('travelCost') && <SortTh k="travelCost" label="Travel Cost" />}
-										{visibleCol('accommodationCost') && <SortTh k="accommodationCost" label="Accommodation Cost" />}
-										{visibleCol('totalSpent') && <SortTh k="totalSpent" label="Total Spent" />}
-										{visibleCol('tpaForecast') && <SortTh k="tpaForecastAmount" label="TPA Forecast" />}
-										{visibleCol('profitLoss') && <SortTh k="profitLossAmount" label="Profit / Loss" />}
-										{visibleCol('profitLossStatus') && <SortTh k="profitLossStatus" label="P/L Status" />}
-										{visibleCol('remarks') && (
-											<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">
-												Remarks
-											</th>
-										)}
-									</tr>
-								</thead>
+				<div
+					className={`${TABLE_VIEWPORT_HEIGHT} ${TABLE_MIN_HEIGHT} overflow-auto rounded-b-2xl border-t border-gray-200`}
+				>
+					<table className="w-full min-w-[1800px]">
+						<thead className="sticky top-0 z-10 bg-white">
+							<tr className="border-b bg-gray-50">
+								{visibleCol('appointment') && <SortTh k="appointmentDate" label="Appointment" />}
+								{visibleCol('patientName') && <SortTh k="patientName" label="Patient Name" />}
+								{visibleCol('visitType') && <SortTh k="visitType" label="Visit Type" />}
+								{visibleCol('location') && <SortTh k="location" label="Location" />}
+								{visibleCol('assignedStaff') && <SortTh k="staff" label="Assigned Staff" />}
+								{visibleCol('visitNumber') && <SortTh k="visitNumber" label="Visit No" />}
+								{visibleCol('actualAmount') && <SortTh k="actualAmount" label="Actual Amount" />}
+								{visibleCol('advanceAmount') && <SortTh k="advanceAmount" label="Advance Amount" />}
+								{visibleCol('travelCost') && <SortTh k="travelCost" label="Travel Cost" />}
+								{visibleCol('accommodationCost') && <SortTh k="accommodationCost" label="Accommodation Cost" />}
+								{visibleCol('totalSpent') && <SortTh k="totalSpent" label="Total Spent" />}
+								{visibleCol('tpaForecast') && <SortTh k="tpaForecastAmount" label="TPA Forecast" />}
+								{visibleCol('profitLoss') && <SortTh k="profitLossAmount" label="Profit / Loss" />}
+								{visibleCol('profitLossStatus') && <SortTh k="profitLossStatus" label="P/L Status" />}
+								{visibleCol('remarks') && (
+									<th className="px-3 py-2 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">
+										Remarks
+									</th>
+								)}
+							</tr>
+						</thead>
 
-								<tbody>
-									{loading ? (
-										<tr>
-											<td colSpan={visibleColumns.length} className="px-3 py-6 text-center text-sm text-gray-500">
-												Loading…
-											</td>
-										</tr>
-									) : filteredSortedRows.length === 0 ? (
-										<tr>
-											<td colSpan={visibleColumns.length} className="px-3 py-6 text-center text-sm text-gray-500">
-												No rows found for the current filter.
-											</td>
-										</tr>
-									) : (
-										filteredSortedRows.map((r) => {
-											const totalSpent = currentTotalSpent(r);
-											const profitLoss = currentProfitLoss(r);
-											const profitStatus = currentProfitStatus(r);
-											const changed = isRowChanged(r);
+						<tbody>
+							{loading ? (
+								<tr>
+									<td colSpan={visibleColumns.length} className="px-3 py-6 text-center text-sm text-gray-500">
+										Loading…
+									</td>
+								</tr>
+							) : filteredSortedRows.length === 0 ? (
+								<tr>
+									<td colSpan={visibleColumns.length} className="px-3 py-6 text-center text-sm text-gray-500">
+										No rows found for the current filter.
+									</td>
+								</tr>
+							) : (
+								filteredSortedRows.map((r) => {
+									const totalSpent = currentTotalSpent(r);
+									const profitLoss = currentProfitLoss(r);
+									const profitStatus = currentProfitStatus(r);
+									const changed = isRowChanged(r);
 
-											return (
-												<tr
-													key={r.appointmentId}
-													className={`border-t hover:bg-gray-50 ${changed ? 'bg-amber-50/30' : ''}`}
+									return (
+										<tr
+											key={r.appointmentId}
+											className={`border-t hover:bg-gray-50 ${changed ? 'bg-amber-50/30' : ''}`}
+										>
+											{visibleCol('appointment') && (
+												<td className="px-3 py-2 text-sm w-[145px] min-w-[145px] max-w-[145px] whitespace-normal leading-5 align-top">
+													<div className="font-medium text-gray-900 break-words">
+														{formatDateOnly(r.appointmentDate)}
+													</div>
+													<div className="text-xs text-gray-500">{formatTime(r.appointmentDate)}</div>
+													<div className="text-xs text-gray-500 break-words line-clamp-1">
+														{r.labName || '-'}
+													</div>
+												</td>
+											)}
+
+											{visibleCol('patientName') && (
+												<td className="px-3 py-2 text-sm w-[180px] min-w-[180px] max-w-[180px] whitespace-normal break-words leading-5">
+													<div className="line-clamp-2">{r.patientName}</div>
+												</td>
+											)}
+
+											{visibleCol('visitType') && (
+												<td className="px-3 py-2 text-sm w-[120px] min-w-[120px] max-w-[120px] whitespace-nowrap">
+													{normalizeVisitType(r.visitType || '') || '-'}
+												</td>
+											)}
+
+											{visibleCol('location') && (
+												<td className="px-3 py-2 text-sm w-[150px] min-w-[150px] max-w-[150px] whitespace-nowrap">
+													{r.location || '-'}
+												</td>
+											)}
+
+											{visibleCol('assignedStaff') && (
+												<td className="px-3 py-2 text-sm w-[170px] min-w-[170px] max-w-[170px] whitespace-normal break-words leading-5 align-top">
+													<div className="line-clamp-2">
+														{staffLabel({ name: r.staffName, userId: r.staffUserId })}
+													</div>
+												</td>
+											)}
+
+											{visibleCol('visitNumber') && (
+												<td className="px-3 py-2 text-sm whitespace-nowrap text-center">
+													<span className="inline-flex min-w-[32px] items-center justify-center rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+														{r.visitNumber || 1}
+													</span>
+												</td>
+											)}
+
+											{visibleCol('actualAmount') && (
+												<td className="px-3 py-2 text-sm w-[120px] min-w-[120px] max-w-[120px] whitespace-nowrap font-medium text-cyan-700 text-right">
+													{fmtINR(currentActualAmount(r))}
+												</td>
+											)}
+
+											{visibleCol('advanceAmount') && (
+												<td className="px-3 py-2 text-sm w-[120px] min-w-[120px] max-w-[120px] whitespace-nowrap font-medium text-indigo-700 text-right">
+													{fmtINR(currentAdvanceAmount(r))}
+												</td>
+											)}
+
+											{visibleCol('travelCost') && (
+												<td className="px-3 py-2 text-sm w-[120px] min-w-[120px] max-w-[120px] whitespace-nowrap">
+													<input
+														type="number"
+														step="0.01"
+														className="w-[100px] rounded border border-gray-200 px-2 py-1 text-sm outline-none focus:border-blue-500 text-right"
+														value={draftTravel[r.appointmentId] ?? ''}
+														onChange={(e) =>
+															setDraftTravel((prev) => ({
+																...prev,
+																[r.appointmentId]: e.target.value,
+															}))
+														}
+													/>
+												</td>
+											)}
+
+											{visibleCol('accommodationCost') && (
+												<td className="px-3 py-2 text-sm w-[130px] min-w-[130px] max-w-[130px] whitespace-nowrap">
+													<input
+														type="number"
+														step="0.01"
+														className="w-[110px] rounded border border-gray-200 px-2 py-1 text-sm outline-none focus:border-blue-500 text-right"
+														value={draftAccommodation[r.appointmentId] ?? ''}
+														onChange={(e) =>
+															setDraftAccommodation((prev) => ({
+																...prev,
+																[r.appointmentId]: e.target.value,
+															}))
+														}
+													/>
+												</td>
+											)}
+
+											{visibleCol('totalSpent') && (
+												<td className="px-3 py-2 text-sm w-[120px] min-w-[120px] max-w-[120px] whitespace-nowrap font-medium text-indigo-700 text-right">
+													{fmtINR(totalSpent)}
+												</td>
+											)}
+
+											{visibleCol('tpaForecast') && (
+												<td className="px-3 py-2 text-sm w-[120px] min-w-[120px] max-w-[120px] whitespace-nowrap font-medium text-indigo-700 text-right">
+													{fmtINR(num(r.tpaForecastAmount))}
+												</td>
+											)}
+
+											{visibleCol('profitLoss') && (
+												<td
+													className={`px-3 py-2 text-sm whitespace-nowrap font-semibold text-right ${profitLoss > 0
+															? 'text-emerald-700'
+															: profitLoss < 0
+																? 'text-rose-700'
+																: 'text-gray-700'
+														}`}
 												>
-													{visibleCol('appointment') && (
-														<td className="px-3 py-2 text-sm whitespace-nowrap">
-															<div className="font-medium text-gray-900">
-																{formatDateOnly(r.appointmentDate)}{' '}
-																<span className="text-gray-500">{formatTime(r.appointmentDate)}</span>
-															</div>
-															<div className="text-xs text-gray-500">{r.labName || '-'}</div>
-														</td>
-													)}
+													{fmtINR(profitLoss)}
+												</td>
+											)}
 
-													{visibleCol('patientName') && (
-														<td className="px-3 py-2 text-sm whitespace-nowrap">{r.patientName}</td>
-													)}
+											{visibleCol('profitLossStatus') && (
+												<td className="px-3 py-2 text-sm whitespace-nowrap">
+													<span
+														className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${profitStatus === 'Profit'
+																? 'bg-emerald-100 text-emerald-700'
+																: profitStatus === 'Loss'
+																	? 'bg-rose-100 text-rose-700'
+																	: 'bg-gray-100 text-gray-700'
+															}`}
+													>
+														{profitStatus}
+													</span>
+												</td>
+											)}
 
-													{visibleCol('visitType') && (
-														<td className="px-3 py-2 text-sm whitespace-nowrap">
-															{normalizeVisitType(r.visitType || '') || '-'}
-														</td>
-													)}
+											{visibleCol('remarks') && (
+												<td className="px-3 py-2 text-sm">
+													<input
+														type="text"
+														className="w-[220px] rounded border border-gray-200 px-2 py-1 text-sm outline-none focus:border-blue-500"
+														value={draftRemark[r.appointmentId] ?? ''}
+														onChange={(e) =>
+															setDraftRemark((prev) => ({
+																...prev,
+																[r.appointmentId]: e.target.value,
+															}))
+														}
+													/>
+												</td>
+											)}
+										</tr>
+									);
+								})
+							)}
+						</tbody>
 
-													{visibleCol('location') && (
-														<td className="px-3 py-2 text-sm">{r.location || '-'}</td>
-													)}
+						<tfoot className="sticky bottom-0 z-10 bg-amber-50 border-t-2 border-amber-200">
+							<tr>
+								{visibleCol('appointment') && (
+									<td className="px-3 py-3 text-sm font-bold text-gray-900">Total</td>
+								)}
+								{visibleCol('patientName') && <td className="px-3 py-3" />}
+								{visibleCol('visitType') && <td className="px-3 py-3" />}
+								{visibleCol('location') && <td className="px-3 py-3" />}
+								{visibleCol('assignedStaff') && <td className="px-3 py-3" />}
+								{visibleCol('visitNumber') && <td className="px-3 py-3" />}
 
-													{visibleCol('assignedStaff') && (
-														<td className="px-3 py-2 text-sm">
-															<div className="w-[135px] rounded border border-gray-200 bg-gray-50 px-2 py-2 text-sm text-gray-800 truncate">
-																{staffLabel({ name: r.staffName, userId: r.staffUserId })}
-															</div>
-														</td>
-													)}
+								{visibleCol('actualAmount') && (
+									<td className="px-3 py-3 text-sm font-bold text-cyan-700 whitespace-nowrap text-right">
+										{fmtINR(tableTotals.actualAmount)}
+									</td>
+								)}
 
-													{visibleCol('travelCost') && (
-														<td className="px-3 py-2 text-sm">
-															<input
-																type="number"
-																step="0.01"
-																min="0"
-																className="w-[95px] border rounded px-2 py-1.5"
-																value={draftTravel[r.appointmentId] ?? '0'}
-																onChange={(e) =>
-																	setDraftTravel((p) => ({ ...p, [r.appointmentId]: e.target.value }))
-																}
-															/>
-														</td>
-													)}
+								{visibleCol('advanceAmount') && (
+									<td className="px-3 py-3 text-sm font-bold text-indigo-700 whitespace-nowrap text-right">
+										{fmtINR(tableTotals.advanceAmount)}
+									</td>
+								)}
 
-													{visibleCol('accommodationCost') && (
-														<td className="px-3 py-2 text-sm">
-															<input
-																type="number"
-																step="0.01"
-																min="0"
-																className="w-[115px] border rounded px-2 py-1.5"
-																value={draftAccommodation[r.appointmentId] ?? '0'}
-																onChange={(e) =>
-																	setDraftAccommodation((p) => ({
-																		...p,
-																		[r.appointmentId]: e.target.value,
-																	}))
-																}
-															/>
-														</td>
-													)}
+								{visibleCol('travelCost') && (
+									<td className="px-3 py-3 text-sm font-bold text-gray-900 whitespace-nowrap text-right">
+										{fmtINR(tableTotals.travelCost)}
+									</td>
+								)}
 
-													{visibleCol('totalSpent') && (
-														<td className="px-3 py-2 text-sm font-medium whitespace-nowrap">
-															{fmtINR(totalSpent)}
-														</td>
-													)}
+								{visibleCol('accommodationCost') && (
+									<td className="px-3 py-3 text-sm font-bold text-gray-900 whitespace-nowrap text-right">
+										{fmtINR(tableTotals.accommodationCost)}
+									</td>
+								)}
 
-													{visibleCol('tpaForecast') && (
-														<td className="px-3 py-2 text-sm font-medium whitespace-nowrap">
-															{fmtINR(num(r.tpaForecastAmount))}
-														</td>
-													)}
+								{visibleCol('totalSpent') && (
+									<td className="px-3 py-3 text-sm font-bold text-rose-700 whitespace-nowrap text-right">
+										{fmtINR(tableTotals.totalSpent)}
+									</td>
+								)}
 
-													{visibleCol('profitLoss') && (
-														<td
-															className={`px-3 py-2 text-sm font-semibold whitespace-nowrap ${profitLoss > 0 ? 'text-green-600' : profitLoss < 0 ? 'text-red-600' : 'text-gray-700'
-																}`}
-														>
-															{fmtINR(profitLoss)}
-														</td>
-													)}
+								{visibleCol('tpaForecast') && <td className="px-3 py-3" />}
 
-													{visibleCol('profitLossStatus') && (
-														<td className="px-3 py-2 text-sm whitespace-nowrap">
-															<span
-																className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${profitStatus === 'Profit'
-																	? 'bg-green-100 text-green-700'
-																	: profitStatus === 'Loss'
-																		? 'bg-red-100 text-red-700'
-																		: 'bg-gray-100 text-gray-700'
-																	}`}
-															>
-																{profitStatus}
-															</span>
-														</td>
-													)}
+								{visibleCol('profitLoss') && (
+									<td
+										className={`px-3 py-3 text-sm font-bold whitespace-nowrap text-right ${tableTotals.profitLoss > 0
+												? 'text-emerald-700'
+												: tableTotals.profitLoss < 0
+													? 'text-rose-700'
+													: 'text-gray-700'
+											}`}
+									>
+										{fmtINR(tableTotals.profitLoss)}
+									</td>
+								)}
 
-													{visibleCol('remarks') && (
-														<td className="px-3 py-2 text-sm">
-															<input
-																className="w-[230px] border rounded px-2 py-1.5"
-																placeholder="Enter remarks"
-																value={draftRemark[r.appointmentId] ?? ''}
-																onChange={(e) =>
-																	setDraftRemark((p) => ({ ...p, [r.appointmentId]: e.target.value }))
-																}
-															/>
-														</td>
-													)}
-												</tr>
-											);
-										})
-									)}
-								</tbody>
-							</table>
-						</div>
-					</div>
-
-					<div className="text-xs text-gray-500 mt-3">
-						Petty Cash Balance = Total Petty Cash - Total Spent. Click chart bars to filter the table. Export PDF uses only current filtered rows and selected columns.
-					</div>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function StatCard({
-	title,
-	value,
-	icon,
-	panelClass,
-	iconClass,
-}: {
-	title: string;
-	value: string;
-	icon: React.ReactNode;
-	panelClass: string;
-	iconClass: string;
-}) {
-	return (
-		<div className={`rounded-xl border px-3 py-3 shadow-sm ${panelClass}`}>
-			<div className="flex items-start justify-between gap-2">
-				<div className="min-w-0">
-					<div className="text-[11px] leading-4 text-gray-600 truncate">{title}</div>
-					<div className="mt-1.5 text-xl font-bold leading-6 text-gray-900">{value}</div>
-				</div>
-				<div className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${iconClass}`}>
-					{icon}
+								{visibleCol('profitLossStatus') && <td className="px-3 py-3" />}
+								{visibleCol('remarks') && <td className="px-3 py-3" />}
+							</tr>
+						</tfoot>
+					</table>
 				</div>
 			</div>
 		</div>
