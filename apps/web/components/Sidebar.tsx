@@ -8,7 +8,6 @@ import {
 	SlidersHorizontal, ChevronDown, ChevronRight, KeyRound,
 	PanelLeftClose, PanelRightClose, Building2, Stethoscope, KeySquare, ShieldCheck,
 	MapPin,
-	CarTaxiFront,
 	Wallet
 } from 'lucide-react';
 import clsx from 'clsx';

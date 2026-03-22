@@ -63,6 +63,7 @@ type SettlementRow = {
 	labName?: string;
 	appointmentDate: string | null;
 	visitType?: string | null;
+	serviceType?: string | null;
 	location?: string | null;
 	status?: string | null;
 	visitNumber: number;
@@ -170,6 +171,13 @@ function normalizeVisitType(v?: string | null) {
 	const s = (v || '').toUpperCase().trim();
 	if (s === 'CENTER') return 'CENTER';
 	if (s === 'HOME') return 'HOME';
+	return '';
+}
+
+function normalizeServiceType(v?: string | null) {
+	const s = (v || '').toUpperCase().trim();
+	if (s === 'LOCAL') return 'LOCAL';
+	if (s === 'OUTER') return 'OUTER';
 	return '';
 }
 
@@ -317,6 +325,7 @@ export default function TravelSettlementPage() {
 	const [vendorId, setVendorId] = useState<string>('');
 	const [staffId, setStaffId] = useState<string>('');
 	const [visitType, setVisitType] = useState<string>('');
+	const [serviceType, setServiceType] = useState<string>('');
 
 	const [activeStaffChartId, setActiveStaffChartId] = useState<string>('');
 	const [activeDayChartId, setActiveDayChartId] = useState<string>('');
@@ -406,6 +415,7 @@ export default function TravelSettlementPage() {
 		if (vendorId) sp.set('vendorId', vendorId);
 		if (staffId) sp.set('staffId', staffId);
 		if (visitType) sp.set('visitType', visitType);
+		if (serviceType) sp.set('serviceType', serviceType);
 		if (dateFrom) sp.set('dateFrom', dateFrom);
 		if (dateTo) sp.set('dateTo', dateTo);
 		const qs = sp.toString();
@@ -472,7 +482,8 @@ export default function TravelSettlementPage() {
 			const a: Record<string, string> = {};
 			const r: Record<string, string> = {};
 
-			for (const row of apiRows) {
+			for (let i = 0; i < apiRows.length; i += 1) {
+				const row = apiRows[i];
 				t[row.appointmentId] = String(row.travelCost ?? 0);
 				a[row.appointmentId] = String(row.accommodationCost ?? 0);
 				r[row.appointmentId] = row.remarks ?? '';
@@ -506,7 +517,7 @@ export default function TravelSettlementPage() {
 	useEffect(() => {
 		loadPageData();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [labId, vendorId, staffId, visitType, dateFrom, dateTo]);
+	}, [labId, vendorId, staffId, visitType, serviceType, dateFrom, dateTo]);
 
 	function currentTravel(r: SettlementRow) {
 		return num(draftTravel[r.appointmentId]);
@@ -609,7 +620,8 @@ export default function TravelSettlementPage() {
 	const staffChartData = useMemo<StaffChartRow[]>(() => {
 		const map = new Map<string, StaffChartRow>();
 
-		for (const row of chartRows) {
+		for (let i = 0; i < chartRows.length; i += 1) {
+			const row = chartRows[i];
 			const id = row.staffId || '__UNASSIGNED__';
 			const name = staffLabel({ name: row.staffName, userId: row.staffUserId });
 			const spent = currentTotalSpent(row);
@@ -640,7 +652,8 @@ export default function TravelSettlementPage() {
 	const dayChartData = useMemo<DayChartRow[]>(() => {
 		const map = new Map<string, DayChartRow>();
 
-		for (const row of chartRows) {
+		for (let i = 0; i < chartRows.length; i += 1) {
+			const row = chartRows[i];
 			const id = getDayKeyFromIso(row.appointmentDate);
 			if (!id) continue;
 			const spent = currentTotalSpent(row);
@@ -910,13 +923,7 @@ export default function TravelSettlementPage() {
 			>
 				<span className="inline-flex items-center gap-1">
 					{label}
-					{active ? (
-						sortDir === 'asc' ? (
-							<ChevronUp className="h-3.5 w-3.5" />
-						) : (
-							<ChevronDown className="h-3.5 w-3.5" />
-						)
-					) : null}
+					{active ? sortDir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" /> : null}
 				</span>
 			</th>
 		);
@@ -976,15 +983,11 @@ export default function TravelSettlementPage() {
 				</div>
 			</div>
 
-			<div
-				className={`sticky ${STICKY_TOP} z-30 -mx-4 px-4 pt-3 pb-3 bg-[#f8fafc]/95 backdrop-blur supports-[backdrop-filter]:bg-[#f8fafc]/85 border-b border-gray-200 shadow-sm`}
-			>
+			<div className={`sticky ${STICKY_TOP} z-30 -mx-4 px-4 pt-3 pb-3 bg-[#f8fafc]/95 backdrop-blur supports-[backdrop-filter]:bg-[#f8fafc]/85 border-b border-gray-200 shadow-sm`}>
 				<div className="space-y-4">
 					<div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
 						<div className="p-4 border-b border-gray-200 flex flex-wrap items-end gap-2 justify-between">
 							<div className="flex flex-wrap items-end gap-2">
-								<div className="relative" />
-
 								<div>
 									<label className="block text-xs text-gray-600 mb-1">Lab</label>
 									<select
@@ -1047,6 +1050,19 @@ export default function TravelSettlementPage() {
 								</div>
 
 								<div>
+									<label className="block text-xs text-gray-600 mb-1">Service Type</label>
+									<select
+										className="border rounded px-2 py-2 w-[120px] text-sm"
+										value={serviceType}
+										onChange={(e) => setServiceType(normalizeServiceType(e.target.value))}
+									>
+										<option value="">All</option>
+										<option value="LOCAL">Local</option>
+										<option value="OUTER">Outer</option>
+									</select>
+								</div>
+
+								<div>
 									<label className="block text-xs text-gray-600 mb-1">From</label>
 									<input
 										type="date"
@@ -1076,6 +1092,7 @@ export default function TravelSettlementPage() {
 										setLabId('');
 										setVendorId('');
 										setVisitType('');
+										setServiceType('');
 										setActiveStaffChartId('');
 										setActiveDayChartId('');
 									}}
@@ -1332,9 +1349,7 @@ export default function TravelSettlementPage() {
 					</div>
 				</div>
 
-				<div
-					className={`${TABLE_VIEWPORT_HEIGHT} ${TABLE_MIN_HEIGHT} overflow-auto rounded-b-2xl border-t border-gray-200`}
-				>
+				<div className={`${TABLE_VIEWPORT_HEIGHT} ${TABLE_MIN_HEIGHT} overflow-auto rounded-b-2xl border-t border-gray-200`}>
 					<table className="w-full min-w-[1800px]">
 						<thead className="sticky top-0 z-10 bg-white">
 							<tr className="border-b bg-gray-50">

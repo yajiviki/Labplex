@@ -20,6 +20,13 @@ function normalizeVisitType(v?: string | null) {
 	return '';
 }
 
+function normalizeServiceType(v?: string | null) {
+	const s = (v || '').toUpperCase().trim();
+	if (s === 'LOCAL') return 'LOCAL';
+	if (s === 'OUTER') return 'OUTER';
+	return '';
+}
+
 function normalizeText(v?: string | null) {
 	return String(v || '')
 		.toLowerCase()
@@ -72,7 +79,7 @@ async function buildVisitMetaForAppointments(
 		where: {
 			assignedToId: { in: staffIds as any },
 			status: {
-				in: ['Need Confirmation', 'Need confirmation', 'Report - Completed', 'Report - InProgress'],
+				in: ['Need Confirmation', 'Need confirmation', 'Report - Completed', 'Report - InProgress', 'Confirmed', 'Not Responding', 'Rescheduled'],
 			},
 		},
 		select: {
@@ -87,7 +94,8 @@ async function buildVisitMetaForAppointments(
 
 	const grouped = new Map<string, typeof historyAppointments>();
 
-	for (const appt of historyAppointments) {
+	for (let i = 0; i < historyAppointments.length; i += 1) {
+		const appt = historyAppointments[i];
 		const key = getVisitKey(appt.assignedToId, appt.location);
 
 		if (!String(appt.assignedToId || '').trim() || !normalizeText(appt.location)) continue;
@@ -141,7 +149,9 @@ async function buildVisitMetaForAppointments(
 		}
 	}
 
-	for (const appt of targetAppointments) {
+	for (let i = 0; i < targetAppointments.length; i += 1) {
+		const appt = targetAppointments[i];
+
 		if (!visitMetaMap.has(String(appt.id))) {
 			const forecast = round2(asNum(appt.extraChargeRs));
 			const actualAmount = round2(forecast * 0.3);
@@ -166,12 +176,21 @@ export async function GET(req: NextRequest) {
 		const vendorId = (searchParams.get('vendorId') || '').trim();
 		const staffId = (searchParams.get('staffId') || '').trim();
 		const visitType = normalizeVisitType(searchParams.get('visitType'));
+		const serviceType = normalizeServiceType(searchParams.get('serviceType'));
 		const dateFrom = (searchParams.get('dateFrom') || '').trim();
 		const dateTo = (searchParams.get('dateTo') || '').trim();
 
 		const apptWhere: any = {
 			status: {
-				in: ['Need Confirmation', 'Need confirmation', 'Report - Completed', 'Report - InProgress'],
+				in: [
+					'Need Confirmation',
+					'Need confirmation',
+					'Report - Completed',
+					'Report - InProgress',
+					'Confirmed',
+					'Not Responding',
+					'Rescheduled',
+				],
 			},
 		};
 
@@ -179,6 +198,12 @@ export async function GET(req: NextRequest) {
 		if (vendorId) apptWhere.vendorId = vendorId;
 		if (staffId) apptWhere.assignedToId = staffId;
 		if (visitType) apptWhere.visitType = visitType;
+		if (serviceType) {
+			apptWhere.serviceType = {
+				equals: serviceType,
+				mode: 'insensitive',
+			};
+		}
 
 		if (dateFrom || dateTo) {
 			apptWhere.apptAt = {};
@@ -200,6 +225,7 @@ export async function GET(req: NextRequest) {
 					location: true as any,
 					status: true as any,
 					visitType: true as any,
+					serviceType: true as any,
 					extraChargeRs: true as any,
 					lab: {
 						select: {
@@ -242,7 +268,10 @@ export async function GET(req: NextRequest) {
 			: [];
 
 		const settlementMap = new Map<string, any>();
-		for (const s of settlementRows) settlementMap.set(s.appointmentId, s);
+		for (let i = 0; i < settlementRows.length; i += 1) {
+			const s = settlementRows[i];
+			settlementMap.set(s.appointmentId, s);
+		}
 
 		const visitMetaMap = await buildVisitMetaForAppointments(
 			appointments.map((a: any) => ({
@@ -284,6 +313,7 @@ export async function GET(req: NextRequest) {
 				labName: a.lab?.nickName || a.lab?.name || a.lab?.labCode || '',
 				appointmentDate: a.apptAt,
 				visitType: a.visitType ?? '',
+				serviceType: a.serviceType ?? '',
 				location: a.location ?? '',
 				status: a.status ?? '',
 				visitNumber,
@@ -388,6 +418,7 @@ export async function POST(req: NextRequest) {
 				vendorId: true as any,
 				apptAt: true as any,
 				visitType: true as any,
+				serviceType: true as any,
 				location: true as any,
 				extraChargeRs: true as any,
 				assignedToId: true as any,
@@ -395,9 +426,13 @@ export async function POST(req: NextRequest) {
 		});
 
 		const apptMap = new Map<string, any>();
-		for (const a of appointments) apptMap.set(a.id, a);
+		for (let i = 0; i < appointments.length; i += 1) {
+			const a = appointments[i];
+			apptMap.set(a.id, a);
+		}
 
-		for (const item of items) {
+		for (let i = 0; i < items.length; i += 1) {
+			const item = items[i];
 			const appointmentId = String(item.appointmentId || '').trim();
 			if (!appointmentId || !apptMap.has(appointmentId)) {
 				return NextResponse.json(
