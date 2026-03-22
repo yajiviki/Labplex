@@ -32,6 +32,7 @@ const reportsChildren = [
 
 const settingsChildrenFull = [
 	{ href: '/settings/user', icon: Users, label: 'Manage User' },
+	{ href: '/settings/bank', icon: Building2, label: 'Manage Bank' },
 	{ href: '/settings/labs', icon: FlaskConical, label: 'Manage Labs' },
 	{ href: '/settings/vendors', icon: Building2, label: 'Manage TPA' },
 	{ href: '/settings/insurance', icon: ShieldCheck, label: 'Manage Insurance' },

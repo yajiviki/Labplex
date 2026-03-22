@@ -7,6 +7,31 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Bank {
+  id          String   @id @default(cuid())
+  bankId      String   @unique
+  bankName    String
+  accountName String
+  accountNo   String   @unique
+  ifsc        String
+  address     String?
+  isActive    Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  bankVendor BankVendor[]
+}
+
+model BankVendor {
+  bankId   String
+  vendorId String
+  bank     Bank   @relation(fields: [bankId], references: [id], onDelete: Cascade)
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@id([bankId, vendorId])
+  @@index([vendorId])
+}
+
 model Lab {
   id           String        @id @default(cuid())
   labCode      String        @unique
@@ -72,6 +97,7 @@ model Vendor {
   appointments Appointment[]
   Billing      Billing[]
   labVendors   LabVendor[]
+  BankVendor   BankVendor[]
 
   @@index([tpaName])
 }
@@ -190,28 +216,26 @@ model Billing {
 }
 
 model TravelExpense {
-  id                  String      @id @default(cuid())
+  id                  String    @id @default(cuid())
   appointmentId       String
   patientName         String
   travelDate          DateTime?
   travelFrom          String?
   travelTo            String?
-  fuelAmount          Decimal     @default(0) @db.Decimal(12, 2)
-  foodAmount          Decimal     @default(0) @db.Decimal(12, 2)
-  accommodationAmount Decimal     @default(0) @db.Decimal(12, 2)
-  otherAmount         Decimal     @default(0) @db.Decimal(12, 2)
-  totalSpent          Decimal     @default(0) @db.Decimal(12, 2)
+  fuelAmount          Decimal   @default(0) @db.Decimal(12, 2)
+  foodAmount          Decimal   @default(0) @db.Decimal(12, 2)
+  accommodationAmount Decimal   @default(0) @db.Decimal(12, 2)
+  otherAmount         Decimal   @default(0) @db.Decimal(12, 2)
+  totalSpent          Decimal   @default(0) @db.Decimal(12, 2)
   notes               String?
-  createdAt           DateTime    @default(now())
-  updatedAt           DateTime    @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  appointment         Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 
   @@index([appointmentId])
   @@index([travelDate])
 }
-
-
 
 enum BillingStatus {
   Paid
@@ -232,40 +256,40 @@ enum ApplicationForm {
 
 model PettyCashEntry {
   id          String   @id @default(uuid())
-  entryDate    DateTime
-  amount       Decimal  @default(0) @db.Decimal(12, 2)
-  description  String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  entryDate   DateTime
+  amount      Decimal  @default(0) @db.Decimal(12, 2)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([entryDate])
 }
 
 model TravelSettlement {
-  id                 String   @id @default(uuid())
-  appointmentId      String   @unique
-  staffId            String?
+  id            String  @id @default(uuid())
+  appointmentId String  @unique
+  staffId       String?
 
-  patientName        String
-  vendorId           String?
-  labId              String?
+  patientName String
+  vendorId    String?
+  labId       String?
 
-  appointmentDate    DateTime?
-  visitType          String?
-  location           String?
+  appointmentDate DateTime?
+  visitType       String?
+  location        String?
 
-  travelCost         Decimal  @default(0) @db.Decimal(12, 2)
-  accommodationCost  Decimal  @default(0) @db.Decimal(12, 2)
-  totalSpent         Decimal  @default(0) @db.Decimal(12, 2)
+  travelCost        Decimal @default(0) @db.Decimal(12, 2)
+  accommodationCost Decimal @default(0) @db.Decimal(12, 2)
+  totalSpent        Decimal @default(0) @db.Decimal(12, 2)
 
-  tpaForecastAmount  Decimal  @default(0) @db.Decimal(12, 2)
-  profitLossAmount   Decimal  @default(0) @db.Decimal(12, 2)
-  profitLossStatus   String   @default("Break-even")
+  tpaForecastAmount Decimal @default(0) @db.Decimal(12, 2)
+  profitLossAmount  Decimal @default(0) @db.Decimal(12, 2)
+  profitLossStatus  String  @default("Break-even")
 
-  remarks            String?
-  createdBy          String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  remarks   String?
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([staffId])
   @@index([vendorId])
@@ -287,14 +311,14 @@ enum PettyCashAccountType {
 }
 
 model PettyCashAccount {
-  id           String               @id @default(cuid())
-  name         String
-  accountType  PettyCashAccountType @default(OTHER)
-  phone        String?
-  notes        String?
-  isActive     Int                  @default(1)
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
+  id          String               @id @default(cuid())
+  name        String
+  accountType PettyCashAccountType @default(OTHER)
+  phone       String?
+  notes       String?
+  isActive    Int                  @default(1)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
 
   transactions PettyCashTransaction[]
 
@@ -303,18 +327,18 @@ model PettyCashAccount {
 }
 
 model PettyCashTransaction {
-  id                 String            @id @default(cuid())
+  id                 String           @id @default(cuid())
   pettyCashAccountId String
   txnDate            DateTime
   txnType            PettyCashTxnType
-  amount             Decimal           @db.Decimal(12, 2)
+  amount             Decimal          @db.Decimal(12, 2)
   referenceNo        String?
   notes              String?
-  isActive           Int               @default(1)
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
+  isActive           Int              @default(1)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
-  pettyCashAccount   PettyCashAccount  @relation(fields: [pettyCashAccountId], references: [id], onDelete: Cascade)
+  pettyCashAccount PettyCashAccount @relation(fields: [pettyCashAccountId], references: [id], onDelete: Cascade)
 
   @@index([pettyCashAccountId])
   @@index([txnDate])
