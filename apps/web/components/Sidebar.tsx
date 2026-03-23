@@ -26,7 +26,8 @@ const appointmentChildren = [
 /** Reports submenu */
 const reportsChildren = [
 	{ href: '/reports/accounts', icon: Receipt, label: 'Accounts' },
-	{ href: '/reports/petty-cash', icon: Wallet, label: 'Petty Cash' }
+	{ href: '/reports/petty-cash', icon: Wallet, label: 'Petty Cash' },
+	{ href: '/outer-case-bill', icon: Wallet, label: 'Outer Case Bill' }
 ];
 
 const settingsChildrenFull = [
