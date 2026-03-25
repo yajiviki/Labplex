@@ -12,9 +12,16 @@ function normalizePaymentStatus(value: unknown): 'PAID' | 'UNPAID' {
 
 	if (
 		raw === 'paid' ||
-		raw === 'pay' ||
+		raw === 'PAID'
+	) {
+		return 'PAID';
+	}
+
+	if (
 		raw === 'onaccount' ||
-		raw === 'on account'
+		raw === 'on account' ||
+		raw === 'On Account'
+
 	) {
 		return 'UNPAID';
 	}

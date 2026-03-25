@@ -25,7 +25,7 @@ type OuterCaseBillRow = {
 	status: string;
 	outerPayment: number;
 	location: string;
-	remarks: string;
+	// remarks: string;
 	paymentStatus: string;
 };
 
@@ -33,7 +33,7 @@ type DraftState = Record<
 	string,
 	{
 		outerPayment: string;
-		remarks: string;
+		// remarks: string;
 		paymentStatus: string;
 		saving?: boolean;
 	}
@@ -167,7 +167,7 @@ export default function OuterCaseBillPage() {
 						row.outerPayment === null || row.outerPayment === undefined
 							? ''
 							: String(row.outerPayment),
-					remarks: row.remarks || '',
+					// remarks: row.remarks || '',
 					paymentStatus: row.paymentStatus || 'Not Paid',
 				};
 			}
@@ -221,7 +221,7 @@ export default function OuterCaseBillPage() {
 				},
 				body: JSON.stringify({
 					outerPayment: draft.outerPayment,
-					remarks: draft.remarks,
+					// remarks: draft.remarks,
 					paymentStatus: draft.paymentStatus,
 				}),
 			});
@@ -238,7 +238,7 @@ export default function OuterCaseBillPage() {
 						? {
 							...row,
 							outerPayment: json.row.outerPayment,
-							remarks: json.row.remarks,
+							// remarks: json.row.remarks,
 							paymentStatus: json.row.paymentStatus,
 						}
 						: row
@@ -249,7 +249,7 @@ export default function OuterCaseBillPage() {
 				...prev,
 				[id]: {
 					outerPayment: String(json.row.outerPayment ?? ''),
-					remarks: json.row.remarks || '',
+					// remarks: json.row.remarks || '',
 					paymentStatus: json.row.paymentStatus || 'Not Paid',
 					saving: false,
 				},
@@ -564,14 +564,14 @@ export default function OuterCaseBillPage() {
 											Location <SortIcon column="location" />
 										</button>
 									</th>
-									<th className="border-b border-slate-200 px-3 py-2 text-left">
+									{/* <th className="border-b border-slate-200 px-3 py-2 text-left">
 										<button
 											onClick={() => handleSort('remarks')}
 											className="flex items-center gap-1 font-semibold text-slate-700"
 										>
 											Remarks <SortIcon column="remarks" />
 										</button>
-									</th>
+									</th> */}
 									<th className="border-b border-slate-200 px-3 py-2 text-left">
 										<button
 											onClick={() => handleSort('paymentStatus')}
@@ -590,7 +590,7 @@ export default function OuterCaseBillPage() {
 								{sortedRows.map((row) => {
 									const draft = drafts[row.id] || {
 										outerPayment: '',
-										remarks: '',
+										// remarks: '',
 										paymentStatus: 'Not Paid',
 										saving: false,
 									};
@@ -626,14 +626,14 @@ export default function OuterCaseBillPage() {
 											<td className="border-b border-slate-100 px-3 py-2 text-slate-700">
 												{row.location}
 											</td>
-											<td className="border-b border-slate-100 px-3 py-2">
+											{/* <td className="border-b border-slate-100 px-3 py-2">
 												<input
 													type="text"
 													value={draft.remarks}
 													onChange={(e) => updateDraft(row.id, 'remarks', e.target.value)}
 													className="w-44 rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
 												/>
-											</td>
+											</td> */}
 											<td className="border-b border-slate-100 px-3 py-2">
 												<select
 													value={draft.paymentStatus}

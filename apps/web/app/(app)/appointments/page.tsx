@@ -61,7 +61,7 @@ const STATUS_OPTS = [
 	'TBI', 'Not Responding', 'Rescheduled', 'Need Confirmation', 'Confirmed',
 	'Medical Done', 'Cancelled', 'Report - InProgress', 'Report - Completed',
 ] as const;
-const PAYMENT_STATUS_OPTS = ['TBI', 'Paid', 'On Account'] as const;
+const PAYMENT_STATUS_OPTS = ['TBI', 'Paid', 'Not Paid', 'On Account'] as const;
 const SERVICE_TYPE_OPTS = ['Local', 'Outer', 'Others'] as const;
 
 /* ========= Helpers ========= */

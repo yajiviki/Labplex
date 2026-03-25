@@ -12,7 +12,7 @@ function toEndOfDay(dateStr: string) {
 
 function isPaidStatus(value: unknown) {
 	const status = String(value || '').trim().toUpperCase();
-	return ['PAID', 'ONACCOUNT', 'ON ACCOUNT'].includes(status);
+	return ['PAID'].includes(status);
 }
 
 export async function GET(req: NextRequest) {
@@ -51,9 +51,9 @@ export async function GET(req: NextRequest) {
 				andConditions.push({
 					OR: [
 						{ paymentStatus: { equals: 'PAID', mode: 'insensitive' } },
-						{ paymentStatus: { equals: 'OnAccount', mode: 'insensitive' } },
-						{ paymentStatus: { equals: 'ONACCOUNT', mode: 'insensitive' } },
-						{ paymentStatus: { equals: 'ON ACCOUNT', mode: 'insensitive' } },
+						// { paymentStatus: { equals: 'OnAccount', mode: 'insensitive' } },
+						// { paymentStatus: { equals: 'ONACCOUNT', mode: 'insensitive' } },
+						// { paymentStatus: { equals: 'ON ACCOUNT', mode: 'insensitive' } },
 					],
 				});
 			}
@@ -133,9 +133,10 @@ export async function GET(req: NextRequest) {
 				status: r.status || '',
 				outerPayment: r.extraChargeRs ? Number(r.extraChargeRs) : 0,
 				location: r.location || '',
-				remarks: r.addressRemark || '',
+				// remarks: r.addressRemark || '',
 				paymentStatus: isPaidStatus(r.paymentStatus) ? 'Paid' : 'Not Paid',
 			})),
+
 		});
 	} catch (error) {
 		console.error('GET /api/outer-case-bill error:', error);
