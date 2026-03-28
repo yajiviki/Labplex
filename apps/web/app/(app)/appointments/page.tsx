@@ -205,8 +205,8 @@ function numberInputToNullable(value: string): number | null {
 
 function sanitizeWorksheetName(name: string) {
 	const cleaned = (name || 'Sheet')
-		.replace(/[\\/*?:[\]]/g, ' ')
-		.replace(/\s+/g, ' ')
+		.replaceAll(/[\\/*?:[\]]/g, ' ')
+		.replaceAll(/\s+/g, ' ')
 		.trim();
 	return cleaned.slice(0, 31) || 'Sheet';
 }
