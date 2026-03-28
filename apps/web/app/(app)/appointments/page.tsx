@@ -203,6 +203,14 @@ function numberInputToNullable(value: string): number | null {
 	return Number.isFinite(num) ? num : null;
 }
 
+function sanitizeWorksheetName(name: string) {
+	const cleaned = (name || 'Sheet')
+		.replace(/[\\/*?:[\]]/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+	return cleaned.slice(0, 31) || 'Sheet';
+}
+
 /* ========= Small UI bits ========= */
 
 function Pill({
@@ -950,6 +958,162 @@ export default function AppointmentsPage() {
 		doc.save(fileName);
 	}
 
+	async function exportInvoiceCopyToExcel(rowsToExport: Appointment[]) {
+		if (!rowsToExport.length) {
+			alert('No appointment records found to export.');
+			return;
+		}
+
+		try {
+			const ExcelJS = await import('exceljs');
+			const FileSaverModule = await import('file-saver');
+			const saveAs =
+				(FileSaverModule as any).saveAs ||
+				(FileSaverModule as any).default?.saveAs ||
+				(FileSaverModule as any).default;
+
+			if (typeof saveAs !== 'function') {
+				throw new Error('file-saver saveAs import failed');
+			}
+
+			const workbook = new ExcelJS.Workbook();
+			workbook.creator = 'LabPlux';
+			workbook.created = new Date();
+
+			type GroupItem = {
+				tpaName: string;
+				labName: string;
+				rows: Appointment[];
+			};
+
+			const grouped = new Map<string, GroupItem>();
+
+			for (const row of rowsToExport) {
+				const lab = labs.find(l => l.id === row.labId);
+				const vendor =
+					(lab?.vendors?.find(v => v.id === row.vendorId)) ||
+					vendors.find(v => v.id === row.vendorId);
+
+				const tpaName = vendor?.tpaName?.trim() || 'No TPA';
+				const labName = lab?.name?.trim() || 'No Lab';
+
+				const key = `${tpaName}__${labName}`;
+				if (!grouped.has(key)) {
+					grouped.set(key, {
+						tpaName,
+						labName,
+						rows: [],
+					});
+				}
+				grouped.get(key)!.rows.push(row);
+			}
+
+			let sheetIndex = 1;
+
+			for (const [, group] of grouped) {
+				const baseSheetName = sanitizeWorksheetName(
+					`${sheetIndex}_${group.tpaName}_${group.labName}`
+				);
+				const worksheet = workbook.addWorksheet(baseSheetName);
+
+				worksheet.columns = [
+					{ header: 'Appt.Date', key: 'apptDate', width: 16 },
+					{ header: 'Client Name', key: 'clientName', width: 30 },
+					{ header: 'Proposal ID', key: 'proposalId', width: 24 },
+					{ header: 'Insurance Company', key: 'insuranceCompany', width: 28 },
+					{ header: 'Service Type', key: 'serviceType', width: 18 },
+				];
+
+				worksheet.mergeCells('A1:E1');
+				worksheet.getCell('A1').value = group.tpaName;
+				worksheet.getCell('A1').font = { bold: true, size: 18 };
+				worksheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
+
+				worksheet.mergeCells('A2:E2');
+				worksheet.getCell('A2').value = group.labName;
+				worksheet.getCell('A2').font = { bold: true, size: 14 };
+				worksheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' };
+
+				worksheet.mergeCells('A3:E3');
+				worksheet.getCell('A3').value = `Total No. Of. Cases: ${group.rows.length}`;
+				worksheet.getCell('A3').font = { bold: true, size: 12 };
+				worksheet.getCell('A3').alignment = { horizontal: 'left', vertical: 'middle' };
+
+				const headerRowNumber = 5;
+				const headerRow = worksheet.getRow(headerRowNumber);
+				headerRow.values = [
+					'Appt.Date',
+					'Client Name',
+					'Proposal ID',
+					'Insurance Company',
+					'Service Type',
+				];
+				headerRow.font = { bold: true };
+				headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+				headerRow.height = 22;
+
+				for (let i = 1; i <= 5; i++) {
+					const cell = headerRow.getCell(i);
+					cell.fill = {
+						type: 'pattern',
+						pattern: 'solid',
+						fgColor: { argb: 'FFE8F5E9' },
+					};
+					cell.border = {
+						top: { style: 'thin' },
+						left: { style: 'thin' },
+						bottom: { style: 'thin' },
+						right: { style: 'thin' },
+					};
+				}
+
+				let currentRow = headerRowNumber + 1;
+
+				for (const row of group.rows) {
+					const insurance = insurers.find(i => i.id === row.insuranceCompanyId);
+
+					const excelRow = worksheet.getRow(currentRow);
+					excelRow.values = [
+						formatDateOnly(row.apptAt),
+						row.clientName || '',
+						row.clientRef || '',
+						insurance?.name || '',
+						row.serviceType || '',
+					];
+
+					for (let i = 1; i <= 5; i++) {
+						const cell = excelRow.getCell(i);
+						cell.border = {
+							top: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+							left: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+							bottom: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+							right: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+						};
+						cell.alignment = { vertical: 'middle' };
+					}
+
+					currentRow++;
+				}
+
+				worksheet.views = [{ state: 'frozen', ySplit: 5 }];
+				sheetIndex++;
+			}
+
+			const buffer = await workbook.xlsx.writeBuffer();
+			const fileName = `TPA_Invoice_Copy_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+			saveAs(
+				new Blob([buffer], {
+					type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+				}),
+				fileName,
+			);
+		} catch (error: any) {
+			console.error(error);
+			alert(error?.message || 'Failed to export Excel file');
+		}
+	}
+
 	async function onDelete() {
 		if (!selectedRowId) return;
 		setDelLoading(true);
@@ -1430,6 +1594,16 @@ export default function AppointmentsPage() {
 					</div>
 
 					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm hover:bg-gray-50"
+							onClick={() => exportInvoiceCopyToExcel(filtered)}
+							title="Export invoice copy to Excel"
+						>
+							<FileDown className="h-4 w-4" />
+							Export Excel
+						</button>
+
 						<button
 							type="button"
 							className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm hover:bg-gray-50"
