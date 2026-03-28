@@ -1010,7 +1010,7 @@ export default function AppointmentsPage() {
 
 			let sheetIndex = 1;
 
-			for (const [, group] of grouped) {
+			for (const [, group] of Array.from(grouped)) {
 				const baseSheetName = sanitizeWorksheetName(
 					`${sheetIndex}_${group.tpaName}_${group.labName}`
 				);
