@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { toPng } from 'html-to-image';
 import {
 	CalendarDays,
@@ -11,6 +12,9 @@ import {
 	Users,
 	ChevronDown,
 	ChevronUp,
+	FileSpreadsheet,
+	Columns3,
+	X,
 } from 'lucide-react';
 
 type Lab = {
@@ -57,6 +61,7 @@ type AssignmentRow = {
 	status: string;
 
 	visitType?: string | null;
+	serviceType?: string | null;
 
 	addressRemark: string;
 	assignedToId: string;
@@ -69,6 +74,67 @@ type ApiResp = {
 	users: UserRow[];
 	rows: AssignmentRow[];
 };
+
+type SortKey =
+	| 'apptAt'
+	| 'clientName'
+	| 'mobileNo'
+	| 'insuranceName'
+	| 'testSummary'
+	| 'visitType'
+	| 'serviceType'
+	| 'location'
+	| 'staff'
+	| 'remark'
+	| 'status';
+
+type ColumnKey =
+	| 'appointment'
+	| 'clientName'
+	| 'mobileNo'
+	| 'insuranceName'
+	| 'testSummary'
+	| 'visitType'
+	| 'serviceType'
+	| 'location'
+	| 'staff'
+	| 'remark'
+	| 'status';
+
+type ColumnDef = {
+	key: ColumnKey;
+	label: string;
+	sortKey?: SortKey;
+	minWidth?: string;
+};
+
+const ALL_COLUMNS: ColumnDef[] = [
+	{ key: 'appointment', label: 'Appointment', sortKey: 'apptAt', minWidth: '180px' },
+	{ key: 'clientName', label: 'Client Name', sortKey: 'clientName', minWidth: '170px' },
+	{ key: 'mobileNo', label: 'Mobile No', sortKey: 'mobileNo', minWidth: '130px' },
+	{ key: 'insuranceName', label: 'Insurance', sortKey: 'insuranceName', minWidth: '180px' },
+	{ key: 'testSummary', label: 'Test', sortKey: 'testSummary', minWidth: '170px' },
+	{ key: 'visitType', label: 'Visit Type', sortKey: 'visitType', minWidth: '110px' },
+	{ key: 'serviceType', label: 'Service Type', sortKey: 'serviceType', minWidth: '120px' },
+	{ key: 'location', label: 'Location', sortKey: 'location', minWidth: '220px' },
+	{ key: 'staff', label: 'Staff', sortKey: 'staff', minWidth: '180px' },
+	{ key: 'remark', label: 'Address Remark', sortKey: 'remark', minWidth: '220px' },
+	{ key: 'status', label: 'Status', sortKey: 'status', minWidth: '150px' },
+];
+
+const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = [
+	'appointment',
+	'clientName',
+	'mobileNo',
+	'insuranceName',
+	'testSummary',
+	'visitType',
+	'serviceType',
+	'location',
+	'staff',
+	'remark',
+	'status',
+];
 
 function formatDateOnly(iso?: string | null) {
 	if (!iso) return '';
@@ -104,6 +170,13 @@ function normalizeVisitType(v?: string | null) {
 	return '';
 }
 
+function normalizeServiceType(v?: string | null) {
+	const s = (v || '').toUpperCase().trim();
+	if (s === 'OUTER') return 'OUTER';
+	if (s === 'LOCAL') return 'LOCAL';
+	return '';
+}
+
 function vendorLabel(v: Vendor) {
 	const name = v.nickName || v.tpaName || 'TPA';
 	const code = v.vendorId ? ` (${v.vendorId})` : '';
@@ -118,12 +191,24 @@ function isReportCompletedStatus(v?: string | null) {
 	return normalizeStatus(v) === 'REPORT COMPLETED';
 }
 
+function escapeHtml(value: string) {
+	return value
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
+
 export default function OuterAssignmentsPage() {
 	const exportRef = useRef<HTMLDivElement | null>(null);
+	const columnMenuRef = useRef<HTMLDivElement | null>(null);
+	const columnButtonRef = useRef<HTMLButtonElement | null>(null);
 
 	const [loading, setLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [exporting, setExporting] = useState(false);
+	const [excelExporting, setExcelExporting] = useState(false);
 
 	const [labs, setLabs] = useState<Lab[]>([]);
 	const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -143,24 +228,22 @@ export default function OuterAssignmentsPage() {
 	const [dateTo, setDateTo] = useState<string>(() => ymdToday());
 
 	const [visitType, setVisitType] = useState<string>('');
+	const [serviceType, setServiceType] = useState<string>('');
 
 	const [draftAssignedTo, setDraftAssignedTo] = useState<Record<string, string>>({});
 	const [draftRemark, setDraftRemark] = useState<Record<string, string>>({});
 
-	type SortKey =
-		| 'apptAt'
-		| 'clientName'
-		| 'mobileNo'
-		| 'insuranceName'
-		| 'testSummary'
-		| 'location'
-		| 'visitType'
-		| 'status'
-		| 'staff'
-		| 'remark';
-
 	const [sortKey, setSortKey] = useState<SortKey>('apptAt');
 	const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+	const [visibleColumns, setVisibleColumns] = useState<ColumnKey[]>(DEFAULT_VISIBLE_COLUMNS);
+	const [showColumnMenu, setShowColumnMenu] = useState(false);
+	const [mounted, setMounted] = useState(false);
+	const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number }>({
+		top: 0,
+		left: 0,
+		width: 260,
+	});
 
 	function sortBy(k: SortKey) {
 		if (k === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -201,6 +284,7 @@ export default function OuterAssignmentsPage() {
 		if (dateFrom) sp.set('dateFrom', dateFrom);
 		if (dateTo) sp.set('dateTo', dateTo);
 		if (visitType) sp.set('visitType', visitType);
+		if (serviceType) sp.set('serviceType', serviceType);
 		if (vendorId) sp.set('vendorId', vendorId);
 
 		const qs = sp.toString();
@@ -262,6 +346,7 @@ export default function OuterAssignmentsPage() {
 	}
 
 	useEffect(() => {
+		setMounted(true);
 		loadLabs();
 		loadVendors();
 		loadAssignments('');
@@ -271,7 +356,55 @@ export default function OuterAssignmentsPage() {
 	useEffect(() => {
 		loadAssignments(labId);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [labId, dateFrom, dateTo, visitType, vendorId]);
+	}, [labId, dateFrom, dateTo, visitType, serviceType, vendorId]);
+
+	function updateColumnMenuPosition() {
+		if (!columnButtonRef.current) return;
+		const rect = columnButtonRef.current.getBoundingClientRect();
+		const width = 260;
+		const viewportPadding = 12;
+		const desiredLeft = rect.right - width;
+		const maxLeft = window.innerWidth - width - viewportPadding;
+		const left = Math.max(viewportPadding, Math.min(desiredLeft, maxLeft));
+		const top = rect.bottom + window.scrollY + 8;
+		setMenuPos({ top, left, width });
+	}
+
+	useEffect(() => {
+		if (!showColumnMenu) return;
+		updateColumnMenuPosition();
+
+		function onScrollOrResize() {
+			updateColumnMenuPosition();
+		}
+
+		window.addEventListener('resize', onScrollOrResize);
+		window.addEventListener('scroll', onScrollOrResize, true);
+
+		return () => {
+			window.removeEventListener('resize', onScrollOrResize);
+			window.removeEventListener('scroll', onScrollOrResize, true);
+		};
+	}, [showColumnMenu]);
+
+	useEffect(() => {
+		function onClickOutside(e: MouseEvent) {
+			const target = e.target as Node;
+			const clickedInsideMenu = columnMenuRef.current?.contains(target);
+			const clickedButton = columnButtonRef.current?.contains(target);
+			if (!clickedInsideMenu && !clickedButton) {
+				setShowColumnMenu(false);
+			}
+		}
+
+		if (showColumnMenu) {
+			document.addEventListener('mousedown', onClickOutside);
+		}
+
+		return () => {
+			document.removeEventListener('mousedown', onClickOutside);
+		};
+	}, [showColumnMenu]);
 
 	const userMap = useMemo(() => {
 		const m = new Map<string, UserRow>();
@@ -325,6 +458,7 @@ export default function OuterAssignmentsPage() {
 
 	const filteredSortedRows = useMemo(() => {
 		const vt = normalizeVisitType(visitType);
+		const st = normalizeServiceType(serviceType);
 
 		const base = rows.filter((r) => {
 			if (dateFrom || dateTo) {
@@ -334,6 +468,11 @@ export default function OuterAssignmentsPage() {
 			if (vt) {
 				const rowVT = normalizeVisitType(r.visitType || '');
 				if (rowVT !== vt) return false;
+			}
+
+			if (st) {
+				const rowST = normalizeServiceType(r.serviceType || '');
+				if (rowST !== st) return false;
 			}
 
 			if (staffFilter) {
@@ -356,20 +495,18 @@ export default function OuterAssignmentsPage() {
 					return (r.insuranceName || '').toLowerCase();
 				case 'testSummary':
 					return (r.testSummary || '').toLowerCase();
-				case 'location':
-					return (r.location || '').toLowerCase();
 				case 'visitType':
 					return normalizeVisitType(r.visitType || '');
+				case 'serviceType':
+					return normalizeServiceType(r.serviceType || '');
+				case 'location':
+					return (r.location || '').toLowerCase();
 				case 'status':
 					return (r.status || '').toLowerCase();
-				case 'staff': {
-					const staffName = getAssignedUserName(r);
-					return staffName.toLowerCase();
-				}
-				case 'remark': {
-					const remark = getCurrentRemark(r);
-					return remark.toLowerCase();
-				}
+				case 'staff':
+					return getAssignedUserName(r).toLowerCase();
+				case 'remark':
+					return getCurrentRemark(r).toLowerCase();
 				default:
 					return '';
 			}
@@ -384,11 +521,11 @@ export default function OuterAssignmentsPage() {
 			const cmp = va > vb ? 1 : -1;
 			return sortDir === 'asc' ? cmp : -cmp;
 		});
-	}, [rows, dateFrom, dateTo, visitType, staffFilter, sortKey, sortDir, draftAssignedTo, draftRemark, userMap]);
+	}, [rows, dateFrom, dateTo, visitType, serviceType, staffFilter, sortKey, sortDir, draftAssignedTo, draftRemark, userMap]);
 
 	const changedFilteredRows = useMemo(() => {
 		return filteredSortedRows.filter((r) => isRowChanged(r));
-	}, [filteredSortedRows, draftAssignedTo, draftRemark]);
+	}, [filteredSortedRows]);
 
 	const stats = useMemo(() => {
 		const total = filteredSortedRows.length;
@@ -427,6 +564,57 @@ export default function OuterAssignmentsPage() {
 
 		return entries;
 	}, [filteredSortedRows, draftAssignedTo, userMap]);
+
+	const visibleColumnDefs = useMemo(() => {
+		return ALL_COLUMNS.filter((col) => visibleColumns.includes(col.key));
+	}, [visibleColumns]);
+
+	function toggleColumn(key: ColumnKey) {
+		setVisibleColumns((prev) => {
+			if (prev.includes(key)) {
+				if (prev.length === 1) return prev;
+				return prev.filter((k) => k !== key);
+			}
+			const ordered = ALL_COLUMNS.map((c) => c.key).filter((k) => prev.includes(k) || k === key);
+			return ordered;
+		});
+	}
+
+	function resetColumns() {
+		setVisibleColumns(DEFAULT_VISIBLE_COLUMNS);
+	}
+
+	function getCellValue(r: AssignmentRow, key: ColumnKey) {
+		const vt = normalizeVisitType(r.visitType || '') || '-';
+		const st = normalizeServiceType(r.serviceType || '') || '-';
+
+		switch (key) {
+			case 'appointment':
+				return `${formatDateOnly(r.apptAt)} ${formatTime(r.apptAt)}`.trim();
+			case 'clientName':
+				return r.clientName || '';
+			case 'mobileNo':
+				return r.mobileNo || '';
+			case 'insuranceName':
+				return r.insuranceName || '';
+			case 'testSummary':
+				return r.testSummary || '';
+			case 'visitType':
+				return vt;
+			case 'serviceType':
+				return st;
+			case 'location':
+				return r.location || '';
+			case 'staff':
+				return getAssignedUserName(r) || 'Unassigned';
+			case 'remark':
+				return getCurrentRemark(r) || '';
+			case 'status':
+				return r.status || '';
+			default:
+				return '';
+		}
+	}
 
 	async function saveAll() {
 		setErr(null);
@@ -519,6 +707,95 @@ export default function OuterAssignmentsPage() {
 		}
 	}
 
+	function exportExcel() {
+		try {
+			setErr(null);
+			setOk(null);
+			setExcelExporting(true);
+
+			const columns = visibleColumnDefs;
+
+			const headerHtml = columns
+				.map((col) => `<th style="background:#f3f4f6;font-weight:700;border:1px solid #d1d5db;padding:8px;text-align:left;">${escapeHtml(col.label)}</th>`)
+				.join('');
+
+			const rowsHtml = filteredSortedRows
+				.map((r) => {
+					const cells = columns
+						.map((col) => {
+							const value = getCellValue(r, col.key);
+							return `<td style="border:1px solid #d1d5db;padding:8px;vertical-align:top;">${escapeHtml(value)}</td>`;
+						})
+						.join('');
+
+					return `<tr>${cells}</tr>`;
+				})
+				.join('');
+
+			const title = 'Outer Appointment Assignment';
+			const meta = [
+				`Date Range: ${dateFrom || 'All'} to ${dateTo || 'All'}`,
+				`Lab: ${labId ? labs.find((l) => l.id === labId)?.nickName || labs.find((l) => l.id === labId)?.name || labId : 'All Labs'}`,
+				`TPA: ${vendorId ? selectedVendorLabel : 'All TPA'}`,
+				`Staff: ${staffFilter ? selectedStaffLabel : 'All Staff'}`,
+				`Visit Type: ${visitType || 'All'}`,
+				`Service Type: ${serviceType || 'All'}`,
+				`Filtered Rows: ${filteredSortedRows.length}`,
+			];
+
+			const html = `
+				<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+					<head>
+						<meta charset="utf-8" />
+						<!--[if gte mso 9]>
+						<xml>
+							<x:ExcelWorkbook>
+								<x:ExcelWorksheets>
+									<x:ExcelWorksheet>
+										<x:Name>Outer Assignments</x:Name>
+										<x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+									</x:ExcelWorksheet>
+								</x:ExcelWorksheets>
+							</x:ExcelWorkbook>
+						</xml>
+						<![endif]-->
+					</head>
+					<body>
+						<div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#111827;">
+							<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${escapeHtml(title)}</div>
+							${meta.map((m) => `<div style="margin-bottom:4px;">${escapeHtml(m)}</div>`).join('')}
+							<table style="border-collapse:collapse;margin-top:14px;min-width:1200px;">
+								<thead>
+									<tr>${headerHtml}</tr>
+								</thead>
+								<tbody>
+									${rowsHtml || `<tr><td colspan="${columns.length}" style="border:1px solid #d1d5db;padding:8px;">No rows found.</td></tr>`}
+								</tbody>
+							</table>
+						</div>
+					</body>
+				</html>
+			`;
+
+			const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+			const url = URL.createObjectURL(blob);
+
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `outer-assignments-${new Date().toISOString().slice(0, 10)}.xls`;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+
+			URL.revokeObjectURL(url);
+			setOk('Excel exported successfully');
+		} catch (e: any) {
+			setErr(e?.message || 'Excel export failed');
+		} finally {
+			setExcelExporting(false);
+		}
+	}
+
 	const SortTh = ({ k, label }: { k: SortKey; label: string }) => {
 		const active = sortKey === k;
 		return (
@@ -555,8 +832,63 @@ export default function OuterAssignmentsPage() {
 		})()
 		: 'All Staff';
 
+	function clearFilters() {
+		setDateFrom('');
+		setDateTo('');
+		setStaffFilter('');
+		setLabId('');
+		setVendorId('');
+		setVisitType('');
+		setServiceType('');
+		setVisibleColumns(DEFAULT_VISIBLE_COLUMNS);
+	}
+
+	const columnMenu =
+		mounted && showColumnMenu
+			? createPortal(
+				<div
+					ref={columnMenuRef}
+					className="fixed z-[9999] rounded-lg border bg-white shadow-xl p-3"
+					style={{
+						top: menuPos.top,
+						left: menuPos.left,
+						width: menuPos.width,
+						maxHeight: '320px',
+					}}
+				>
+					<div className="flex items-center justify-between mb-2">
+						<div className="text-sm font-semibold text-gray-800">Visible Columns</div>
+						<button
+							type="button"
+							className="text-xs text-brand hover:underline"
+							onClick={resetColumns}
+						>
+							Reset
+						</button>
+					</div>
+
+					<div className="max-h-[250px] overflow-y-auto space-y-2 pr-1">
+						{ALL_COLUMNS.map((col) => (
+							<label
+								key={col.key}
+								className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer"
+							>
+								<input
+									type="checkbox"
+									checked={visibleColumns.includes(col.key)}
+									onChange={() => toggleColumn(col.key)}
+								/>
+								<span>{col.label}</span>
+							</label>
+						))}
+					</div>
+				</div>,
+				document.body
+			)
+			: null;
+
 	return (
-		<div className="mx-auto w-full max-w-[1600px] px-4 space-y-6">
+		<div className="mx-auto w-full max-w-[1700px] px-4 space-y-6">
 			<div className="rounded-xl border bg-white px-5 py-4 shadow-sm flex items-start justify-between gap-4">
 				<div className="flex items-start gap-3">
 					<div className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-brand/10 text-brand-600">
@@ -570,6 +902,12 @@ export default function OuterAssignmentsPage() {
 								<span>
 									{' '}
 									· Visit: <b>{visitType}</b>
+								</span>
+							) : null}
+							{serviceType ? (
+								<span>
+									{' '}
+									· Service: <b>{serviceType}</b>
 								</span>
 							) : null}
 							{vendorId ? (
@@ -603,7 +941,7 @@ export default function OuterAssignmentsPage() {
 						</span>
 					</div>
 
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-2 flex-wrap">
 						<button
 							type="button"
 							className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
@@ -613,6 +951,17 @@ export default function OuterAssignmentsPage() {
 						>
 							<RefreshCcw className="h-4 w-4" />
 							Refresh
+						</button>
+
+						<button
+							type="button"
+							className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+							onClick={exportExcel}
+							disabled={loading || excelExporting}
+							title="Export current filtered rows to Excel"
+						>
+							<FileSpreadsheet className="h-4 w-4" />
+							{excelExporting ? 'Exporting…' : 'Export Excel'}
 						</button>
 
 						<button
@@ -653,8 +1002,8 @@ export default function OuterAssignmentsPage() {
 				</div>
 			)}
 
-			<div className="rounded-xl border bg-white shadow-sm">
-				<div className="p-4 border-b flex flex-wrap items-end gap-2 justify-between">
+			<div className="rounded-xl border bg-white shadow-sm overflow-visible">
+				<div className="p-4 border-b space-y-3 overflow-visible">
 					<div>
 						<div className="text-base font-semibold">Assignment List</div>
 						<div className="text-xs text-gray-600 mt-1">
@@ -663,11 +1012,11 @@ export default function OuterAssignmentsPage() {
 						</div>
 					</div>
 
-					<div className="flex flex-wrap items-end gap-2">
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">Lab</label>
+					<div className="flex flex-nowrap items-end gap-2 overflow-x-auto overflow-y-visible pb-1">
+						<div className="shrink-0">
+							<label className="block text-[11px] text-gray-600 mb-1">Lab</label>
 							<select
-								className="border rounded px-2 py-2 w-[130px] text-sm"
+								className="border rounded px-2 py-2 w-[115px] text-sm"
 								value={labId}
 								onChange={(e) => setLabId(e.target.value)}
 							>
@@ -680,10 +1029,10 @@ export default function OuterAssignmentsPage() {
 							</select>
 						</div>
 
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">TPA Name</label>
+						<div className="shrink-0">
+							<label className="block text-[11px] text-gray-600 mb-1">TPA Name</label>
 							<select
-								className="border rounded px-2 py-2 w-[150px] text-sm"
+								className="border rounded px-2 py-2 w-[135px] text-sm"
 								value={vendorId}
 								onChange={(e) => setVendorId(e.target.value)}
 							>
@@ -696,10 +1045,10 @@ export default function OuterAssignmentsPage() {
 							</select>
 						</div>
 
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">Staff</label>
+						<div className="shrink-0">
+							<label className="block text-[11px] text-gray-600 mb-1">Staff</label>
 							<select
-								className="border rounded px-2 py-2 w-[180px] text-sm"
+								className="border rounded px-2 py-2 w-[145px] text-sm"
 								value={staffFilter}
 								onChange={(e) => setStaffFilter(e.target.value)}
 							>
@@ -712,10 +1061,10 @@ export default function OuterAssignmentsPage() {
 							</select>
 						</div>
 
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">Visit Type</label>
+						<div className="shrink-0">
+							<label className="block text-[11px] text-gray-600 mb-1">Visit Type</label>
 							<select
-								className="border rounded px-2 py-2 w-[110px] text-sm"
+								className="border rounded px-2 py-2 w-[95px] text-sm"
 								value={visitType}
 								onChange={(e) => setVisitType(normalizeVisitType(e.target.value))}
 							>
@@ -725,73 +1074,106 @@ export default function OuterAssignmentsPage() {
 							</select>
 						</div>
 
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">From</label>
-							<input
-								type="date"
-								className="border rounded px-2 py-2 w-[135px] text-sm"
-								value={dateFrom}
-								onChange={(e) => setDateFrom(e.target.value)}
-							/>
+						<div className="shrink-0">
+							<label className="block text-[11px] text-gray-600 mb-1">Service Type</label>
+							<select
+								className="border rounded px-2 py-2 w-[100px] text-sm"
+								value={serviceType}
+								onChange={(e) => setServiceType(normalizeServiceType(e.target.value))}
+							>
+								<option value="">All</option>
+								<option value="OUTER">Outer</option>
+								<option value="LOCAL">Local</option>
+							</select>
 						</div>
 
-						<div>
-							<label className="block text-xs text-gray-600 mb-1">To</label>
-							<input
-								type="date"
-								className="border rounded px-2 py-2 w-[135px] text-sm"
-								value={dateTo}
-								onChange={(e) => setDateTo(e.target.value)}
-							/>
+						<div className="shrink-0">
+							<label className="block text-[11px] text-gray-600 mb-1">Date Range</label>
+							<div className="flex items-center rounded border bg-white overflow-hidden h-[42px]">
+								<input
+									type="date"
+									className="px-2 text-sm outline-none w-[130px] h-full"
+									value={dateFrom}
+									onChange={(e) => setDateFrom(e.target.value)}
+								/>
+								<div className="h-full w-px bg-gray-200" />
+								<input
+									type="date"
+									className="px-2 text-sm outline-none w-[130px] h-full"
+									value={dateTo}
+									onChange={(e) => setDateTo(e.target.value)}
+								/>
+							</div>
 						</div>
 
-						<button
-							type="button"
-							className="rounded border px-3 py-2 text-sm hover:bg-gray-50 h-[38px]"
-							onClick={() => {
-								setDateFrom('');
-								setDateTo('');
-								setStaffFilter('');
-								setLabId('');
-								setVendorId('');
-								setVisitType('');
-							}}
-							title="Clear filters"
-						>
-							Clear
-						</button>
+						<div className="relative shrink-0">
+							<label className="block text-[11px] text-gray-600 mb-1">Select Column</label>
+							<button
+								ref={columnButtonRef}
+								type="button"
+								className="inline-flex items-center justify-between gap-2 border rounded px-3 py-2 w-[150px] text-sm hover:bg-gray-50 h-[42px] bg-white"
+								onClick={() => {
+									if (!showColumnMenu) updateColumnMenuPosition();
+									setShowColumnMenu((p) => !p);
+								}}
+							>
+								<span className="inline-flex items-center gap-2 truncate">
+									<Columns3 className="h-4 w-4 shrink-0" />
+									<span className="truncate">{visibleColumns.length} selected</span>
+								</span>
+								{showColumnMenu ? (
+									<ChevronUp className="h-4 w-4 shrink-0" />
+								) : (
+									<ChevronDown className="h-4 w-4 shrink-0" />
+								)}
+							</button>
+						</div>
+
+						<div className="shrink-0">
+							<label className="block text-[11px] text-gray-600 mb-1 opacity-0">Clear</label>
+							<button
+								type="button"
+								className="inline-flex items-center justify-center rounded border h-[42px] w-[42px] hover:bg-gray-50"
+								onClick={clearFilters}
+								title="Clear filters"
+							>
+								<X className="h-4 w-4" />
+							</button>
+						</div>
 					</div>
 				</div>
 
 				<div className="p-4">
 					<div className="w-full overflow-x-auto">
 						<div className="max-h-[620px] overflow-y-auto rounded border">
-							<table className="w-full min-w-[1500px]">
+							<table className="w-full min-w-[1700px]">
 								<thead className="sticky top-0 z-10 bg-white">
 									<tr className="border-b bg-gray-50">
-										<SortTh k="apptAt" label="Appointment" />
-										<SortTh k="clientName" label="Client Name" />
-										<SortTh k="mobileNo" label="Mobile No" />
-										<SortTh k="insuranceName" label="Insurance" />
-										<SortTh k="testSummary" label="Test" />
-										<SortTh k="visitType" label="Visit Type" />
-										<SortTh k="location" label="Location" />
-										<SortTh k="staff" label="Staff" />
-										<SortTh k="remark" label="Address Remark" />
-										<SortTh k="status" label="Status" />
+										{visibleColumnDefs.map((col) =>
+											col.sortKey ? (
+												<SortTh key={col.key} k={col.sortKey} label={col.label} />
+											) : (
+												<th
+													key={col.key}
+													className="px-3 py-2 text-left text-xs font-semibold text-gray-700 whitespace-nowrap"
+												>
+													{col.label}
+												</th>
+											),
+										)}
 									</tr>
 								</thead>
 
 								<tbody>
 									{loading ? (
 										<tr>
-											<td colSpan={10} className="px-3 py-6 text-center text-sm text-gray-500">
+											<td colSpan={visibleColumnDefs.length} className="px-3 py-6 text-center text-sm text-gray-500">
 												Loading…
 											</td>
 										</tr>
 									) : filteredSortedRows.length === 0 ? (
 										<tr>
-											<td colSpan={10} className="px-3 py-6 text-center text-sm text-gray-500">
+											<td colSpan={visibleColumnDefs.length} className="px-3 py-6 text-center text-sm text-gray-500">
 												No rows found for the current filter.
 											</td>
 										</tr>
@@ -800,6 +1182,7 @@ export default function OuterAssignmentsPage() {
 											const assignedToId = getCurrentAssignedToId(r);
 											const remark = draftRemark[r.id] ?? r.addressRemark ?? '';
 											const vt = normalizeVisitType(r.visitType || '');
+											const st = normalizeServiceType(r.serviceType || '');
 											const changed = isRowChanged(r);
 											const rowIsReportCompleted = isReportCompletedStatus(r.status);
 											const assignedStaffName = getAssignedUserName(r);
@@ -809,67 +1192,96 @@ export default function OuterAssignmentsPage() {
 													key={r.id}
 													className={`border-t hover:bg-gray-50 ${changed ? 'bg-amber-50/40' : ''}`}
 												>
-													<td className="px-3 py-2 text-sm whitespace-nowrap">
-														<div className="font-medium text-gray-900">
-															{formatDateOnly(r.apptAt)}{' '}
-															<span className="text-gray-500">{formatTime(r.apptAt)}</span>
-														</div>
-														{!labId && (
-															<div className="text-xs text-gray-500">
-																{r.labNick || r.labCode || r.labName || r.labId}
+													{visibleColumns.includes('appointment') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">
+															<div className="font-medium text-gray-900">
+																{formatDateOnly(r.apptAt)}{' '}
+																<span className="text-gray-500">{formatTime(r.apptAt)}</span>
 															</div>
-														)}
-													</td>
+															{!labId && (
+																<div className="text-xs text-gray-500">
+																	{r.labNick || r.labCode || r.labName || r.labId}
+																</div>
+															)}
+														</td>
+													)}
 
-													<td className="px-3 py-2 text-sm whitespace-nowrap">{r.clientName}</td>
-													<td className="px-3 py-2 text-sm whitespace-nowrap">{r.mobileNo}</td>
-													<td className="px-3 py-2 text-sm">{r.insuranceName}</td>
-													<td className="px-3 py-2 text-sm whitespace-nowrap">{r.testSummary}</td>
-													<td className="px-3 py-2 text-sm whitespace-nowrap">{vt || '-'}</td>
-													<td className="px-3 py-2 text-sm">{r.location}</td>
+													{visibleColumns.includes('clientName') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">{r.clientName}</td>
+													)}
 
-													<td className="px-3 py-2 text-sm">
-														{rowIsReportCompleted ? (
-															<div className="min-h-[36px] w-full rounded border border-gray-200 bg-gray-50 px-2 py-2 text-sm text-gray-800">
-																{assignedStaffName || 'Unassigned'}
-															</div>
-														) : (
-															<select
-																className="w-full border rounded px-2 py-1.5 bg-white"
-																value={assignedToId}
+													{visibleColumns.includes('mobileNo') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">{r.mobileNo}</td>
+													)}
+
+													{visibleColumns.includes('insuranceName') && (
+														<td className="px-3 py-2 text-sm">{r.insuranceName}</td>
+													)}
+
+													{visibleColumns.includes('testSummary') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">{r.testSummary}</td>
+													)}
+
+													{visibleColumns.includes('visitType') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">{vt || '-'}</td>
+													)}
+
+													{visibleColumns.includes('serviceType') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">{st || '-'}</td>
+													)}
+
+													{visibleColumns.includes('location') && (
+														<td className="px-3 py-2 text-sm">{r.location}</td>
+													)}
+
+													{visibleColumns.includes('staff') && (
+														<td className="px-3 py-2 text-sm min-w-[180px]">
+															{rowIsReportCompleted ? (
+																<div className="min-h-[36px] w-full rounded border border-gray-200 bg-gray-50 px-2 py-2 text-sm text-gray-800">
+																	{assignedStaffName || 'Unassigned'}
+																</div>
+															) : (
+																<select
+																	className="w-full border rounded px-2 py-1.5 bg-white"
+																	value={assignedToId}
+																	onChange={(e) =>
+																		setDraftAssignedTo((p) => ({ ...p, [r.id]: e.target.value }))
+																	}
+																>
+																	<option value="">Select User</option>
+																	{users.map((u) => (
+																		<option key={u.id} value={u.id}>
+																			{userLabel(u)}
+																		</option>
+																	))}
+																</select>
+															)}
+														</td>
+													)}
+
+													{visibleColumns.includes('remark') && (
+														<td className="px-3 py-2 text-sm min-w-[220px]">
+															<input
+																className="w-full border rounded px-2 py-1.5"
+																placeholder="Enter address / landmark / remark"
+																value={remark}
 																onChange={(e) =>
-																	setDraftAssignedTo((p) => ({ ...p, [r.id]: e.target.value }))
+																	setDraftRemark((p) => ({ ...p, [r.id]: e.target.value }))
 																}
-															>
-																<option value="">Select User</option>
-																{users.map((u) => (
-																	<option key={u.id} value={u.id}>
-																		{userLabel(u)}
-																	</option>
-																))}
-															</select>
-														)}
-													</td>
+															/>
+														</td>
+													)}
 
-													<td className="px-3 py-2 text-sm">
-														<input
-															className="w-full border rounded px-2 py-1.5"
-															placeholder="Enter address / landmark / remark"
-															value={remark}
-															onChange={(e) =>
-																setDraftRemark((p) => ({ ...p, [r.id]: e.target.value }))
-															}
-														/>
-													</td>
-
-													<td className="px-3 py-2 text-sm whitespace-nowrap">
-														<div>{r.status}</div>
-														{changed ? (
-															<div className="text-[11px] text-amber-700 font-medium mt-1">
-																Modified
-															</div>
-														) : null}
-													</td>
+													{visibleColumns.includes('status') && (
+														<td className="px-3 py-2 text-sm whitespace-nowrap">
+															<div>{r.status}</div>
+															{changed ? (
+																<div className="text-[11px] text-amber-700 font-medium mt-1">
+																	Modified
+																</div>
+															) : null}
+														</td>
+													)}
 												</tr>
 											);
 										})
@@ -880,7 +1292,7 @@ export default function OuterAssignmentsPage() {
 					</div>
 
 					<div className="text-xs text-gray-500 mt-3">
-						Export PNG will use the clean assignment template (not this table).
+						Export Excel uses the current filters and the currently selected columns. Export PNG uses the clean assignment template.
 					</div>
 				</div>
 			</div>
@@ -907,6 +1319,12 @@ export default function OuterAssignmentsPage() {
 							<span>
 								{' '}
 								· Visit: <b>{visitType}</b>
+							</span>
+						) : null}
+						{serviceType ? (
+							<span>
+								{' '}
+								· Service: <b>{serviceType}</b>
 							</span>
 						) : null}
 						{vendorId ? (
@@ -992,6 +1410,11 @@ export default function OuterAssignmentsPage() {
 													</div>
 
 													<div className="text-sm">
+														<span className="font-semibold">Service Type</span> :{' '}
+														{normalizeServiceType(r.serviceType || '') || '-'}
+													</div>
+
+													<div className="text-sm">
 														<span className="font-semibold">Address</span> : {address || '-'}
 													</div>
 
@@ -1008,6 +1431,8 @@ export default function OuterAssignmentsPage() {
 					</div>
 				</div>
 			</div>
+
+			{columnMenu}
 		</div>
 	);
 }

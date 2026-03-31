@@ -50,7 +50,8 @@ function toNumberOrNull(v: any): number | null {
 
 /**
  * GET /api/appointments
- * Query params: q, status, vendorId, labId, insuranceCompanyId, dateFrom(yyyy-mm-dd), dateTo(yyyy-mm-dd)
+ * Query params:
+ * q, status, vendorId, labId, insuranceCompanyId, assignedToId, dateFrom(yyyy-mm-dd), dateTo(yyyy-mm-dd)
  */
 export async function GET(req: Request) {
 	try {
@@ -63,25 +64,23 @@ export async function GET(req: Request) {
 		const vendorId = searchParams.get('vendorId')?.trim() || '';
 		const labIdParam = searchParams.get('labId')?.trim() || '';
 		const insuranceCompanyId = searchParams.get('insuranceCompanyId')?.trim() || '';
+		const assignedToId = searchParams.get('assignedToId')?.trim() || '';
 		const dateFrom = searchParams.get('dateFrom');
 		const dateTo = searchParams.get('dateTo');
 
-		// Base where: only active
 		const where: any = { isActive: 1 };
 
-		// Lab scoping
 		if (sessionLabId) {
 			where.labId = sessionLabId;
 		} else if (labIdParam && labIdParam !== 'All Labs') {
 			where.labId = labIdParam;
 		}
 
-		// Status and direct ids
 		if (status) where.status = status;
 		if (vendorId) where.vendorId = vendorId;
 		if (insuranceCompanyId) where.insuranceCompanyId = insuranceCompanyId;
+		if (assignedToId) where.assignedToId = assignedToId;
 
-		// Date-only range (inclusive end-of-day)
 		if (dateFrom || dateTo) {
 			const gte = dateFrom ? parseDateOnlyStart(dateFrom) : null;
 			const lte = dateTo ? endOfDay(parseDateOnlyStart(dateTo)!) : null;
@@ -92,25 +91,27 @@ export async function GET(req: Request) {
 			}
 		}
 
-		// Free-text search over client/phone/location + Lab + Vendor + Insurance
 		if (q) {
 			where.OR = [
 				{ clientName: { contains: q, mode: 'insensitive' } },
 				{ clientRef: { contains: q, mode: 'insensitive' } },
 				{ phone: { contains: q, mode: 'insensitive' } },
 				{ location: { contains: q, mode: 'insensitive' } },
-				// lab fields
+
 				{ lab: { name: { contains: q, mode: 'insensitive' } } },
 				{ lab: { nickName: { contains: q, mode: 'insensitive' } } },
 				{ lab: { labCode: { contains: q, mode: 'insensitive' } } },
-				// vendor fields
+
 				{ vendor: { tpaName: { contains: q, mode: 'insensitive' } } },
 				{ vendor: { nickName: { contains: q, mode: 'insensitive' } } },
 				{ vendor: { vendorId: { contains: q, mode: 'insensitive' } } },
-				// insurance fields
+
 				{ insuranceCompany: { name: { contains: q, mode: 'insensitive' } } },
 				{ insuranceCompany: { nickName: { contains: q, mode: 'insensitive' } } },
 				{ insuranceCompany: { code: { contains: q, mode: 'insensitive' } } },
+
+				{ assignedTo: { name: { contains: q, mode: 'insensitive' } } },
+				{ assignedTo: { email: { contains: q, mode: 'insensitive' } } },
 			];
 		}
 
@@ -137,21 +138,28 @@ export async function GET(req: Request) {
 				serviceType: true,
 				paymentStatus: true,
 				extraChargeRs: true,
-
-				// ✅ NEW
 				testAmountRs: true,
 
 				paymentDate: true,
-
 				isActive: true,
 				createdAt: true,
 
-				// optional client-side labels/search
+				addressRemark: true,
+				assignedAt: true,
+				assignedToId: true,
+
 				lab: { select: { name: true, nickName: true, labCode: true } },
 				vendor: { select: { tpaName: true, nickName: true, vendorId: true } },
 				insuranceCompany: { select: { name: true, nickName: true, code: true } },
 
-				// tests -> build summary
+				assignedTo: {
+					select: {
+						id: true,
+						name: true,
+						email: true,
+					},
+				},
+
 				tests: {
 					select: {
 						bloodTest: true,
@@ -185,13 +193,21 @@ export async function GET(req: Request) {
 			serviceType: r.serviceType,
 			paymentStatus: r.paymentStatus,
 			extraChargeRs: r.extraChargeRs,
-
-			// ✅ NEW
 			testAmountRs: r.testAmountRs ?? 0,
 
 			paymentDate: isoOrNull(r.paymentDate),
-
 			createdAt: isoOrNull(r.createdAt)!,
+
+			addressRemark: r.addressRemark,
+			assignedAt: isoOrNull(r.assignedAt),
+			assignedToId: r.assignedToId,
+			assignedTo: r.assignedTo
+				? {
+					id: r.assignedTo.id,
+					name: r.assignedTo.name,
+					email: r.assignedTo.email,
+				}
+				: null,
 
 			_labels: {
 				labName: r.lab?.name ?? null,
@@ -203,6 +219,8 @@ export async function GET(req: Request) {
 				insName: r.insuranceCompany?.name ?? null,
 				insNick: r.insuranceCompany?.nickName ?? null,
 				insCode: r.insuranceCompany?.code ?? null,
+				assignedStaffName: r.assignedTo?.name ?? null,
+				assignedStaffEmail: r.assignedTo?.email ?? null,
 			},
 
 			testSummary: buildTestSummary(r.tests || undefined),
@@ -217,7 +235,7 @@ export async function GET(req: Request) {
 /**
  * POST /api/appointments
  * Accepts both legacy and new field names; writes to single `status` column.
- * NEW: serviceType, paymentDate (date or ISO), testAmountRs
+ * NEW: serviceType, paymentDate, testAmountRs
  */
 export async function POST(req: Request) {
 	try {
@@ -229,12 +247,12 @@ export async function POST(req: Request) {
 		const {
 			apptAt,
 			vendorId,
-			insuranceVendorId, // legacy
+			insuranceVendorId,
 			insuranceCompanyId,
 			labId,
 
 			clientName,
-			patientName, // legacy
+			patientName,
 			clientRef,
 			gender,
 			age,
@@ -246,11 +264,8 @@ export async function POST(req: Request) {
 			extraChargeRs,
 			paymentStatus,
 
-			// NEW
 			serviceType,
-			paymentDate, // yyyy-mm-dd or ISO
-
-			// ✅ NEW
+			paymentDate,
 			testAmountRs,
 		} = body;
 
@@ -261,7 +276,6 @@ export async function POST(req: Request) {
 		if (!visitType) return NextResponse.json({ error: 'visitType is required' }, { status: 400 });
 		if (!status) return NextResponse.json({ error: 'status is required' }, { status: 400 });
 
-		// paymentDate can be date-only -> set to local midnight
 		let paymentDateDt: Date | null = null;
 		if (paymentDate) {
 			const d0 = parseDateOnlyStart(paymentDate);
@@ -289,8 +303,6 @@ export async function POST(req: Request) {
 
 				serviceType: serviceType || null,
 				paymentDate: paymentDateDt,
-
-				// ✅ NEW
 				testAmountRs: toNumberOrNull(testAmountRs),
 
 				isActive: 1,

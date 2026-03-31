@@ -18,6 +18,12 @@ type Vendor = { id: string; vendorId: string; tpaName: string; nickName: string;
 type Lab = { id: string; labCode: string; name: string; vendors?: Vendor[]; nickName: string; };
 type Insurance = { id: string; code: string | null; name: string; address: string | null; nickName: string; };
 
+type AssignedUser = {
+	id: string;
+	name?: string | null;
+	email?: string | null;
+};
+
 type Appointment = {
 	id: string;
 	apptAt: string; // ISO
@@ -43,6 +49,11 @@ type Appointment = {
 
 	paymentDate: string | null;
 	createdAt: string;
+
+	addressRemark?: string | null;
+	assignedAt?: string | null;
+	assignedToId?: string | null;
+	assignedTo?: AssignedUser | null;
 
 	bloodTest?: 'FB' | 'B' | 'No' | null;
 	urineTest?: boolean | 'Yes' | 'No' | null;
@@ -211,6 +222,10 @@ function sanitizeWorksheetName(name: string) {
 	return cleaned.slice(0, 31) || 'Sheet';
 }
 
+function getAssignedStaffName(a: Appointment) {
+	return a.assignedTo?.name?.trim() || a.assignedTo?.email?.trim() || '';
+}
+
 /* ========= Small UI bits ========= */
 
 function Pill({
@@ -289,17 +304,17 @@ export default function AppointmentsPage() {
 	const [fDateTo, setFDateTo] = useState<string>(monthTo);
 	const [fStatus, setFStatus] = useState<string>('');
 	const [fLabId, setFLabId] = useState<string>('');
-
 	const [fTpaId, setFTpaId] = useState<string>('');
 	const [fVisitType, setFVisitType] = useState<string>('');
 	const [fServiceType, setFServiceType] = useState<string>('');
+	const [fAssignedToId, setFAssignedToId] = useState<string>('');
 
 	type TableSortKey =
 		| 'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal'
 		| 'mobile' | 'visit' | 'location' | 'status'
 		| 'serviceType' | 'payment' | 'extra' | 'testAmount' | 'totalAmount' | 'paymentDate'
 		| 'gender' | 'age'
-		| 'tests';
+		| 'tests' | 'assignedStaff';
 
 	const [sortKey, setSortKey] = useState<TableSortKey>('date');
 	const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -309,7 +324,7 @@ export default function AppointmentsPage() {
 		| 'status' | 'visit' | 'location'
 		| 'gender' | 'age' | 'mobile'
 		| 'serviceType' | 'payment' | 'extra' | 'testAmount' | 'totalAmount' | 'paymentDate'
-		| 'tests';
+		| 'tests' | 'assignedStaff';
 
 	const [visibleCols, setVisibleCols] = useState<Record<ColKey, boolean>>({
 		date: true,
@@ -331,6 +346,7 @@ export default function AppointmentsPage() {
 		totalAmount: true,
 		paymentDate: false,
 		tests: false,
+		assignedStaff: true,
 	});
 
 	const visibleColCount = useMemo(
@@ -619,6 +635,7 @@ export default function AppointmentsPage() {
 				const ins = insurers.find(i => i.id === r.insuranceCompanyId);
 				return (ins?.name || '').toLowerCase();
 			}
+			case 'assignedStaff': return getAssignedStaffName(r).toLowerCase();
 			case 'client': return (r.clientName || '').toLowerCase();
 			case 'proposal': return (r.clientRef || '').toLowerCase();
 			case 'mobile': return (r.phone || '').toLowerCase();
@@ -641,6 +658,18 @@ export default function AppointmentsPage() {
 		}
 	};
 
+	const assignedStaffOptions = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const r of rows) {
+			if (r.assignedToId) {
+				map.set(r.assignedToId, getAssignedStaffName(r) || r.assignedToId);
+			}
+		}
+		return Array.from(map.entries())
+			.map(([id, name]) => ({ id, name }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+	}, [rows]);
+
 	const filtered = useMemo(() => {
 		const term = q.trim().toLowerCase();
 
@@ -648,18 +677,18 @@ export default function AppointmentsPage() {
 			const dateOk = inDateRangeDateOnly(r.apptAt, fDateFrom, fDateTo);
 			const stOk = fStatus ? (r.status === fStatus) : true;
 			const labOk = fLabId ? (r.labId === fLabId) : true;
-
 			const tpaOk = fTpaId ? (r.vendorId === fTpaId) : true;
 			const visitOk = fVisitType ? ((r.visitType || '') === fVisitType) : true;
+			const staffOk = fAssignedToId ? ((r.assignedToId || '') === fAssignedToId) : true;
 
 			const svcOk = fServiceType
 				? String(r.serviceType || '').trim().toLowerCase() === fServiceType.trim().toLowerCase()
 				: true;
 
-			if (!(dateOk && stOk && labOk && tpaOk && visitOk && svcOk)) return false;
+			if (!(dateOk && stOk && labOk && tpaOk && visitOk && svcOk && staffOk)) return false;
 
 			if (!term) return true;
-			const haystack = [r.clientName, r.clientRef, r.phone]
+			const haystack = [r.clientName, r.clientRef, r.phone, getAssignedStaffName(r)]
 				.filter(Boolean)
 				.map(s => String(s).toLowerCase());
 			return haystack.some(s => s.includes(term));
@@ -678,7 +707,7 @@ export default function AppointmentsPage() {
 		rows, q,
 		sortKey, sortDir,
 		fDateFrom, fDateTo, fStatus, fLabId,
-		fTpaId, fVisitType, fServiceType,
+		fTpaId, fVisitType, fServiceType, fAssignedToId,
 		labs, vendors, insurers,
 	]);
 
@@ -819,6 +848,9 @@ export default function AppointmentsPage() {
 		const tpaName = fTpaId ? (vendors.find(v => v.id === fTpaId)?.tpaName || '') : 'All';
 		const visitText = fVisitType ? (fVisitType === 'CENTER' ? 'Center' : 'Home') : 'All';
 		const svcText = fServiceType || 'All';
+		const staffText = fAssignedToId
+			? (assignedStaffOptions.find(s => s.id === fAssignedToId)?.name || '')
+			: 'All';
 
 		doc.setFontSize(14);
 		doc.text('Appointments (Filtered)', 40, 40);
@@ -827,14 +859,16 @@ export default function AppointmentsPage() {
 		doc.text(`Date range: ${dateText}`, 40, 60);
 		doc.text(`Lab: ${labName}    Status: ${statusText}`, 40, 75);
 		doc.text(`TPA: ${tpaName}    Visit: ${visitText}    Service Type: ${svcText}`, 40, 90);
-		doc.text(`Search (Client/Proposal/Mobile): ${searchText}`, 40, 105);
-		doc.text(`Rows: ${rowsToExport.length}`, 40, 120);
+		doc.text(`Assigned Staff: ${staffText}`, 40, 105);
+		doc.text(`Search (Client/Proposal/Mobile/Staff): ${searchText}`, 40, 120);
+		doc.text(`Rows: ${rowsToExport.length}`, 40, 135);
 
 		const ALL_COLS = [
 			{ key: 'date', label: 'Date' },
 			{ key: 'lab', label: 'Lab' },
 			{ key: 'tpa', label: 'TPA' },
 			{ key: 'ins', label: 'Insurance' },
+			{ key: 'assignedStaff', label: 'Assigned Staff' },
 			{ key: 'status', label: 'Status' },
 			{ key: 'client', label: 'Client' },
 			{ key: 'proposal', label: 'Proposal' },
@@ -870,6 +904,7 @@ export default function AppointmentsPage() {
 					case 'lab': return lab?.nickName ?? '';
 					case 'tpa': return vendor?.tpaName ?? '';
 					case 'ins': return ins?.nickName ?? '';
+					case 'assignedStaff': return getAssignedStaffName(a);
 					case 'status': return a.status ?? '';
 					case 'client': return a.clientName ?? '';
 					case 'proposal': return a.clientRef ?? '';
@@ -893,7 +928,7 @@ export default function AppointmentsPage() {
 		});
 
 		autoTable(doc, {
-			startY: 140,
+			startY: 150,
 			head,
 			body,
 			styles: {
@@ -933,7 +968,7 @@ export default function AppointmentsPage() {
 			didDrawPage: () => { },
 		});
 
-		const endY = (doc as any).lastAutoTable?.finalY ?? 140;
+		const endY = (doc as any).lastAutoTable?.finalY ?? 150;
 		let footerY = endY + 18;
 
 		if (cols.some(c => c.key === 'extra')) {
@@ -958,7 +993,7 @@ export default function AppointmentsPage() {
 		doc.save(fileName);
 	}
 
-	async function exportInvoiceCopyToExcel(rowsToExport: Appointment[]) {
+	async function exportFilteredToExcel(rowsToExport: Appointment[]) {
 		if (!rowsToExport.length) {
 			alert('No appointment records found to export.');
 			return;
@@ -980,127 +1015,128 @@ export default function AppointmentsPage() {
 			workbook.creator = 'LabPlux';
 			workbook.created = new Date();
 
-			type GroupItem = {
-				tpaName: string;
-				labName: string;
-				rows: Appointment[];
-			};
+			const worksheet = workbook.addWorksheet('Appointments');
 
-			const grouped = new Map<string, GroupItem>();
+			const ALL_COLS = [
+				{ key: 'date', label: 'Date' },
+				{ key: 'lab', label: 'Lab' },
+				{ key: 'tpa', label: 'TPA' },
+				{ key: 'ins', label: 'Insurance' },
+				{ key: 'assignedStaff', label: 'Assigned Staff' },
+				{ key: 'status', label: 'Status' },
+				{ key: 'client', label: 'Client' },
+				{ key: 'proposal', label: 'Proposal' },
+				{ key: 'mobile', label: 'Mobile' },
+				{ key: 'visit', label: 'Visit' },
+				{ key: 'location', label: 'Location' },
+				{ key: 'gender', label: 'Gender' },
+				{ key: 'age', label: 'Age' },
+				{ key: 'serviceType', label: 'Service Type' },
+				{ key: 'payment', label: 'Payment Status' },
+				{ key: 'extra', label: 'Extra (Rs)' },
+				{ key: 'testAmount', label: 'Test Amount (Rs)' },
+				{ key: 'totalAmount', label: 'Total Amount (Rs)' },
+				{ key: 'paymentDate', label: 'Payment Date' },
+				{ key: 'tests', label: 'Tests' },
+			] as const satisfies ReadonlyArray<{ key: ColKey; label: string }>;
+
+			const cols = ALL_COLS.filter(c => visibleCols[c.key]);
+
+			worksheet.columns = cols.map(c => ({
+				header: c.label,
+				key: c.key,
+				width: c.key === 'client' || c.key === 'location' || c.key === 'assignedStaff' ? 24 : 18,
+			}));
+
+			worksheet.mergeCells(1, 1, 1, Math.max(cols.length, 1));
+			worksheet.getCell('A1').value = 'Appointments (Filtered)';
+			worksheet.getCell('A1').font = { bold: true, size: 16 };
+			worksheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
+
+			worksheet.getCell('A2').value = `Date range: ${(fDateFrom || fDateTo) ? `${fDateFrom || '…'} → ${fDateTo || '…'}` : 'All dates'}`;
+			worksheet.getCell('A3').value = `Lab: ${fLabId ? (labs.find(l => l.id === fLabId)?.name || '') : 'All Labs'} | Status: ${fStatus || 'All'}`;
+			worksheet.getCell('A4').value = `TPA: ${fTpaId ? (vendors.find(v => v.id === fTpaId)?.tpaName || '') : 'All'} | Visit: ${fVisitType ? (fVisitType === 'CENTER' ? 'Center' : 'Home') : 'All'} | Service Type: ${fServiceType || 'All'}`;
+			worksheet.getCell('A5').value = `Assigned Staff: ${fAssignedToId ? (assignedStaffOptions.find(s => s.id === fAssignedToId)?.name || '') : 'All'} | Search: ${q.trim() || '—'} | Rows: ${rowsToExport.length}`;
+
+			const headerRowNumber = 7;
+			const headerRow = worksheet.getRow(headerRowNumber);
+			headerRow.values = cols.map(c => c.label);
+			headerRow.font = { bold: true };
+			headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+			headerRow.height = 22;
+
+			for (let i = 1; i <= cols.length; i++) {
+				const cell = headerRow.getCell(i);
+				cell.fill = {
+					type: 'pattern',
+					pattern: 'solid',
+					fgColor: { argb: 'FFE8F5E9' },
+				};
+				cell.border = {
+					top: { style: 'thin' },
+					left: { style: 'thin' },
+					bottom: { style: 'thin' },
+					right: { style: 'thin' },
+				};
+			}
+
+			let currentRow = headerRowNumber + 1;
 
 			for (const row of rowsToExport) {
 				const lab = labs.find(l => l.id === row.labId);
-				const vendor =
-					(lab?.vendors?.find(v => v.id === row.vendorId)) ||
-					vendors.find(v => v.id === row.vendorId);
+				const vendor = (lab?.vendors?.find(v => v.id === row.vendorId)) || vendors.find(v => v.id === row.vendorId);
+				const insurance = insurers.find(i => i.id === row.insuranceCompanyId);
 
-				const tpaName = vendor?.tpaName?.trim() || 'No TPA';
-				const labName = lab?.name?.trim() || 'No Lab';
+				const excelRow = worksheet.getRow(currentRow);
 
-				const key = `${tpaName}__${labName}`;
-				if (!grouped.has(key)) {
-					grouped.set(key, {
-						tpaName,
-						labName,
-						rows: [],
-					});
-				}
-				grouped.get(key)!.rows.push(row);
-			}
+				const visitTypeLabel = row.visitType === 'CENTER' ? 'Center' : row.visitType === 'HOME' ? 'Home' : '';
 
-			let sheetIndex = 1;
-
-			for (const [, group] of Array.from(grouped)) {
-				const baseSheetName = sanitizeWorksheetName(
-					`${sheetIndex}_${group.tpaName}_${group.labName}`
-				);
-				const worksheet = workbook.addWorksheet(baseSheetName);
-
-				worksheet.columns = [
-					{ header: 'Appt.Date', key: 'apptDate', width: 16 },
-					{ header: 'Client Name', key: 'clientName', width: 30 },
-					{ header: 'Proposal ID', key: 'proposalId', width: 24 },
-					{ header: 'Insurance Company', key: 'insuranceCompany', width: 28 },
-					{ header: 'Service Type', key: 'serviceType', width: 18 },
-				];
-
-				worksheet.mergeCells('A1:E1');
-				worksheet.getCell('A1').value = group.tpaName;
-				worksheet.getCell('A1').font = { bold: true, size: 18 };
-				worksheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
-
-				worksheet.mergeCells('A2:E2');
-				worksheet.getCell('A2').value = group.labName;
-				worksheet.getCell('A2').font = { bold: true, size: 14 };
-				worksheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' };
-
-				worksheet.mergeCells('A3:E3');
-				worksheet.getCell('A3').value = `Total No. Of. Cases: ${group.rows.length}`;
-				worksheet.getCell('A3').font = { bold: true, size: 12 };
-				worksheet.getCell('A3').alignment = { horizontal: 'left', vertical: 'middle' };
-
-				const headerRowNumber = 5;
-				const headerRow = worksheet.getRow(headerRowNumber);
-				headerRow.values = [
-					'Appt.Date',
-					'Client Name',
-					'Proposal ID',
-					'Insurance Company',
-					'Service Type',
-				];
-				headerRow.font = { bold: true };
-				headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
-				headerRow.height = 22;
-
-				for (let i = 1; i <= 5; i++) {
-					const cell = headerRow.getCell(i);
-					cell.fill = {
-						type: 'pattern',
-						pattern: 'solid',
-						fgColor: { argb: 'FFE8F5E9' },
-					};
-					cell.border = {
-						top: { style: 'thin' },
-						left: { style: 'thin' },
-						bottom: { style: 'thin' },
-						right: { style: 'thin' },
-					};
-				}
-
-				let currentRow = headerRowNumber + 1;
-
-				for (const row of group.rows) {
-					const insurance = insurers.find(i => i.id === row.insuranceCompanyId);
-
-					const excelRow = worksheet.getRow(currentRow);
-					excelRow.values = [
-						formatDateOnly(row.apptAt),
-						row.clientName || '',
-						row.clientRef || '',
-						insurance?.name || '',
-						row.serviceType || '',
-					];
-
-					for (let i = 1; i <= 5; i++) {
-						const cell = excelRow.getCell(i);
-						cell.border = {
-							top: { style: 'thin', color: { argb: 'FFD9D9D9' } },
-							left: { style: 'thin', color: { argb: 'FFD9D9D9' } },
-							bottom: { style: 'thin', color: { argb: 'FFD9D9D9' } },
-							right: { style: 'thin', color: { argb: 'FFD9D9D9' } },
-						};
-						cell.alignment = { vertical: 'middle' };
+				const valueFor = (k: ColKey) => {
+					switch (k) {
+						case 'date': return formatDateOnly(row.apptAt);
+						case 'lab': return lab?.nickName || '';
+						case 'tpa': return vendor?.tpaName || '';
+						case 'ins': return insurance?.nickName || '';
+						case 'assignedStaff': return getAssignedStaffName(row);
+						case 'status': return row.status || '';
+						case 'client': return row.clientName || '';
+						case 'proposal': return row.clientRef || '';
+						case 'mobile': return row.phone || '';
+						case 'visit': return visitTypeLabel;
+						case 'location': return row.location || '';
+						case 'gender': return row.gender || '';
+						case 'age': return row.age ?? '';
+						case 'serviceType': return row.serviceType || '';
+						case 'payment': return row.paymentStatus || '';
+						case 'extra': return row.extraChargeRs ?? '';
+						case 'testAmount': return row.testAmountRs ?? '';
+						case 'totalAmount': return getTotalAmount(row);
+						case 'paymentDate': return formatDateOnly(row.paymentDate);
+						case 'tests': return row.testSummary ?? formatTestCodes(row);
+						default: return '';
 					}
+				};
 
-					currentRow++;
+				excelRow.values = cols.map(c => valueFor(c.key));
+
+				for (let i = 1; i <= cols.length; i++) {
+					const cell = excelRow.getCell(i);
+					cell.border = {
+						top: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+						left: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+						bottom: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+						right: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+					};
+					cell.alignment = { vertical: 'middle' };
 				}
 
-				worksheet.views = [{ state: 'frozen', ySplit: 5 }];
-				sheetIndex++;
+				currentRow++;
 			}
+
+			worksheet.views = [{ state: 'frozen', ySplit: headerRowNumber }];
 
 			const buffer = await workbook.xlsx.writeBuffer();
-			const fileName = `TPA_Invoice_Copy_${new Date().toISOString().slice(0, 10)}.xlsx`;
+			const fileName = `appointments_${new Date().toISOString().slice(0, 10)}.xlsx`;
 
 			saveAs(
 				new Blob([buffer], {
@@ -1503,7 +1539,7 @@ export default function AppointmentsPage() {
 							<div>
 								<Search className="h-4 w-4 absolute left-3 top-[34px] text-gray-400" />
 								<input
-									placeholder="Client, Proposal Id, Mobile…"
+									placeholder="Client, Proposal Id, Mobile, Staff…"
 									className="pl-9 pr-3 py-2 border rounded w-72"
 									value={q}
 									onChange={(e) => setQ(e.target.value)}
@@ -1532,6 +1568,18 @@ export default function AppointmentsPage() {
 							>
 								<option value="">All TPA</option>
 								{vendors.map(v => <option key={v.id} value={v.id}>{v.tpaName}</option>)}
+							</select>
+						</div>
+
+						<div>
+							<label className="block text-xs text-gray-600 mb-1">Assigned Staff</label>
+							<select
+								className="border rounded px-3 py-2 min-w-[220px]"
+								value={fAssignedToId}
+								onChange={(e) => setFAssignedToId(e.target.value)}
+							>
+								<option value="">All Staff</option>
+								{assignedStaffOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
 							</select>
 						</div>
 
@@ -1597,8 +1645,8 @@ export default function AppointmentsPage() {
 						<button
 							type="button"
 							className="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm hover:bg-gray-50"
-							onClick={() => exportInvoiceCopyToExcel(filtered)}
-							title="Export invoice copy to Excel"
+							onClick={() => exportFilteredToExcel(filtered)}
+							title="Export filtered rows to Excel"
 						>
 							<FileDown className="h-4 w-4" />
 							Export Excel
@@ -1650,13 +1698,14 @@ export default function AppointmentsPage() {
 
 				<div className="w-full overflow-x-auto">
 					<div className="max-h-[560px] overflow-y-auto">
-						<table className="w-full min-w-[1400px] border rounded">
+						<table className="w-full min-w-[1500px] border rounded">
 							<thead className="sticky top-0 z-10 bg-white">
 								<tr>
 									{visibleCols.date && <SortTh k="date" label="Date" />}
 									{visibleCols.lab && <SortTh k="lab" label="Lab Name" />}
 									{visibleCols.tpa && <SortTh k="tpa" label="TPA Name" />}
 									{visibleCols.ins && <SortTh k="ins" label="Insurance" />}
+									{visibleCols.assignedStaff && <SortTh k="assignedStaff" label="Assigned Staff" />}
 									{visibleCols.status && <SortTh k="status" label="Status" />}
 									{visibleCols.client && <SortTh k="client" label="Client Name" />}
 									{visibleCols.proposal && <SortTh k="proposal" label="Proposal No" />}
@@ -1718,6 +1767,7 @@ export default function AppointmentsPage() {
 													{visibleCols.lab && <td className="px-3 py-2 text-sm">{lab?.nickName ?? ''}</td>}
 													{visibleCols.tpa && <td className="px-3 py-2 text-sm">{vendor?.tpaName ?? ''}</td>}
 													{visibleCols.ins && <td className="px-3 py-2 text-sm">{ins?.nickName ?? ''}</td>}
+													{visibleCols.assignedStaff && <td className="px-3 py-2 text-sm">{getAssignedStaffName(a)}</td>}
 													{visibleCols.status && (
 														<td className="px-3 py-2 text-sm whitespace-nowrap">
 															<span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${statusClasses(a.status)}`}>{a.status ?? ''}</span>
@@ -2047,13 +2097,14 @@ function ColumnsDropdown({
 	visibleCols: Record<
 		'date' | 'lab' | 'tpa' | 'ins' | 'client' | 'proposal' | 'mobile' | 'visit' | 'location' | 'status' |
 		'extra' | 'testAmount' | 'totalAmount' |
-		'payment' | 'gender' | 'age' | 'serviceType' | 'paymentDate' | 'tests',
+		'payment' | 'gender' | 'age' | 'serviceType' | 'paymentDate' | 'tests' | 'assignedStaff',
 		boolean
 	>;
 	toggleCol: (k: any) => void;
 }>) {
 	const items: [keyof typeof visibleCols, string][] = [
 		['date', 'Date'], ['lab', 'Lab'], ['tpa', 'TPA'], ['ins', 'Insurance'],
+		['assignedStaff', 'Assigned Staff'],
 		['client', 'Client'], ['proposal', 'Proposal No'], ['status', 'Status'],
 		['visit', 'Visit Type'], ['location', 'Location'],
 		['gender', 'Gender'], ['age', 'Age'], ['mobile', 'Mobile'],

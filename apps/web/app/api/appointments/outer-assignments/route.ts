@@ -15,9 +15,11 @@ function parseDateOnlyStart(v?: string | null) {
 	const d = new Date(v);
 	return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 }
+
 function endOfDay(d: Date) {
 	return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 }
+
 function isoOrNull(d?: Date | null) {
 	return d ? new Date(d).toISOString() : null;
 }
@@ -26,6 +28,13 @@ function normalizeVisitType(v?: string | null) {
 	const s = (v || '').trim().toUpperCase();
 	if (s === 'CENTER') return 'CENTER';
 	if (s === 'HOME') return 'HOME';
+	return '';
+}
+
+function normalizeServiceType(v?: string | null) {
+	const s = (v || '').trim().toUpperCase();
+	if (s === 'OUTER') return 'OUTER';
+	if (s === 'LOCAL') return 'LOCAL';
 	return '';
 }
 
@@ -57,7 +66,7 @@ function getLabId(session: any): string | null {
 }
 
 /* ----------------------------------------------------------------------- */
-/* GET /api/appointments/outer-assignments?labId=&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&visitType=CENTER|HOME&vendorId= */
+/* GET /api/appointments/outer-assignments?labId=&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&visitType=CENTER|HOME&serviceType=OUTER|LOCAL&vendorId= */
 /* ----------------------------------------------------------------------- */
 export async function GET(req: Request) {
 	try {
@@ -74,27 +83,20 @@ export async function GET(req: Request) {
 		const dateFrom = searchParams.get('dateFrom');
 		const dateTo = searchParams.get('dateTo');
 		const visitType = normalizeVisitType(searchParams.get('visitType'));
-
-		// ✅ vendor filter (TPA)
+		const serviceType = normalizeServiceType(searchParams.get('serviceType'));
 		const vendorId = (searchParams.get('vendorId') || '').trim();
 
 		const isSuperAdmin = role === 'SUPER_ADMIN';
 
-		// lab scoping
 		let effectiveLabId: string | null = null;
 		if (isSuperAdmin) {
-			effectiveLabId = labIdParam ? labIdParam : null; // empty => all labs
+			effectiveLabId = labIdParam ? labIdParam : null;
 		} else {
 			effectiveLabId = sessionLabId;
 		}
 
-		// build appointment filter
 		const where: any = {
 			isActive: 1,
-
-			// NOTE: this is what you had. If you ONLY want Outer, change to { in: ['Outer','OUTER','outer'] }
-			serviceType: { in: ['Outer', 'OUTER', 'outer', 'Local', 'LOCAL', 'local'] },
-
 			status: {
 				in: [
 					'TBI',
@@ -108,14 +110,21 @@ export async function GET(req: Request) {
 		};
 
 		if (effectiveLabId) where.labId = effectiveLabId;
-
-		// ✅ apply vendor filter
 		if (vendorId) where.vendorId = vendorId;
+
+		if (serviceType) {
+			where.serviceType = {
+				in: [serviceType, serviceType.toLowerCase(), serviceType.charAt(0) + serviceType.slice(1).toLowerCase()],
+			};
+		} else {
+			where.serviceType = {
+				in: ['Outer', 'OUTER', 'outer', 'Local', 'LOCAL', 'local'],
+			};
+		}
 
 		if (dateFrom || dateTo) {
 			const gte = dateFrom ? parseDateOnlyStart(dateFrom) : null;
 
-			// safe end date
 			let lte: Date | null = null;
 			if (dateTo) {
 				const d = parseDateOnlyStart(dateTo);
@@ -130,10 +139,9 @@ export async function GET(req: Request) {
 		}
 
 		if (visitType) {
-			where.visitType = visitType; // expects stored values CENTER/HOME
+			where.visitType = visitType;
 		}
 
-		// ✅ users: show only USER role across ALL labs (no SUPER_ADMIN/ADMIN/STAFF)
 		const users = await prisma.user.findMany({
 			where: {
 				isActive: 1,
@@ -159,24 +167,17 @@ export async function GET(req: Request) {
 				labId: true,
 				apptAt: true,
 				clientName: true,
-
-				// ✅ NEW: include Client ID / Proposal No for Export PNG
 				clientRef: true,
-
 				phone: true,
 				location: true,
 				status: true,
 				visitType: true,
-
-				// keep vendorId + vendor relation (for dropdown label)
+				serviceType: true,
 				vendorId: true,
 				vendor: { select: { tpaName: true, nickName: true, vendorId: true } },
-
-				// assignment fields must exist in Appointment model
 				addressRemark: true,
 				assignedToId: true,
 				assignedAt: true,
-
 				lab: { select: { name: true, nickName: true, labCode: true } },
 				insuranceCompany: { select: { name: true, nickName: true, code: true } },
 				tests: {
@@ -212,10 +213,7 @@ export async function GET(req: Request) {
 				apptAt: isoOrNull(a.apptAt),
 
 				clientName: a.clientName || '',
-
-				// ✅ NEW
 				clientRef: a.clientRef || '',
-
 				mobileNo: a.phone || '',
 
 				insuranceName,
@@ -224,8 +222,8 @@ export async function GET(req: Request) {
 				location: a.location || '',
 				status: a.status || '',
 				visitType: a.visitType || '',
+				serviceType: a.serviceType || '',
 
-				// optional fields (helpful)
 				vendorId: a.vendorId || '',
 				vendorName: a.vendor?.nickName || a.vendor?.tpaName || a.vendor?.vendorId || '',
 

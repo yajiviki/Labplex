@@ -118,6 +118,14 @@ type DayChartRow = {
 	displayLabel: string;
 };
 
+type StaffExportRow = {
+	staffName: string;
+	totalCases: number;
+	tpaForecast: number;
+	totalSpendAmount: number;
+	profitAndLoss: number;
+};
+
 type ColKey =
 	| 'appointment'
 	| 'patientName'
@@ -308,6 +316,7 @@ export default function TravelSettlementPage() {
 	const [loading, setLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [exportingPdf, setExportingPdf] = useState(false);
+	const [exportingExcel, setExportingExcel] = useState(false);
 
 	const [labs, setLabs] = useState<Lab[]>([]);
 	const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -739,6 +748,41 @@ export default function TravelSettlementPage() {
 		};
 	}, [filteredSortedRows, pettyCashKpis, draftTravel, draftAccommodation]);
 
+	const staffExportRows = useMemo<StaffExportRow[]>(() => {
+		const map = new Map<string, StaffExportRow>();
+
+		for (let i = 0; i < filteredSortedRows.length; i += 1) {
+			const row = filteredSortedRows[i];
+			const key = row.staffId || '__UNASSIGNED__';
+			const name = staffLabel({ name: row.staffName, userId: row.staffUserId });
+
+			if (!map.has(key)) {
+				map.set(key, {
+					staffName: name,
+					totalCases: 0,
+					tpaForecast: 0,
+					totalSpendAmount: 0,
+					profitAndLoss: 0,
+				});
+			}
+
+			const curr = map.get(key)!;
+			curr.totalCases += 1;
+			curr.tpaForecast += num(row.tpaForecastAmount);
+			curr.totalSpendAmount += currentTotalSpent(row);
+			curr.profitAndLoss += currentProfitLoss(row);
+		}
+
+		return Array.from(map.values())
+			.map((r) => ({
+				...r,
+				tpaForecast: round2(r.tpaForecast),
+				totalSpendAmount: round2(r.totalSpendAmount),
+				profitAndLoss: round2(r.profitAndLoss),
+			}))
+			.sort((a, b) => a.staffName.localeCompare(b.staffName));
+	}, [filteredSortedRows, draftTravel, draftAccommodation]);
+
 	function handleStaffBarClick(row: StaffChartRow) {
 		setActiveStaffChartId((prev) => (prev === row.id ? '' : row.id));
 	}
@@ -873,6 +917,167 @@ export default function TravelSettlementPage() {
 		}
 	}
 
+	async function exportExcel() {
+		try {
+			if (!staffExportRows.length) {
+				setErr('No rows available for Excel export.');
+				return;
+			}
+
+			setErr(null);
+			setOk(null);
+			setExportingExcel(true);
+
+			const ExcelJS = await import('exceljs');
+			const FileSaverModule = await import('file-saver');
+			const saveAs =
+				(FileSaverModule as any).saveAs ||
+				(FileSaverModule as any).default?.saveAs ||
+				(FileSaverModule as any).default;
+
+			if (typeof saveAs !== 'function') {
+				throw new Error('file-saver saveAs import failed');
+			}
+
+			const workbook = new ExcelJS.Workbook();
+			workbook.creator = 'LabPlux';
+			workbook.created = new Date();
+
+			const worksheet = workbook.addWorksheet('Travel Settlement Summary');
+
+			worksheet.columns = [
+				{ header: 'Staff Name', key: 'staffName', width: 28 },
+				{ header: 'Total No.Of Case', key: 'totalCases', width: 18 },
+				{ header: 'TPA Forecast', key: 'tpaForecast', width: 18 },
+				{ header: 'Total Spend Amount', key: 'totalSpendAmount', width: 20 },
+				{ header: 'Profit and Loss', key: 'profitAndLoss', width: 18 },
+			];
+
+			worksheet.mergeCells('A1:E1');
+			worksheet.getCell('A1').value = 'Travel Expense Settlement - Staff Summary';
+			worksheet.getCell('A1').font = { bold: true, size: 16 };
+			worksheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
+
+			worksheet.mergeCells('A2:E2');
+			worksheet.getCell('A2').value = `Date Range: ${dateFrom || 'All'} to ${dateTo || 'All'}`;
+			worksheet.getCell('A2').font = { size: 11 };
+			worksheet.getCell('A2').alignment = { horizontal: 'left', vertical: 'middle' };
+
+			worksheet.mergeCells('A3:E3');
+			worksheet.getCell('A3').value =
+				`Lab: ${labId ? (labs.find((l) => l.id === labId)?.name || '') : 'All'} | ` +
+				`TPA: ${vendorId ? (vendors.find((v) => v.id === vendorId)?.tpaName || '') : 'All'} | ` +
+				`Staff: ${staffId ? (staffOptions.find((s) => s.id === staffId)?.name || '') : 'All'}`;
+			worksheet.getCell('A3').font = { size: 11 };
+			worksheet.getCell('A3').alignment = { horizontal: 'left', vertical: 'middle' };
+
+			const headerRowNumber = 5;
+			const headerRow = worksheet.getRow(headerRowNumber);
+			headerRow.values = [
+				'Staff Name',
+				'Total No.Of Case',
+				'TPA Forecast',
+				'Total Spend Amount',
+				'Profit and Loss',
+			];
+			headerRow.font = { bold: true };
+			headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+			headerRow.height = 22;
+
+			for (let i = 1; i <= 5; i++) {
+				const cell = headerRow.getCell(i);
+				cell.fill = {
+					type: 'pattern',
+					pattern: 'solid',
+					fgColor: { argb: 'FFE8F5E9' },
+				};
+				cell.border = {
+					top: { style: 'thin' },
+					left: { style: 'thin' },
+					bottom: { style: 'thin' },
+					right: { style: 'thin' },
+				};
+			}
+
+			let currentRow = headerRowNumber + 1;
+
+			for (let i = 0; i < staffExportRows.length; i += 1) {
+				const row = staffExportRows[i];
+				const excelRow = worksheet.getRow(currentRow);
+
+				excelRow.values = [
+					row.staffName,
+					row.totalCases,
+					row.tpaForecast,
+					row.totalSpendAmount,
+					row.profitAndLoss,
+				];
+
+				for (let c = 1; c <= 5; c += 1) {
+					const cell = excelRow.getCell(c);
+					cell.border = {
+						top: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+						left: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+						bottom: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+						right: { style: 'thin', color: { argb: 'FFD9D9D9' } },
+					};
+					cell.alignment = {
+						vertical: 'middle',
+						horizontal: c === 1 ? 'left' : 'right',
+					};
+				}
+
+				currentRow += 1;
+			}
+
+			const totalRow = worksheet.getRow(currentRow + 1);
+			totalRow.getCell(1).value = 'Total';
+			totalRow.getCell(1).font = { bold: true };
+			totalRow.getCell(2).value = staffExportRows.reduce((sum, r) => sum + r.totalCases, 0);
+			totalRow.getCell(3).value = round2(staffExportRows.reduce((sum, r) => sum + r.tpaForecast, 0));
+			totalRow.getCell(4).value = round2(staffExportRows.reduce((sum, r) => sum + r.totalSpendAmount, 0));
+			totalRow.getCell(5).value = round2(staffExportRows.reduce((sum, r) => sum + r.profitAndLoss, 0));
+
+			for (let c = 1; c <= 5; c += 1) {
+				const cell = totalRow.getCell(c);
+				cell.font = { bold: true };
+				cell.fill = {
+					type: 'pattern',
+					pattern: 'solid',
+					fgColor: { argb: 'FFFFF3CD' },
+				};
+				cell.border = {
+					top: { style: 'thin' },
+					left: { style: 'thin' },
+					bottom: { style: 'thin' },
+					right: { style: 'thin' },
+				};
+				cell.alignment = {
+					vertical: 'middle',
+					horizontal: c === 1 ? 'left' : 'right',
+				};
+			}
+
+			worksheet.views = [{ state: 'frozen', ySplit: headerRowNumber }];
+
+			const buffer = await workbook.xlsx.writeBuffer();
+			const fileName = `travel-expense-settlement-summary-${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+			saveAs(
+				new Blob([buffer], {
+					type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+				}),
+				fileName,
+			);
+
+			setOk(`Excel exported successfully (${staffExportRows.length} staff rows).`);
+		} catch (e: any) {
+			setErr(e?.message || 'Excel export failed');
+		} finally {
+			setExportingExcel(false);
+		}
+	}
+
 	async function saveAll() {
 		setErr(null);
 		setOk(null);
@@ -955,7 +1160,7 @@ export default function TravelSettlementPage() {
 						type="button"
 						className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
 						onClick={loadPageData}
-						disabled={loading || saving || exportingPdf}
+						disabled={loading || saving || exportingPdf || exportingExcel}
 					>
 						<RefreshCcw className="h-4 w-4" />
 						Refresh
@@ -964,8 +1169,18 @@ export default function TravelSettlementPage() {
 					<button
 						type="button"
 						className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
+						onClick={exportExcel}
+						disabled={loading || saving || exportingPdf || exportingExcel || filteredSortedRows.length === 0}
+					>
+						<FileDown className="h-4 w-4" />
+						{exportingExcel ? 'Exporting…' : 'Export Excel'}
+					</button>
+
+					<button
+						type="button"
+						className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"
 						onClick={exportPdf}
-						disabled={loading || saving || exportingPdf || filteredSortedRows.length === 0}
+						disabled={loading || saving || exportingPdf || exportingExcel || filteredSortedRows.length === 0}
 					>
 						<FileDown className="h-4 w-4" />
 						{exportingPdf ? 'Exporting…' : 'Export PDF'}
@@ -975,13 +1190,26 @@ export default function TravelSettlementPage() {
 						type="button"
 						className="inline-flex items-center gap-2 rounded-xl bg-blue-600 text-white px-4 py-2 text-sm hover:bg-blue-700 disabled:opacity-60"
 						onClick={saveAll}
-						disabled={loading || saving || exportingPdf || filteredSortedRows.length === 0}
+						disabled={loading || saving || exportingPdf || exportingExcel || filteredSortedRows.length === 0}
 					>
 						<Save className="h-4 w-4" />
 						{saving ? 'Saving…' : 'Save All'}
 					</button>
 				</div>
 			</div>
+
+			{err ? (
+				<div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center gap-2">
+					<AlertTriangle className="h-4 w-4" />
+					{err}
+				</div>
+			) : null}
+
+			{ok ? (
+				<div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+					{ok}
+				</div>
+			) : null}
 
 			<div className={`sticky ${STICKY_TOP} z-30 -mx-4 px-4 pt-3 pb-3 bg-[#f8fafc]/95 backdrop-blur supports-[backdrop-filter]:bg-[#f8fafc]/85 border-b border-gray-200 shadow-sm`}>
 				<div className="space-y-4">
