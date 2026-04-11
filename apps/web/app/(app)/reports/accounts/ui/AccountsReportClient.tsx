@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
 	Building2, Workflow, CalendarRange, Undo2, X,
-	ChevronDown, ChevronUp, Image as ImageIcon, FileDown
+	ChevronDown, ChevronUp, Image as ImageIcon, FileDown, FileSpreadsheet
 } from 'lucide-react';
 import {
 	Area,
@@ -178,6 +178,7 @@ export default function AccountsReportClient({
 	const [loading, setLoading] = useState(false);
 	const [err, setErr] = useState<string | null>(null);
 	const [excelLoading, setExcelLoading] = useState(false);
+	const [invoiceLoading, setInvoiceLoading] = useState(false);
 	const [pdfLoading, setPdfLoading] = useState(false);
 
 	const [table, setTable] = useState<TableRow[]>(Array.isArray(initialData?.table) ? initialData.table : []);
@@ -538,6 +539,45 @@ export default function AccountsReportClient({
 		}
 	}
 
+	async function exportInvoiceReport() {
+		try {
+			setInvoiceLoading(true);
+
+			const effLabId = focused ? focused.labId || null : labId || null;
+			const effVenId = focused ? focused.vendorId || null : vendorId || null;
+
+			const res = await fetch('/api/reports/accounts/invoice', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					labId: effLabId,
+					vendorId: effVenId,
+					from,
+					to,
+				}),
+			});
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => null);
+				throw new Error(data?.error || 'Failed to export invoice report');
+			}
+
+			const blob = await res.blob();
+			const url = window.URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `invoice-report_${from}_to_${to}.xlsx`;
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			window.URL.revokeObjectURL(url);
+		} catch (e: any) {
+			setErr(e?.message || 'Failed to export invoice report');
+		} finally {
+			setInvoiceLoading(false);
+		}
+	}
+
 	const groupedPdfData = useMemo(() => {
 		type PdfRow = {
 			labId: string | null;
@@ -634,130 +674,171 @@ export default function AccountsReportClient({
 	}, [groupedPdfData]);
 
 	async function exportSummaryPdf() {
-	try {
-		setPdfLoading(true);
+		try {
+			setPdfLoading(true);
 
-		const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+			const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
 
-		const labText = labId ? labs.find((l) => l.id === labId)?.name || 'Selected Lab' : 'All Labs';
-		const tpaText = vendorId
-			? vendors.find((v) => v.id === vendorId)?.tpaName || 'Selected TPA'
-			: 'All TPA';
-		const focusedLabText = focused?.labId
-			? labs.find((l) => l.id === focused.labId)?.name || 'Selected Lab'
-			: null;
-		const focusedTpaText = focused?.vendorId
-			? vendors.find((v) => v.id === focused.vendorId)?.tpaName || 'Selected TPA'
-			: null;
+			const labText = labId ? labs.find((l) => l.id === labId)?.name || 'Selected Lab' : 'All Labs';
+			const tpaText = vendorId
+				? vendors.find((v) => v.id === vendorId)?.tpaName || 'Selected TPA'
+				: 'All TPA';
+			const focusedLabText = focused?.labId
+				? labs.find((l) => l.id === focused.labId)?.name || 'Selected Lab'
+				: null;
+			const focusedTpaText = focused?.vendorId
+				? vendors.find((v) => v.id === focused.vendorId)?.tpaName || 'Selected TPA'
+				: null;
 
-		const startX = 28;
-		const colWidths = [190, 80, 120, 80, 80, 130];
-		const tableWidth = colWidths.reduce((s, n) => s + n, 0);
-		const labHeaderHeight = 28;
+			const startX = 28;
+			const colWidths = [190, 80, 120, 80, 80, 130];
+			const tableWidth = colWidths.reduce((s, n) => s + n, 0);
+			const labHeaderHeight = 28;
 
-		doc.setFont('helvetica', 'bold');
-		doc.setFontSize(15);
-		doc.text('Accounts Statement', 28, 34);
+			doc.setFont('helvetica', 'bold');
+			doc.setFontSize(15);
+			doc.text('Accounts Statement', 28, 34);
 
-		doc.setFont('helvetica', 'normal');
-		doc.setFontSize(10);
-		doc.text(`Date Range: ${from} to ${to}`, 28, 54);
-		doc.text(`Lab Filter: ${focusedLabText ?? labText}`, 28, 69);
-		doc.text(`TPA Filter: ${focusedTpaText ?? tpaText}`, 240, 69);
+			doc.setFont('helvetica', 'normal');
+			doc.setFontSize(10);
+			doc.text(`Date Range: ${from} to ${to}`, 28, 54);
+			doc.text(`Lab Filter: ${focusedLabText ?? labText}`, 28, 69);
+			doc.text(`TPA Filter: ${focusedTpaText ?? tpaText}`, 240, 69);
 
-		let currentY = 90;
+			let currentY = 90;
 
-		for (const group of groupedPdfData) {
-			if (currentY > 500) {
+			for (const group of groupedPdfData) {
+				if (currentY > 500) {
+					doc.addPage();
+					currentY = 40;
+				}
+
+				doc.setFillColor(31, 78, 120);
+				doc.setDrawColor(191, 191, 191);
+				doc.setLineWidth(0.4);
+				doc.rect(startX, currentY, tableWidth, labHeaderHeight, 'FD');
+
+				doc.setTextColor(255, 255, 255);
+				doc.setFont('helvetica', 'bold');
+				doc.setFontSize(9);
+				doc.text(`Lab Name: ${group.labName}`, startX + 8, currentY + 18);
+
+				currentY += labHeaderHeight;
+
+				autoTable(doc, {
+					startY: currentY,
+					head: [[
+						'TPA',
+						'Total No of Cases',
+						'Total Test Amount (Approx.)',
+						'Total Local Cases',
+						'Total Outer Cases',
+						'Total Travel Amount (Approx.)',
+					]],
+					body: group.rows.map((r) => [
+						r.tpaName,
+						toNumString(r.totalCases),
+						formatMoneyPdf(r.totalTestAmount),
+						toNumString(r.localCases),
+						toNumString(r.outerCases),
+						formatMoneyPdf(r.totalExtraCostAmount),
+					]),
+					theme: 'grid',
+					margin: { left: startX, right: 28 },
+					tableWidth,
+					styles: {
+						font: 'helvetica',
+						fontSize: 8,
+						cellPadding: 4,
+						textColor: [31, 41, 55],
+						lineColor: [191, 191, 191],
+						lineWidth: 0.4,
+						overflow: 'linebreak',
+					},
+					headStyles: {
+						font: 'helvetica',
+						fontStyle: 'bold',
+						fontSize: 8.5,
+						fillColor: [217, 234, 247],
+						textColor: [31, 41, 55],
+						lineColor: [191, 191, 191],
+						lineWidth: 0.4,
+					},
+					columnStyles: {
+						0: { cellWidth: colWidths[0] },
+						1: { cellWidth: colWidths[1], halign: 'right' },
+						2: { cellWidth: colWidths[2], halign: 'right' },
+						3: { cellWidth: colWidths[3], halign: 'right' },
+						4: { cellWidth: colWidths[4], halign: 'right' },
+						5: { cellWidth: colWidths[5], halign: 'right' },
+					},
+				});
+
+				currentY = (doc as any).lastAutoTable.finalY;
+
+				autoTable(doc, {
+					startY: currentY,
+					head: [],
+					body: [[
+						'Total',
+						toNumString(group.totals.totalCases),
+						formatMoneyPdf(group.totals.totalTestAmount),
+						toNumString(group.totals.localCases),
+						toNumString(group.totals.outerCases),
+						formatMoneyPdf(group.totals.totalExtraCostAmount),
+					]],
+					theme: 'grid',
+					margin: { left: startX, right: 28 },
+					tableWidth,
+					styles: {
+						font: 'helvetica',
+						fontStyle: 'bold',
+						fontSize: 8.5,
+						cellPadding: 4,
+						textColor: [31, 41, 55],
+						fillColor: [221, 235, 247],
+						lineColor: [191, 191, 191],
+						lineWidth: 0.4,
+					},
+					columnStyles: {
+						0: { cellWidth: colWidths[0] },
+						1: { cellWidth: colWidths[1], halign: 'right' },
+						2: { cellWidth: colWidths[2], halign: 'right' },
+						3: { cellWidth: colWidths[3], halign: 'right' },
+						4: { cellWidth: colWidths[4], halign: 'right' },
+						5: { cellWidth: colWidths[5], halign: 'right' },
+					},
+				});
+
+				currentY = (doc as any).lastAutoTable.finalY + 18;
+			}
+
+			if (currentY > 520) {
 				doc.addPage();
 				currentY = 40;
 			}
-
-			// Lab header row, draw manually so it ends exactly at last column
-			doc.setFillColor(31, 78, 120);
-			doc.setDrawColor(191, 191, 191);
-			doc.setLineWidth(0.4);
-			doc.rect(startX, currentY, tableWidth, labHeaderHeight, 'FD');
-
-			doc.setTextColor(255, 255, 255);
-			doc.setFont('helvetica', 'bold');
-			doc.setFontSize(9);
-			doc.text(`Lab Name: ${group.labName}`, startX + 8, currentY + 18);
-
-			currentY += labHeaderHeight;
-
-			autoTable(doc, {
-				startY: currentY,
-				head: [[
-					'TPA',
-					'Total No of Cases',
-					'Total Test Amount (Approx.)',
-					'Total Local Cases',
-					'Total Outer Cases',
-					'Total Travel Amount (Approx.)',
-				]],
-				body: group.rows.map((r) => [
-					r.tpaName,
-					toNumString(r.totalCases),
-					formatMoneyPdf(r.totalTestAmount),
-					toNumString(r.localCases),
-					toNumString(r.outerCases),
-					formatMoneyPdf(r.totalExtraCostAmount),
-				]),
-				theme: 'grid',
-				margin: { left: startX, right: 28 },
-				tableWidth,
-				styles: {
-					font: 'helvetica',
-					fontSize: 8,
-					cellPadding: 4,
-					textColor: [31, 41, 55],
-					lineColor: [191, 191, 191],
-					lineWidth: 0.4,
-					overflow: 'linebreak',
-				},
-				headStyles: {
-					font: 'helvetica',
-					fontStyle: 'bold',
-					fontSize: 8.5,
-					fillColor: [217, 234, 247],
-					textColor: [31, 41, 55],
-					lineColor: [191, 191, 191],
-					lineWidth: 0.4,
-				},
-				columnStyles: {
-					0: { cellWidth: colWidths[0] },
-					1: { cellWidth: colWidths[1], halign: 'right' },
-					2: { cellWidth: colWidths[2], halign: 'right' },
-					3: { cellWidth: colWidths[3], halign: 'right' },
-					4: { cellWidth: colWidths[4], halign: 'right' },
-					5: { cellWidth: colWidths[5], halign: 'right' },
-				},
-			});
-
-			currentY = (doc as any).lastAutoTable.finalY;
 
 			autoTable(doc, {
 				startY: currentY,
 				head: [],
 				body: [[
-					'Total',
-					toNumString(group.totals.totalCases),
-					formatMoneyPdf(group.totals.totalTestAmount),
-					toNumString(group.totals.localCases),
-					toNumString(group.totals.outerCases),
-					formatMoneyPdf(group.totals.totalExtraCostAmount),
+					'Grand Total',
+					toNumString(grandPdfTotals.totalCases),
+					formatMoneyPdf(grandPdfTotals.totalTestAmount),
+					toNumString(grandPdfTotals.localCases),
+					toNumString(grandPdfTotals.outerCases),
+					formatMoneyPdf(grandPdfTotals.totalExtraCostAmount),
 				]],
 				theme: 'grid',
-				margin: { left: startX, right: 28 },
+				margin: { left: startX, right: 28, bottom: 24 },
 				tableWidth,
 				styles: {
 					font: 'helvetica',
 					fontStyle: 'bold',
-					fontSize: 8.5,
-					cellPadding: 4,
-					textColor: [31, 41, 55],
-					fillColor: [221, 235, 247],
+					fontSize: 9,
+					cellPadding: 5,
+					textColor: [255, 255, 255],
+					fillColor: [31, 31, 31],
 					lineColor: [191, 191, 191],
 					lineWidth: 0.4,
 				},
@@ -771,53 +852,11 @@ export default function AccountsReportClient({
 				},
 			});
 
-			currentY = (doc as any).lastAutoTable.finalY + 18;
+			doc.save(`accounts-statement_${from}_to_${to}.pdf`);
+		} finally {
+			setPdfLoading(false);
 		}
-
-		if (currentY > 520) {
-			doc.addPage();
-			currentY = 40;
-		}
-
-		autoTable(doc, {
-			startY: currentY,
-			head: [],
-			body: [[
-				'Grand Total',
-				toNumString(grandPdfTotals.totalCases),
-				formatMoneyPdf(grandPdfTotals.totalTestAmount),
-				toNumString(grandPdfTotals.localCases),
-				toNumString(grandPdfTotals.outerCases),
-				formatMoneyPdf(grandPdfTotals.totalExtraCostAmount),
-			]],
-			theme: 'grid',
-			margin: { left: startX, right: 28, bottom: 24 },
-			tableWidth,
-			styles: {
-				font: 'helvetica',
-				fontStyle: 'bold',
-				fontSize: 9,
-				cellPadding: 5,
-				textColor: [255, 255, 255],
-				fillColor: [31, 31, 31],
-				lineColor: [191, 191, 191],
-				lineWidth: 0.4,
-			},
-			columnStyles: {
-				0: { cellWidth: colWidths[0] },
-				1: { cellWidth: colWidths[1], halign: 'right' },
-				2: { cellWidth: colWidths[2], halign: 'right' },
-				3: { cellWidth: colWidths[3], halign: 'right' },
-				4: { cellWidth: colWidths[4], halign: 'right' },
-				5: { cellWidth: colWidths[5], halign: 'right' },
-			},
-		});
-
-		doc.save(`accounts-statement_${from}_to_${to}.pdf`);
-	} finally {
-		setPdfLoading(false);
 	}
-}
 
 	function downloadCSV() {
 		const headers = [
@@ -1085,6 +1124,17 @@ export default function AccountsReportClient({
 					</div>
 
 					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							onClick={exportInvoiceReport}
+							disabled={invoiceLoading}
+							className="inline-flex items-center gap-2 text-sm px-3 py-2 border rounded hover:bg-gray-50 disabled:opacity-60 shrink-0"
+							title="Invoice Report"
+						>
+							<FileSpreadsheet className="h-4 w-4" />
+							{invoiceLoading ? 'Exporting...' : 'Invoice Report'}
+						</button>
+
 						<button
 							type="button"
 							onClick={exportExcel}
