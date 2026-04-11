@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../../../lib/db';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 function parseYmdStart(v?: string | null) {
 	if (!v) return null;
 	const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -72,12 +75,13 @@ function addToMetric(metric: BucketMetric, travel: number, test: number) {
 	metric.travelAmount += travel;
 	metric.testAmount += test;
 	metric.totalAmount += total;
-	metric.amount += total; // backward compatibility
+	metric.amount += total;
 }
 
 export async function POST(req: Request) {
 	try {
 		const body = await req.json().catch(() => ({}));
+
 		const {
 			accountId,
 			labId,
@@ -92,7 +96,10 @@ export async function POST(req: Request) {
 			to?: string | null;
 		} = body || {};
 
-		const where: any = { isActive: 1 };
+		const where: any = {
+			isActive: 1,
+			status: 'Report - Completed',
+		};
 
 		const gte = parseYmdStart(from || undefined);
 		const lte0 = parseYmdStart(to || undefined);
@@ -115,6 +122,7 @@ export async function POST(req: Request) {
 				visitType: true,
 				extraChargeRs: true,
 				testAmountRs: true,
+				status: true,
 			},
 			orderBy: { apptAt: 'desc' },
 			take: 500000,
@@ -163,6 +171,7 @@ export async function POST(req: Request) {
 
 		return NextResponse.json({ rows: rowsOut }, { status: 200 });
 	} catch (e: any) {
+		console.error('[accounts/mom] fatal:', e?.message, e?.stack);
 		return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });
 	}
 }

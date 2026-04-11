@@ -406,7 +406,7 @@ export default function AppointmentsPage() {
 				rLabs.json().catch(() => []),
 				rAppts.json().catch(() => []),
 				rIns.json().catch(() => []),
-			]);
+			]);			
 			if (!rVendors.ok) throw new Error((vendorsJson as any)?.error || 'Load vendors failed');
 			if (!rLabs.ok) throw new Error((labsJson as any)?.error || 'Load labs failed');
 			if (!rAppts.ok) throw new Error((apptsJson as any)?.error || 'Load appointments failed');

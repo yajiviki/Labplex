@@ -15,16 +15,27 @@ function normalizeServiceType(s?: string | null): 'Local' | 'Outer' | null {
 function normalizeVisitType(s?: string | null): 'HOME' | 'CENTER' | null {
 	const v = (s || '').trim().toLowerCase();
 	if (v === 'home' || v === 'h' || v === 'home visit') return 'HOME';
-	if (v === 'center' || v === 'centre' || v === 'c' || v === 'center visit' || v === 'centre visit') return 'CENTER';
+	if (
+		v === 'center' ||
+		v === 'centre' ||
+		v === 'c' ||
+		v === 'center visit' ||
+		v === 'centre visit'
+	) {
+		return 'CENTER';
+	}
 	return null;
 }
 
 function parseDateFlexible(s?: string) {
 	if (!s) return null;
+
 	let m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
 	if (m) return new Date(+m[1], +m[2] - 1, +m[3], 0, 0, 0, 0);
+
 	m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(s);
 	if (m) return new Date(+m[3], +m[2] - 1, +m[1], 0, 0, 0, 0);
+
 	return null;
 }
 
@@ -40,16 +51,23 @@ function toYmd(d: Date) {
 function toNum(v: unknown): number {
 	if (v === null || v === undefined) return 0;
 	if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+
 	if (typeof v === 'string') {
 		const n = Number(v);
 		return Number.isFinite(n) ? n : 0;
 	}
+
 	if (typeof v === 'object' && v && typeof (v as any).toNumber === 'function') {
 		const n = (v as any).toNumber();
 		return typeof n === 'number' && Number.isFinite(n) ? n : 0;
 	}
+
 	const n = Number(v as any);
 	return Number.isFinite(n) ? n : 0;
+}
+
+function toStringArray(values: Array<string | null | undefined>) {
+	return Array.from(new Set(values.filter((v): v is string => !!v)));
 }
 
 // We consider these statuses as "report completed"
@@ -68,26 +86,26 @@ export async function POST(req: Request) {
 
 		const fromDate = parseDateFlexible(from);
 		const toStart = parseDateFlexible(to);
+
 		if (!fromDate || !toStart) {
 			return NextResponse.json({ error: 'Invalid date range' }, { status: 400 });
 		}
+
 		const toDate = endOfDay(toStart);
 
-		// Base filter for summary & trend
+		// Base filter for summary, table and trend
+		// IMPORTANT:
+		// Amounts must be calculated only for completed appointments.
 		const whereBase: any = {
 			isActive: 1,
 			apptAt: { gte: fromDate, lte: toDate },
+			status: { in: COMPLETED_STATUSES },
 		};
+
 		if (labId) whereBase.labId = labId;
 		if (vendorId) whereBase.vendorId = vendorId;
 
 		// ===== SUMMARY SOURCE =====
-		// Pull appointments once so we can calculate:
-		// 1. Travel total
-		// 2. Test total
-		// 3. Combined total
-		// 4. Missing extra count (HOME only)
-		// 5. Cards
 		const summaryRows = await prisma.appointment.findMany({
 			where: whereBase,
 			select: {
@@ -104,14 +122,18 @@ export async function POST(req: Request) {
 
 		const keyOf = (l: string | null, v: string | null) => `${l ?? ''}__${v ?? ''}`;
 
-		const aggMap = new Map<string, {
-			labId: string | null;
-			vendorId: string | null;
-			totalExtra: number;
-			totalTestAmount: number;
-			totalAmount: number;
-			missingExtraCount: number;
-		}>();
+		const aggMap = new Map<
+			string,
+			{
+				labId: string | null;
+				vendorId: string | null;
+				totalCases: number;
+				totalExtra: number;
+				totalTestAmount: number;
+				totalAmount: number;
+				missingExtraCount: number;
+			}
+		>();
 
 		let totalCompletedCases = 0;
 		let totalTravelAmount = 0;
@@ -125,15 +147,18 @@ export async function POST(req: Request) {
 			const visitType = normalizeVisitType(r.visitType);
 
 			const k = keyOf(r.labId ?? null, r.vendorId ?? null);
+
 			const cur = aggMap.get(k) ?? {
 				labId: r.labId ?? null,
 				vendorId: r.vendorId ?? null,
+				totalCases: 0,
 				totalExtra: 0,
 				totalTestAmount: 0,
 				totalAmount: 0,
 				missingExtraCount: 0,
 			};
 
+			cur.totalCases += 1;
 			cur.totalExtra += travel;
 			cur.totalTestAmount += test;
 			cur.totalAmount += total;
@@ -145,57 +170,53 @@ export async function POST(req: Request) {
 
 			aggMap.set(k, cur);
 
+			totalCompletedCases += 1;
 			totalTravelAmount += travel;
 			totalTestAmount += test;
 			totalReceivedAmount += total;
-
-			if (COMPLETED_STATUSES.includes(String(r.status || '').trim())) {
-				totalCompletedCases += 1;
-			}
 		}
 
-		const ids = Array.from(aggMap.values()).map(x => ({
-			labId: x.labId,
-			vendorId: x.vendorId,
-		}));
+		const groupedValues = Array.from(aggMap.values());
 
-		const labIds = Array.from(new Set(ids.map(x => x.labId).filter(Boolean)));
-		const venIds = Array.from(new Set(ids.map(x => x.vendorId).filter(Boolean)));
+		const labIds = toStringArray(groupedValues.map((x) => x.labId));
+		const venIds = toStringArray(groupedValues.map((x) => x.vendorId));
 
 		const [labs, vendors] = await Promise.all([
 			labIds.length
 				? prisma.lab.findMany({
-					where: { id: { in: labIds } },
-					select: { id: true, name: true, nickName: true },
-				})
+						where: { id: { in: labIds } },
+						select: { id: true, name: true, nickName: true },
+				  })
 				: Promise.resolve([]),
 			venIds.length
 				? prisma.vendor.findMany({
-					where: { id: { in: venIds } },
-					select: { id: true, tpaName: true, nickName: true },
-				})
+						where: { id: { in: venIds } },
+						select: { id: true, tpaName: true, nickName: true },
+				  })
 				: Promise.resolve([]),
 		]);
 
-		const labMap = new Map(labs.map(l => [l.id, { name: l.name, nick: l.nickName }]));
-		const venMap = new Map(vendors.map(v => [v.id, { name: v.tpaName, nick: v.nickName }]));
+		const labMap = new Map(labs.map((l) => [l.id, { name: l.name, nick: l.nickName }]));
+		const venMap = new Map(vendors.map((v) => [v.id, { name: v.tpaName, nick: v.nickName }]));
 
-		const table = Array.from(aggMap.values())
+		const table = groupedValues
 			.map((r) => ({
 				labId: r.labId,
-				labName: r.labId ? (labMap.get(r.labId)?.name || '-') : '—',
-				labNickName: r.labId ? (labMap.get(r.labId)?.nick ?? null) : null,
+				labName: r.labId ? labMap.get(r.labId)?.name || '-' : '—',
+				labNickName: r.labId ? labMap.get(r.labId)?.nick ?? null : null,
 				vendorId: r.vendorId,
-				tpaName: r.vendorId ? (venMap.get(r.vendorId)?.name || '-') : '—',
-				tpaNickName: r.vendorId ? (venMap.get(r.vendorId)?.nick ?? null) : null,
+				tpaName: r.vendorId ? venMap.get(r.vendorId)?.name || '-' : '—',
+				tpaNickName: r.vendorId ? venMap.get(r.vendorId)?.nick ?? null : null,
+				totalCases: r.totalCases,
 				totalExtra: r.totalExtra,
 				totalTestAmount: r.totalTestAmount,
 				totalAmount: r.totalAmount,
 				missingExtraCount: r.missingExtraCount,
 			}))
-			.sort((a, b) =>
-				(a.vendorId ?? '').localeCompare(b.vendorId ?? '') ||
-				(a.labId ?? '').localeCompare(b.labId ?? '')
+			.sort(
+				(a, b) =>
+					(a.vendorId ?? '').localeCompare(b.vendorId ?? '') ||
+					(a.labId ?? '').localeCompare(b.labId ?? '')
 			);
 
 		const cards: SummaryCardPayload = {
@@ -206,7 +227,7 @@ export async function POST(req: Request) {
 		};
 
 		// ===== TREND (travel + test per day) =====
-		const trend = await prisma.$queryRaw<{ d: Date; amt: any }[]>`
+		const trend = await prisma.$queryRaw<{ d: Date; amt: unknown }[]>`
       WITH days AS (
         SELECT generate_series(${fromDate}::date, ${toDate}::date, '1 day')::date AS d
       ),
@@ -218,6 +239,7 @@ export async function POST(req: Request) {
         WHERE "isActive" = 1
           AND "apptAt" >= ${fromDate}
           AND "apptAt" <= ${toDate}
+          AND "status" IN ('Report - Completed', 'Completed')
           AND (${labId}::text IS NULL OR "labId" = ${labId})
           AND (${vendorId}::text IS NULL OR "vendorId" = ${vendorId})
         GROUP BY 1
@@ -228,7 +250,7 @@ export async function POST(req: Request) {
       ORDER BY d.d;
     `;
 
-		// ===== PIVOT (only Report Completed) — normalized, no gender =====
+		// ===== PIVOT (only Report Completed) =====
 		const serviceTypes: ('Local' | 'Outer')[] = ['Local', 'Outer'];
 		const visits: ('HOME' | 'CENTER')[] = ['HOME', 'CENTER'];
 
@@ -251,26 +273,26 @@ export async function POST(req: Request) {
 			},
 		});
 
-		const plabIds = Array.from(new Set(raw.map(r => r.labId).filter(Boolean) as string[]));
-		const pvenIds = Array.from(new Set(raw.map(r => r.vendorId).filter(Boolean) as string[]));
+		const plabIds = toStringArray(raw.map((r) => r.labId));
+		const pvenIds = toStringArray(raw.map((r) => r.vendorId));
 
 		const [plabs, pvens] = await Promise.all([
 			plabIds.length
 				? prisma.lab.findMany({
-					where: { id: { in: plabIds } },
-					select: { id: true, name: true },
-				})
+						where: { id: { in: plabIds } },
+						select: { id: true, name: true },
+				  })
 				: Promise.resolve([]),
 			pvenIds.length
 				? prisma.vendor.findMany({
-					where: { id: { in: pvenIds } },
-					select: { id: true, tpaName: true },
-				})
+						where: { id: { in: pvenIds } },
+						select: { id: true, tpaName: true },
+				  })
 				: Promise.resolve([]),
 		]);
 
-		const pLabName = new Map(plabs.map(l => [l.id, l.name]));
-		const pVenName = new Map(pvens.map(v => [v.id, v.tpaName]));
+		const pLabName = new Map(plabs.map((l) => [l.id, l.name]));
+		const pVenName = new Map(pvens.map((v) => [v.id, v.tpaName]));
 
 		type PivotRowInternal = {
 			vendorId: string | null;
@@ -286,8 +308,12 @@ export async function POST(req: Request) {
 		const rowsMap = new Map<string, PivotRowInternal>();
 		const columnTotals: Record<string, number> = {};
 
-		const ensureRow = (vendorIdVal: string | null, labIdVal: string | null): PivotRowInternal => {
+		const ensureRow = (
+			vendorIdVal: string | null,
+			labIdVal: string | null
+		): PivotRowInternal => {
 			const key = `${vendorIdVal ?? ''}__${labIdVal ?? ''}`;
+
 			if (!rowsMap.has(key)) {
 				const cells: Record<string, number> = {};
 				for (const st of serviceTypes) {
@@ -295,17 +321,19 @@ export async function POST(req: Request) {
 						cells[`${st}__${vt}`] = 0;
 					}
 				}
+
 				rowsMap.set(key, {
 					vendorId: vendorIdVal,
 					labId: labIdVal,
-					tpaName: vendorIdVal ? (pVenName.get(vendorIdVal) || '-') : '—',
-					labName: labIdVal ? (pLabName.get(labIdVal) || '-') : '—',
+					tpaName: vendorIdVal ? pVenName.get(vendorIdVal) || '-' : '—',
+					labName: labIdVal ? pLabName.get(labIdVal) || '-' : '—',
 					localTotal: 0,
 					outerTotal: 0,
 					rowTotal: 0,
 					cells,
 				});
 			}
+
 			return rowsMap.get(key)!;
 		};
 
@@ -319,6 +347,7 @@ export async function POST(req: Request) {
 				const k = `${st}__${vt}`;
 				row.cells[k] = (row.cells[k] ?? 0) + 1;
 				columnTotals[k] = (columnTotals[k] ?? 0) + 1;
+
 				if (st === 'Local') row.localTotal += 1;
 				if (st === 'Outer') row.outerTotal += 1;
 			}
@@ -341,8 +370,19 @@ export async function POST(req: Request) {
 		return NextResponse.json({
 			cards,
 			table,
-			trend: trend.map(r => ({ date: toYmd(new Date(r.d)), amount: Number(r.amt) })),
-			pivot: { serviceTypes, visits, rows, totalLocal, totalOuter, grandTotal, columnTotals },
+			trend: trend.map((r) => ({
+				date: toYmd(new Date(r.d)),
+				amount: toNum(r.amt),
+			})),
+			pivot: {
+				serviceTypes,
+				visits,
+				rows,
+				totalLocal,
+				totalOuter,
+				grandTotal,
+				columnTotals,
+			},
 		});
 	} catch (e: any) {
 		console.error('[reports/accounts] fatal:', e?.message, e?.stack);
