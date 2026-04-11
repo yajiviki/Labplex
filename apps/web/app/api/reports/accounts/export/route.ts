@@ -77,6 +77,18 @@ type GroupRow = {
 	totalExtraCostAmount: number;
 };
 
+type ExportRow = {
+	labId: string | null;
+	labName: string;
+	vendorId: string | null;
+	tpaName: string;
+	totalCases: number;
+	localCases: number;
+	outerCases: number;
+	totalTestAmount: number;
+	totalExtraCostAmount: number;
+};
+
 export async function POST(req: Request) {
 	try {
 		const { labId, vendorId, from, to } = await req.json();
@@ -117,7 +129,7 @@ export async function POST(req: Request) {
 
 		const grouped = new Map<string, GroupRow>();
 
-		for (const row of rows) {
+		rows.forEach((row) => {
 			const key = keyOf(row.labId ?? null, row.vendorId ?? null);
 
 			const cur = grouped.get(key) ?? {
@@ -140,7 +152,7 @@ export async function POST(req: Request) {
 			cur.totalExtraCostAmount += toNum(row.extraChargeRs);
 
 			grouped.set(key, cur);
-		}
+		});
 
 		const groupedRows = Array.from(grouped.values());
 
@@ -162,10 +174,10 @@ export async function POST(req: Request) {
 				: Promise.resolve([]),
 		]);
 
-		const labMap = new Map(labs.map((l) => [l.id, l.name]));
-		const vendorMap = new Map(vendors.map((v) => [v.id, v.tpaName]));
+		const labMap = new Map<string, string>(labs.map((l) => [l.id, l.name]));
+		const vendorMap = new Map<string, string>(vendors.map((v) => [v.id, v.tpaName]));
 
-		const exportRows = groupedRows
+		const exportRows: ExportRow[] = groupedRows
 			.map((r) => ({
 				labId: r.labId,
 				labName: r.labId ? labMap.get(r.labId) || '-' : '—',
@@ -177,11 +189,7 @@ export async function POST(req: Request) {
 				totalTestAmount: Number(r.totalTestAmount.toFixed(2)),
 				totalExtraCostAmount: Number(r.totalExtraCostAmount.toFixed(2)),
 			}))
-			.sort(
-				(a, b) =>
-					a.labName.localeCompare(b.labName) ||
-					a.tpaName.localeCompare(b.tpaName)
-			);
+			.sort((a, b) => a.labName.localeCompare(b.labName) || a.tpaName.localeCompare(b.tpaName));
 
 		const workbook = new ExcelJS.Workbook();
 		workbook.creator = 'OpenAI';
@@ -207,13 +215,13 @@ export async function POST(req: Request) {
 
 		worksheet.addRow([]);
 
-		const labsGrouped = new Map<string, typeof exportRows>();
-		for (const row of exportRows) {
+		const labsGrouped = new Map<string, ExportRow[]>();
+		exportRows.forEach((row) => {
 			const key = row.labName;
 			const list = labsGrouped.get(key) ?? [];
 			list.push(row);
 			labsGrouped.set(key, list);
-		}
+		});
 
 		let grandTotalCases = 0;
 		let grandLocalCases = 0;
@@ -221,7 +229,7 @@ export async function POST(req: Request) {
 		let grandTestAmount = 0;
 		let grandExtraAmount = 0;
 
-		for (const [labName, labRows] of labsGrouped.entries()) {
+		labsGrouped.forEach((labRows, labName) => {
 			const labHeaderRow = worksheet.addRow(['Lab Name:', labName, '', '', '', '']);
 			labHeaderRow.eachCell((cell) => {
 				cell.font = { bold: true, color: { argb: COLORS.labHeaderText } };
@@ -270,7 +278,7 @@ export async function POST(req: Request) {
 			let labTestAmount = 0;
 			let labExtraAmount = 0;
 
-			for (const row of labRows) {
+			labRows.forEach((row) => {
 				worksheet.addRow([
 					row.tpaName,
 					row.totalCases,
@@ -299,7 +307,7 @@ export async function POST(req: Request) {
 				labOuterCases += row.outerCases;
 				labTestAmount += row.totalTestAmount;
 				labExtraAmount += row.totalExtraCostAmount;
-			}
+			});
 
 			const totalRow = worksheet.addRow([
 				'Total',
@@ -336,7 +344,7 @@ export async function POST(req: Request) {
 			grandOuterCases += labOuterCases;
 			grandTestAmount += labTestAmount;
 			grandExtraAmount += labExtraAmount;
-		}
+		});
 
 		const grandRow = worksheet.addRow([
 			'Grand Total',
@@ -394,9 +402,6 @@ export async function POST(req: Request) {
 		});
 	} catch (e: any) {
 		console.error('[reports/accounts/export] fatal:', e?.message, e?.stack);
-		return NextResponse.json(
-			{ error: e?.message || 'Server error' },
-			{ status: 500 }
-		);
+		return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });
 	}
 }
