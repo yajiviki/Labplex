@@ -406,7 +406,7 @@ export default function AppointmentsPage() {
 				rLabs.json().catch(() => []),
 				rAppts.json().catch(() => []),
 				rIns.json().catch(() => []),
-			]);			
+			]);
 			if (!rVendors.ok) throw new Error((vendorsJson as any)?.error || 'Load vendors failed');
 			if (!rLabs.ok) throw new Error((labsJson as any)?.error || 'Load labs failed');
 			if (!rAppts.ok) throw new Error((apptsJson as any)?.error || 'Load appointments failed');
@@ -1075,6 +1075,220 @@ export default function AppointmentsPage() {
 		doc.save(fileName);
 	}
 
+	// ─── NEW: Export Outer Home Visit Appointment Schedule to Excel ───────────
+	async function exportScheduleToExcel(sourceRows: Appointment[]) {
+		// Filter to Outer service type + Home visit type only
+		const scheduleRows = sourceRows.filter(r =>
+			(r.serviceType || '').trim().toLowerCase() === 'outer' &&
+			(r.visitType || '').trim().toUpperCase() === 'HOME',
+		);
+
+		if (!scheduleRows.length) {
+			alert('No Outer Home Visit appointments found to export. Make sure your date range includes appointments with Service Type = Outer and Visit Type = Home.');
+			return;
+		}
+
+		try {
+			const ExcelJS = await import('exceljs');
+			const FileSaverModule = await import('file-saver');
+			const saveAs =
+				(FileSaverModule as any).saveAs ||
+				(FileSaverModule as any).default?.saveAs ||
+				(FileSaverModule as any).default;
+
+			if (typeof saveAs !== 'function') throw new Error('file-saver saveAs import failed');
+
+			// Determine lab label for title (mirrors "DC" suffix in screenshot)
+			const selectedLab = fLabId ? labs.find(l => l.id === fLabId) : null;
+			const labLabel = selectedLab
+				? (selectedLab.nickName || selectedLab.labCode || selectedLab.name)
+				: 'All Labs';
+
+			// Scheduled date label: use date filter range or today
+			const scheduledDateLabel =
+				fDateFrom && fDateTo && fDateFrom === fDateTo
+					? fDateFrom
+					: fDateFrom && fDateTo
+						? `${fDateFrom} to ${fDateTo}`
+						: fDateFrom || fDateTo || formatDateOnly(new Date().toISOString());
+
+			const workbook = new ExcelJS.Workbook();
+			workbook.creator = 'LabPlux';
+			workbook.created = new Date();
+
+			const ws = workbook.addWorksheet(sanitizeWorksheetName('Home Visit Schedule'));
+
+			// Schedule columns (matching screenshot layout)
+			const SCHED_COLS = [
+				{ key: 'sno',    header: 'S.No',          width: 6 },
+				{ key: 'apptAt', header: 'App.Date',       width: 14 },
+				{ key: 'client', header: 'Client Name',    width: 26 },
+				{ key: 'ins',    header: 'INS Name',       width: 14 },
+				{ key: 'tpa',    header: 'TPA',            width: 12 },
+				{ key: 'mobile', header: 'Mobile Number',  width: 16 },
+				{ key: 'gender', header: 'Gender\n(F/M)',  width: 10 },
+				{ key: 'test',   header: 'Test',           width: 18 },
+				{ key: 'loc',    header: 'Location',       width: 24 },
+				{ key: 'time',   header: 'Time',           width: 10 },
+				{ key: 'status', header: 'Status',         width: 16 },
+				{ key: 'remark', header: 'Remarks',        width: 20 },
+			];
+
+			ws.columns = SCHED_COLS.map(c => ({ key: c.key, width: c.width }));
+			const totalCols = SCHED_COLS.length; // 12
+
+			// ── Row 1: Title (merged across all columns) ──────────────────────
+			ws.mergeCells(1, 1, 1, totalCols);
+			const titleCell = ws.getCell('A1');
+			titleCell.value = `OUTER HOME VISIT APPOINTMENT SCHEDULE – ${labLabel}`;
+			titleCell.font = { bold: true, size: 13 };
+			titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+			titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+			ws.getRow(1).height = 24;
+
+			// ── Row 2: Scheduled Date (left) | Status legend (right, merged) ─
+			ws.getCell('A2').value = `Sheduled Date: ${scheduledDateLabel}`;
+			ws.getCell('A2').font = { bold: false, size: 10 };
+			// Merge cols 7–12 for the status legend on the right
+			ws.mergeCells(2, 7, 2, totalCols);
+			const legendCell = ws.getCell(2, 7);
+			legendCell.value = 'Status: Fixed (F) / Not Fixed (NF)/ Cancelled(C)\n/ Rescheduled®';
+			legendCell.font = { size: 9 };
+			legendCell.alignment = { horizontal: 'right', vertical: 'middle', wrapText: true };
+			ws.getRow(2).height = 28;
+
+			// ── Row 3: empty spacer ────────────────────────────────────────────
+			ws.getRow(3).height = 6;
+
+			// ── Row 4: Column headers ─────────────────────────────────────────
+			const headerRowNum = 4;
+			const headerRow = ws.getRow(headerRowNum);
+			headerRow.values = ['', ...SCHED_COLS.map(c => c.header)]; // offset by 1 for col index
+			// Re-assign properly using cell index
+			SCHED_COLS.forEach((c, idx) => {
+				const cell = headerRow.getCell(idx + 1);
+				cell.value = c.header;
+				cell.font = { bold: true, size: 10 };
+				cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+				cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } }; // dark blue
+				cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+				cell.border = {
+					top: { style: 'thin', color: { argb: 'FF000000' } },
+					left: { style: 'thin', color: { argb: 'FF000000' } },
+					bottom: { style: 'thin', color: { argb: 'FF000000' } },
+					right: { style: 'thin', color: { argb: 'FF000000' } },
+				};
+			});
+			headerRow.height = 32;
+
+			// ── Rows 5+: Data rows ────────────────────────────────────────────
+			let dataRowNum = headerRowNum + 1;
+
+			// Alternating row fill colors (light blue / white like screenshot)
+			const fillLight = 'FFD9E1F2';  // light blue
+			const fillWhite = 'FFFFFFFF';
+
+			for (let i = 0; i < scheduleRows.length; i++) {
+				const a = scheduleRows[i];
+				const lab = labs.find(l => l.id === a.labId);
+				const vendor = (lab?.vendors?.find(v => v.id === a.vendorId)) || vendors.find(v => v.id === a.vendorId);
+				const ins = insurers.find(ins => ins.id === a.insuranceCompanyId);
+
+				const testCode = a.testSummary ?? formatTestCodes(a);
+				// Gender abbreviation: Male→M, Female→F, else as-is
+				const genderAbbr =
+					(a.gender || '').trim().toLowerCase() === 'male' ? 'M' :
+					(a.gender || '').trim().toLowerCase() === 'female' ? 'F' :
+					(a.gender || '');
+
+				const rowData = [
+					i + 1,                               // S.No
+					formatDateOnly(a.apptAt),            // App.Date
+					a.clientName ?? '',                  // Client Name
+					ins?.nickName ?? '',                 // INS Name
+					vendor?.tpaName ?? '',               // TPA
+					a.phone ?? '',                       // Mobile Number
+					genderAbbr,                          // Gender (F/M)
+					testCode,                            // Test
+					a.location ?? '',                    // Location
+					'',                                  // Time (blank)
+					'',                                  // Status (blank – filled manually)
+					'',                                  // Remarks (blank)
+				];
+
+				const dataRow = ws.getRow(dataRowNum);
+				dataRow.values = rowData;
+				dataRow.height = 18;
+
+				const bgArgb = i % 2 === 0 ? fillWhite : fillLight;
+
+				SCHED_COLS.forEach((_, colIdx) => {
+					const cell = dataRow.getCell(colIdx + 1);
+					cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgArgb } };
+					cell.font = { size: 10 };
+					cell.alignment = {
+						vertical: 'middle',
+						horizontal: colIdx === 0 ? 'center' :   // S.No centered
+							colIdx === 6 ? 'center' :            // Gender centered
+							'left',
+					};
+					cell.border = {
+						top: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+						left: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+						bottom: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+						right: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+					};
+				});
+
+				dataRowNum++;
+			}
+
+			// ── Total / summary row ───────────────────────────────────────────
+			const totalRowNum = dataRowNum;
+			const totalRow = ws.getRow(totalRowNum);
+
+			// Count by status
+			const fixed = scheduleRows.filter(r => (r.status || '').trim().toLowerCase() === 'confirmed').length;
+			const notFixed = scheduleRows.filter(r => ['tbi', 'not responding', 'need confirmation'].includes((r.status || '').trim().toLowerCase())).length;
+			const cancelled = scheduleRows.filter(r => (r.status || '').trim().toLowerCase() === 'cancelled').length;
+			const rescheduled = scheduleRows.filter(r => (r.status || '').trim().toLowerCase() === 'rescheduled').length;
+
+			// Merge columns 1–6 for the summary text
+			ws.mergeCells(totalRowNum, 1, totalRowNum, totalCols);
+			const summaryCell = ws.getCell(totalRowNum, 1);
+			summaryCell.value = `Total: ${scheduleRows.length}     Fixed: ${fixed}     Not Fixed: ${notFixed}     Cancelled: ${cancelled}     Rescheduled: ${rescheduled}`;
+			summaryCell.font = { bold: true, size: 10 };
+			summaryCell.alignment = { horizontal: 'left', vertical: 'middle' };
+			summaryCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } }; // light green
+			summaryCell.border = {
+				top: { style: 'medium', color: { argb: 'FF000000' } },
+				left: { style: 'thin', color: { argb: 'FF000000' } },
+				bottom: { style: 'thin', color: { argb: 'FF000000' } },
+				right: { style: 'thin', color: { argb: 'FF000000' } },
+			};
+			totalRow.height = 20;
+
+			// Freeze header row
+			ws.views = [{ state: 'frozen', ySplit: headerRowNum }];
+
+			const buffer = await workbook.xlsx.writeBuffer();
+			const today = formatDateOnly(new Date().toISOString());
+			const safeLabel = labLabel.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 20);
+			const fileName = `home_visit_schedule_${safeLabel}_${today}.xlsx`;
+
+			saveAs(
+				new Blob([buffer], {
+					type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+				}),
+				fileName,
+			);
+		} catch (error: any) {
+			console.error(error);
+			alert(error?.message || 'Failed to export Schedule Excel file');
+		}
+	}
+	// ─────────────────────────────────────────────────────────────────────────
+
 	async function onDelete() {
 		if (!selectedRowId) return;
 		setDelLoading(true);
@@ -1597,6 +1811,18 @@ export default function AppointmentsPage() {
 							<FileDown className="h-4 w-4" />
 							Export PDF
 						</button>
+
+						{/* ── NEW: Schedule Export button ────────────────────────── */}
+						<button
+							type="button"
+							className="inline-flex items-center gap-2 rounded border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm text-blue-700 hover:bg-blue-100"
+							onClick={() => exportScheduleToExcel(filtered)}
+							title="Export Outer Home Visit Appointment Schedule (Outer + Home visits only)"
+						>
+							<FileDown className="h-4 w-4" />
+							Export Schedule
+						</button>
+						{/* ─────────────────────────────────────────────────────── */}
 
 						{selectedRowId && (
 							<>
