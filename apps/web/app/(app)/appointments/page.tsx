@@ -695,7 +695,7 @@ export default function AppointmentsPage() {
 			if (!(dateOk && stOk && labOk && tpaOk && visitOk && svcOk && staffOk && testOk)) return false;
 
 			if (!term) return true;
-			const haystack = [r.clientName, r.clientRef, r.phone, getAssignedStaffName(r)]
+			const haystack = [r.clientName, r.clientRef, r.phone, r.location, getAssignedStaffName(r)]
 				.filter(Boolean)
 				.map(s => String(s).toLowerCase());
 			return haystack.some(s => s.includes(term));
@@ -1078,10 +1078,11 @@ export default function AppointmentsPage() {
 	// ─── NEW: Export Outer Home Visit Appointment Schedule to Excel ───────────
 	async function exportScheduleToExcel(sourceRows: Appointment[]) {
 		// Filter to Outer service type + Home visit type only
-		const scheduleRows = sourceRows.filter(r =>
-			(r.serviceType || '').trim().toLowerCase() === 'outer' &&
-			(r.visitType || '').trim().toUpperCase() === 'HOME',
-		);
+		// const scheduleRows = sourceRows.filter(r =>
+		// 	(r.serviceType || '').trim().toLowerCase() === 'outer' &&
+		// 	(r.visitType || '').trim().toUpperCase() === 'HOME',
+		// );
+		const scheduleRows = sourceRows;
 
 		if (!scheduleRows.length) {
 			alert('No Outer Home Visit appointments found to export. Make sure your date range includes appointments with Service Type = Outer and Visit Type = Home.');
@@ -1817,7 +1818,7 @@ export default function AppointmentsPage() {
 							type="button"
 							className="inline-flex items-center gap-2 rounded border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm text-blue-700 hover:bg-blue-100"
 							onClick={() => exportScheduleToExcel(filtered)}
-							title="Export Outer Home Visit Appointment Schedule (Outer + Home visits only)"
+							title="Export Outer Home Visit Appointment Schedule"
 						>
 							<FileDown className="h-4 w-4" />
 							Export Schedule
