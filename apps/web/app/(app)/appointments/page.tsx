@@ -22,6 +22,18 @@ type AssignedUser = {
 	id: string;
 	name?: string | null;
 	email?: string | null;
+	userId?: string | null;
+};
+
+type StaffUser = {
+	id: string;
+	name?: string | null;
+	userId?: string | null;
+	email?: string | null;
+	role?: string | null;
+	labId?: string | null;
+	isActive?: boolean | number | null;
+	lab?: { id?: string; name?: string | null } | null;
 };
 
 type Appointment = {
@@ -227,7 +239,12 @@ function sanitizeWorksheetName(name: string) {
 }
 
 function getAssignedStaffName(a: Appointment) {
-	return a.assignedTo?.name?.trim() || a.assignedTo?.email?.trim() || '';
+	return (
+		a.assignedTo?.name?.trim() ||
+		a.assignedTo?.userId?.trim() ||
+		a.assignedTo?.email?.trim() ||
+		(a.assignedToId ? `Assigned staff (${a.assignedToId})` : '')
+	);
 }
 
 /* ========= Small UI bits ========= */
@@ -263,6 +280,7 @@ export default function AppointmentsPage() {
 	const [vendors, setVendors] = useState<Vendor[]>([]);
 	const [labs, setLabs] = useState<Lab[]>([]);
 	const [insurers, setInsurers] = useState<Insurance[]>([]);
+	const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
 
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [apptAt, setApptAt] = useState<string>(toDateLocalValue(new Date()));
@@ -379,6 +397,10 @@ export default function AppointmentsPage() {
 	} | null>(null);
 	const [inlineSaving, setInlineSaving] = useState(false);
 
+	const [staffEdit, setStaffEdit] = useState<{ rowId: string; assignedToId: string } | null>(null);
+	const [staffSavingRowId, setStaffSavingRowId] = useState<string | null>(null);
+	const [staffEditError, setStaffEditError] = useState<string | null>(null);
+
 	useEffect(() => {
 		function onDoc(e: MouseEvent) {
 			const t = e.target as Node;
@@ -395,17 +417,19 @@ export default function AppointmentsPage() {
 		setLoading(true);
 		setListErr(null);
 		try {
-			const [rVendors, rLabs, rAppts, rIns] = await Promise.all([
-				fetch('/api/vendors', { cache: 'no-store' }),
-				fetch('/api/labs', { cache: 'no-store' }),
-				fetch('/api/appointments?status=&source=&q=', { cache: 'no-store' }),
-				fetch('/api/insurance', { cache: 'no-store' }),
+			const [rVendors, rLabs, rAppts, rIns, rAssignments] = await Promise.all([
+			fetch('/api/vendors', { cache: 'no-store' }),
+			fetch('/api/labs', { cache: 'no-store' }),
+			fetch('/api/appointments?status=&source=&q=', { cache: 'no-store' }),
+			fetch('/api/insurance', { cache: 'no-store' }),
+			fetch('/api/appointments/outer-assignments', { cache: 'no-store' }),
 			]);
-			const [vendorsJson, labsJson, apptsJson, insJson] = await Promise.all([
-				rVendors.json().catch(() => []),
-				rLabs.json().catch(() => []),
-				rAppts.json().catch(() => []),
-				rIns.json().catch(() => []),
+			const [vendorsJson, labsJson, apptsJson, insJson, assignmentsJson] = await Promise.all([
+			rVendors.json().catch(() => []),
+			rLabs.json().catch(() => []),
+			rAppts.json().catch(() => []),
+			rIns.json().catch(() => []),
+			rAssignments.json().catch(() => ({})),
 			]);
 			if (!rVendors.ok) throw new Error((vendorsJson as any)?.error || 'Load vendors failed');
 			if (!rLabs.ok) throw new Error((labsJson as any)?.error || 'Load labs failed');
@@ -414,14 +438,46 @@ export default function AppointmentsPage() {
 
 			setVendors(Array.isArray(vendorsJson) ? vendorsJson : []);
 			setLabs(Array.isArray(labsJson) ? labsJson : []);
-			setRows(Array.isArray(apptsJson) ? apptsJson : []);
+
+			// Merge assignment data so staff names remain visible even if /api/appointments
+			// does not return assignedTo/addressRemark for every appointment.
+			const assignmentRows = rAssignments.ok && Array.isArray((assignmentsJson as any)?.rows)
+				? (assignmentsJson as any).rows
+				: [];
+			const assignmentUsers: StaffUser[] =
+				rAssignments.ok && Array.isArray((assignmentsJson as any)?.users)
+					? (assignmentsJson as any).users
+					: [];
+			const assignmentById = new Map<string, any>(
+				assignmentRows.map((assignment: any) => [assignment.id, assignment]),
+			);
+			const userById = new Map<string, StaffUser>(assignmentUsers.map(user => [user.id, user]));
+			setRows(Array.isArray(apptsJson) ? apptsJson.map((appointment: Appointment) => {
+				const assignment = assignmentById.get(appointment.id);
+				const assignedToId = appointment.assignedToId ?? assignment?.assignedToId ?? null;
+				const assignedUser = assignedToId ? userById.get(assignedToId) : undefined;
+				return {
+					...appointment,
+					addressRemark: appointment.addressRemark ?? assignment?.addressRemark ?? null,
+					assignedToId,
+					assignedAt: appointment.assignedAt ?? assignment?.assignedAt ?? null,
+					assignedTo: appointment.assignedTo ?? (assignedUser ? {
+						id: assignedUser.id,
+						name: assignedUser.name ?? null,
+						userId: assignedUser.userId ?? null,
+						email: assignedUser.email ?? null,
+					} : null),
+				};
+			}) : []);
 			setInsurers(Array.isArray(insJson) ? insJson : []);
+			setStaffUsers(assignmentUsers);
 		} catch (e: any) {
 			setListErr(e?.message || 'Network error');
 			setVendors([]);
 			setLabs([]);
 			setRows([]);
 			setInsurers([]);
+			setStaffUsers([]);
 		} finally {
 			setLoading(false);
 		}
@@ -472,6 +528,8 @@ export default function AppointmentsPage() {
 
 		setPendingCreate(false);
 		setInlineEdit(null);
+		setStaffEdit(null);
+		setStaffEditError(null);
 	}
 
 	function validateRequiredFields(): string[] {
@@ -662,6 +720,35 @@ export default function AppointmentsPage() {
 		}
 	};
 
+	const staffOptions = useMemo<StaffUser[]>(() => {
+		const map = new Map<string, StaffUser>();
+
+		// The Outer Assignment API provides the available staff list.
+		for (const user of staffUsers) {
+			if (!user?.id) continue;
+			map.set(user.id, user);
+		}
+
+		// Keep the current assignment selectable even if the user is inactive or
+		// the appointments endpoint returns only assignedToId without the relation.
+		// This lets the user replace an existing assignment with another staff member.
+		for (const row of rows) {
+			if (!row.assignedToId || map.has(row.assignedToId)) continue;
+			map.set(row.assignedToId, {
+				id: row.assignedToId,
+				name: getAssignedStaffName(row) || `Currently assigned (${row.assignedToId})`,
+				userId: row.assignedTo?.userId ?? row.assignedToId,
+				email: row.assignedTo?.email ?? null,
+			});
+		}
+
+		return Array.from(map.values()).sort((a, b) => {
+			const nameA = a.name || a.userId || a.email || a.id;
+			const nameB = b.name || b.userId || b.email || b.id;
+			return nameA.localeCompare(nameB);
+		});
+	}, [staffUsers, rows]);
+
 	const assignedStaffOptions = useMemo(() => {
 		const map = new Map<string, string>();
 		for (const r of rows) {
@@ -788,6 +875,78 @@ export default function AppointmentsPage() {
 	function cancelInlineEdit() {
 		setInlineEdit(null);
 		setInlineSaving(false);
+	}
+
+	function beginStaffEdit(row: Appointment) {
+		if (inlineEdit || staffSavingRowId) return;
+		setSelectedRowId(row.id);
+		setStaffEdit({ rowId: row.id, assignedToId: row.assignedToId || '' });
+		setStaffEditError(null);
+		setFormOk(null);
+	}
+
+	function cancelStaffEdit() {
+		setStaffEdit(null);
+		setStaffEditError(null);
+	}
+
+	async function saveAssignedStaff(row: Appointment, nextAssignedToId: string) {
+		const currentAssignedToId = row.assignedToId || '';
+		// An empty selection means explicitly remove the current assignment.
+		if (nextAssignedToId === currentAssignedToId) {
+			setStaffEdit(null);
+			setStaffEditError(null);
+			return;
+		}
+
+		setStaffEdit({ rowId: row.id, assignedToId: nextAssignedToId });
+		setStaffEditError(null);
+		setStaffSavingRowId(row.id);
+
+		try {
+			const res = await fetch('/api/appointments/outer-assignments', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					items: [{
+						id: row.id,
+						// null explicitly clears the assignment; a non-empty ID assigns/reassigns staff.
+						assignedToId: nextAssignedToId || null,
+					}],
+				}),
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error((data as any)?.error || 'Failed to update assigned staff');
+
+			const selectedStaff = nextAssignedToId
+				? staffOptions.find(user => user.id === nextAssignedToId)
+				: undefined;
+			setRows(previous => previous.map(item => {
+				if (item.id !== row.id) return item;
+				return {
+					...item,
+					assignedToId: nextAssignedToId || null,
+					assignedAt: nextAssignedToId ? new Date().toISOString() : null,
+					assignedTo: selectedStaff ? {
+						id: selectedStaff.id,
+						name: selectedStaff.name ?? null,
+						userId: selectedStaff.userId ?? null,
+						email: selectedStaff.email ?? null,
+					} : null,
+				};
+			}));
+
+			setStaffEdit(null);
+			setStaffEditError(null);
+			setFormOk(nextAssignedToId
+				? `Assigned staff updated for ${row.clientName || 'appointment'}`
+				: `Staff assignment removed for ${row.clientName || 'appointment'}`);
+		} catch (error: any) {
+			setStaffEdit({ rowId: row.id, assignedToId: row.assignedToId || '' });
+			setStaffEditError(error?.message || 'Failed to update assigned staff');
+		} finally {
+			setStaffSavingRowId(null);
+		}
 	}
 
 	async function saveInlineAmount() {
@@ -1078,11 +1237,10 @@ export default function AppointmentsPage() {
 	// ─── NEW: Export Outer Home Visit Appointment Schedule to Excel ───────────
 	async function exportScheduleToExcel(sourceRows: Appointment[]) {
 		// Filter to Outer service type + Home visit type only
-		// const scheduleRows = sourceRows.filter(r =>
-		// 	(r.serviceType || '').trim().toLowerCase() === 'outer' &&
-		// 	(r.visitType || '').trim().toUpperCase() === 'HOME',
-		// );
-		const scheduleRows = sourceRows;
+		const scheduleRows = sourceRows.filter(r =>
+			(r.serviceType || '').trim().toLowerCase() === 'outer' &&
+			(r.visitType || '').trim().toUpperCase() === 'HOME',
+		);
 
 		if (!scheduleRows.length) {
 			alert('No Outer Home Visit appointments found to export. Make sure your date range includes appointments with Service Type = Outer and Visit Type = Home.');
@@ -1677,7 +1835,7 @@ export default function AppointmentsPage() {
 							<div>
 								<Search className="h-4 w-4 absolute left-3 top-[34px] text-gray-400" />
 								<input
-									placeholder="Client, Proposal Id, Mobile, Staff…"
+									placeholder="Client, Proposal, Mobile, Location, Staff…"
 									className="pl-9 pr-3 py-2 border rounded w-72"
 									value={q}
 									onChange={(e) => setQ(e.target.value)}
@@ -1818,7 +1976,7 @@ export default function AppointmentsPage() {
 							type="button"
 							className="inline-flex items-center gap-2 rounded border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm text-blue-700 hover:bg-blue-100"
 							onClick={() => exportScheduleToExcel(filtered)}
-							title="Export Outer Home Visit Appointment Schedule"
+							title="Export Outer Home Visit Appointment Schedule (Outer + Home visits only)"
 						>
 							<FileDown className="h-4 w-4" />
 							Export Schedule
@@ -1930,7 +2088,60 @@ export default function AppointmentsPage() {
 													{visibleCols.lab && <td className="px-3 py-2 text-sm">{lab?.nickName ?? ''}</td>}
 													{visibleCols.tpa && <td className="px-3 py-2 text-sm">{vendor?.tpaName ?? ''}</td>}
 													{visibleCols.ins && <td className="px-3 py-2 text-sm">{ins?.nickName ?? ''}</td>}
-													{visibleCols.assignedStaff && <td className="px-3 py-2 text-sm">{getAssignedStaffName(a)}</td>}
+													{visibleCols.assignedStaff && (
+								<td
+									className="px-3 py-2 text-sm min-w-[190px]"
+									title="Double-click to assign or reassign staff"
+									onMouseDown={(e) => {
+										e.stopPropagation();
+										setSelectedRowId(a.id);
+									}}
+									onClick={(e) => e.stopPropagation()}
+									onDoubleClick={(e) => {
+										e.stopPropagation();
+										beginStaffEdit(a);
+									}}
+								>
+									{staffEdit?.rowId === a.id ? (
+										<div className="flex items-start gap-1" onClick={(e) => e.stopPropagation()}>
+											<div className="min-w-0 flex-1">
+												<select
+													autoFocus
+													value={staffEdit.assignedToId}
+														onChange={(e) => void saveAssignedStaff(a, e.target.value)}
+														onKeyDown={(e) => { if (e.key === 'Escape') cancelStaffEdit(); }}
+													disabled={staffSavingRowId === a.id}
+													className="w-full max-w-[190px] rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/50 disabled:bg-gray-100"
+													title="Select a new staff member to assign or reassign this appointment"
+												>
+													<option value="">Unassigned (remove staff)</option>
+													{staffOptions.map(user => (
+														<option key={user.id} value={user.id}>
+															{user.name || user.userId || user.email || user.id}
+														</option>
+													))}
+												</select>
+												{staffEditError && staffEdit?.rowId === a.id && (
+													<div className="mt-1 max-w-[190px] text-xs text-red-600" title={staffEditError}>{staffEditError}</div>
+												)}
+											</div>
+											<button
+												type="button"
+												className="rounded p-1 text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+												onClick={(e) => { e.stopPropagation(); cancelStaffEdit(); }}
+												disabled={staffSavingRowId === a.id}
+												title="Cancel staff edit"
+											>
+												<X className="h-4 w-4" />
+											</button>
+										</div>
+									) : (
+										<span className="inline-block min-w-[70px] rounded px-1 py-1 hover:bg-yellow-50">
+											{getAssignedStaffName(a) || <span className="text-gray-400 italic">Unassigned</span>}
+										</span>
+									)}
+								</td>
+							)}
 													{visibleCols.status && (
 														<td className="px-3 py-2 text-sm whitespace-nowrap">
 															<span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${statusClasses(a.status)}`}>{a.status ?? ''}</span>

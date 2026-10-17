@@ -7,308 +7,335 @@ export const dynamic = 'force-dynamic';
 
 /* ---------- date helpers (same style as your appointments route) ---------- */
 function parseDateOnlyStart(v?: string | null) {
-	if (!v) return null;
-	const a = v.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
-	if (a) return new Date(+a[1], +a[2] - 1, +a[3], 0, 0, 0, 0);
-	const b = v.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-	if (b) return new Date(+b[3], +b[2] - 1, +b[1], 0, 0, 0, 0);
-	const d = new Date(v);
-	return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+  if (!v) return null;
+
+  const a = v.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  if (a) return new Date(+a[1], +a[2] - 1, +a[3], 0, 0, 0, 0);
+
+  const b = v.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (b) return new Date(+b[3], +b[2] - 1, +b[1], 0, 0, 0, 0);
+
+  const d = new Date(v);
+  return Number.isNaN(d.getTime())
+    ? null
+    : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 }
 
 function endOfDay(d: Date) {
-	return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 }
 
 function isoOrNull(d?: Date | null) {
-	return d ? new Date(d).toISOString() : null;
+  return d ? new Date(d).toISOString() : null;
 }
 
 function normalizeVisitType(v?: string | null) {
-	const s = (v || '').trim().toUpperCase();
-	if (s === 'CENTER') return 'CENTER';
-	if (s === 'HOME') return 'HOME';
-	return '';
+  const s = (v || '').trim().toUpperCase();
+  if (s === 'CENTER') return 'CENTER';
+  if (s === 'HOME') return 'HOME';
+  return '';
 }
 
 function normalizeServiceType(v?: string | null) {
-	const s = (v || '').trim().toUpperCase();
-	if (s === 'OUTER') return 'OUTER';
-	if (s === 'LOCAL') return 'LOCAL';
-	return '';
+  const s = (v || '').trim().toUpperCase();
+  if (s === 'OUTER') return 'OUTER';
+  if (s === 'LOCAL') return 'LOCAL';
+  return '';
 }
 
 function buildTestSummary(t?: {
-	bloodTest?: string | null;
-	urineTest?: boolean | null;
-	ecg?: boolean | null;
-	tmt?: boolean | null;
-	applicationForm?: string | null;
+  bloodTest?: string | null;
+  urineTest?: boolean | null;
+  ecg?: boolean | null;
+  tmt?: boolean | null;
+  applicationForm?: string | null;
 }) {
-	if (!t) return '';
-	const parts: string[] = [];
-	const bt = (t.bloodTest || '').toUpperCase();
-	if (bt && bt !== 'NO') parts.push(bt);
-	if (t.urineTest) parts.push('U');
-	if (t.ecg) parts.push('ECG');
-	if (t.tmt) parts.push('TMT');
-	const af = (t.applicationForm || '').toUpperCase();
-	if (af) parts.push(af);
-	return parts.join(',');
+  if (!t) return '';
+
+  const parts: string[] = [];
+  const bt = (t.bloodTest || '').toUpperCase();
+  if (bt && bt !== 'NO') parts.push(bt);
+  if (t.urineTest) parts.push('U');
+  if (t.ecg) parts.push('ECG');
+  if (t.tmt) parts.push('TMT');
+
+  const af = (t.applicationForm || '').toUpperCase();
+  if (af) parts.push(af);
+  return parts.join(',');
 }
 
 function getRole(session: any): string {
-	return String(session?.user?.role ?? session?.role ?? '').toUpperCase();
+  return String(session?.user?.role ?? session?.role ?? '').toUpperCase();
 }
 
 function getLabId(session: any): string | null {
-	return (session?.labId as string) || (session?.user?.labId as string) || null;
+  return (session?.labId as string) || (session?.user?.labId as string) || null;
 }
 
 /* ----------------------------------------------------------------------- */
 /* GET /api/appointments/outer-assignments?labId=&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&visitType=CENTER|HOME&serviceType=OUTER|LOCAL&vendorId= */
 /* ----------------------------------------------------------------------- */
 export async function GET(req: Request) {
-	try {
-		const session = await auth();
-		if (!session) {
-			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-		}
+  try {
+    const session = await auth();
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
-		const role = getRole(session);
-		const sessionLabId = getLabId(session);
+    const role = getRole(session);
+    const sessionLabId = getLabId(session);
 
-		const { searchParams } = new URL(req.url);
-		const labIdParam = (searchParams.get('labId') || '').trim();
-		const dateFrom = searchParams.get('dateFrom');
-		const dateTo = searchParams.get('dateTo');
-		const visitType = normalizeVisitType(searchParams.get('visitType'));
-		const serviceType = normalizeServiceType(searchParams.get('serviceType'));
-		const vendorId = (searchParams.get('vendorId') || '').trim();
+    const { searchParams } = new URL(req.url);
+    const labIdParam = (searchParams.get('labId') || '').trim();
+    const dateFrom = searchParams.get('dateFrom');
+    const dateTo = searchParams.get('dateTo');
+    const visitType = normalizeVisitType(searchParams.get('visitType'));
+    const serviceType = normalizeServiceType(searchParams.get('serviceType'));
+    const vendorId = (searchParams.get('vendorId') || '').trim();
 
-		const isSuperAdmin = role === 'SUPER_ADMIN';
+    const isSuperAdmin = role === 'SUPER_ADMIN';
 
-		let effectiveLabId: string | null = null;
-		if (isSuperAdmin) {
-			effectiveLabId = labIdParam ? labIdParam : null;
-		} else {
-			effectiveLabId = sessionLabId;
-		}
+    let effectiveLabId: string | null = null;
+    if (isSuperAdmin) {
+      effectiveLabId = labIdParam ? labIdParam : null;
+    } else {
+      effectiveLabId = sessionLabId;
+    }
 
-		const where: any = {
-			isActive: 1,
-			status: {
-				in: [
-					'TBI',
-					'Need Confirmation',
-					'Need confirmation',
-					'Report - Completed',
-					'Report - InProgress',
-					'confirmed',
-				],
-			},
-		};
+    const where: any = {
+      isActive: 1,
+      status: {
+        in: [
+          'TBI',
+          'Need Confirmation',
+          'Need confirmation',
+          'Report - Completed',
+          'Report - InProgress',
+          'confirmed',
+        ],
+      },
+    };
 
-		if (effectiveLabId) where.labId = effectiveLabId;
-		if (vendorId) where.vendorId = vendorId;
+    if (effectiveLabId) where.labId = effectiveLabId;
+    if (vendorId) where.vendorId = vendorId;
 
-		if (serviceType) {
-			where.serviceType = {
-				in: [serviceType, serviceType.toLowerCase(), serviceType.charAt(0) + serviceType.slice(1).toLowerCase()],
-			};
-		} else {
-			where.serviceType = {
-				in: ['Outer', 'OUTER', 'outer', 'Local', 'LOCAL', 'local'],
-			};
-		}
+    if (serviceType) {
+      where.serviceType = {
+        in: [
+          serviceType,
+          serviceType.toLowerCase(),
+          serviceType.charAt(0) + serviceType.slice(1).toLowerCase(),
+        ],
+      };
+    } else {
+      where.serviceType = {
+        in: ['Outer', 'OUTER', 'outer', 'Local', 'LOCAL', 'local'],
+      };
+    }
 
-		if (dateFrom || dateTo) {
-			const gte = dateFrom ? parseDateOnlyStart(dateFrom) : null;
+    if (dateFrom || dateTo) {
+      const gte = dateFrom ? parseDateOnlyStart(dateFrom) : null;
+      let lte: Date | null = null;
 
-			let lte: Date | null = null;
-			if (dateTo) {
-				const d = parseDateOnlyStart(dateTo);
-				if (d) lte = endOfDay(d);
-			}
+      if (dateTo) {
+        const d = parseDateOnlyStart(dateTo);
+        if (d) lte = endOfDay(d);
+      }
 
-			if (gte || lte) {
-				where.apptAt = {};
-				if (gte) where.apptAt.gte = gte;
-				if (lte) where.apptAt.lte = lte;
-			}
-		}
+      if (gte || lte) {
+        where.apptAt = {};
+        if (gte) where.apptAt.gte = gte;
+        if (lte) where.apptAt.lte = lte;
+      }
+    }
 
-		if (visitType) {
-			where.visitType = visitType;
-		}
+    if (visitType) where.visitType = visitType;
 
-		const users = await prisma.user.findMany({
-			where: {
-				isActive: 1,
-				role: { in: ['USER', 'user'] },
-			},
-			orderBy: { name: 'asc' },
-			select: {
-				id: true,
-				name: true,
-				userId: true,
-				phone: true,
-				role: true,
-				labId: true,
-				lab: { select: { name: true, nickName: true, labCode: true } },
-			},
-		});
+    const users = await prisma.user.findMany({
+      where: {
+        isActive: 1,
+        role: { in: ['USER', 'user'] },
+      },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        userId: true,
+        phone: true,
+        role: true,
+        labId: true,
+        lab: { select: { name: true, nickName: true, labCode: true } },
+      },
+    });
 
-		const appts = await prisma.appointment.findMany({
-			where,
-			orderBy: { apptAt: 'asc' },
-			select: {
-				id: true,
-				labId: true,
-				apptAt: true,
-				clientName: true,
-				clientRef: true,
-				phone: true,
-				location: true,
-				status: true,
-				visitType: true,
-				serviceType: true,
-				vendorId: true,
-				vendor: { select: { tpaName: true, nickName: true, vendorId: true } },
-				addressRemark: true,
-				assignedToId: true,
-				assignedAt: true,
-				lab: { select: { name: true, nickName: true, labCode: true } },
-				insuranceCompany: { select: { name: true, nickName: true, code: true } },
-				tests: {
-					select: {
-						bloodTest: true,
-						urineTest: true,
-						ecg: true,
-						tmt: true,
-						applicationForm: true,
-					},
-				},
-			},
-			take: 5000,
-		});
+    const appts = await prisma.appointment.findMany({
+      where,
+      orderBy: { apptAt: 'asc' },
+      select: {
+        id: true,
+        labId: true,
+        apptAt: true,
+        clientName: true,
+        clientRef: true,
+        phone: true,
+        location: true,
+        status: true,
+        visitType: true,
+        serviceType: true,
+        vendorId: true,
+        vendor: { select: { tpaName: true, nickName: true, vendorId: true } },
+        addressRemark: true,
+        assignedToId: true,
+        assignedAt: true,
+        lab: { select: { name: true, nickName: true, labCode: true } },
+        insuranceCompany: { select: { name: true, nickName: true, code: true } },
+        tests: {
+          select: {
+            bloodTest: true,
+            urineTest: true,
+            ecg: true,
+            tmt: true,
+            applicationForm: true,
+          },
+        },
+      },
+      take: 5000,
+    });
 
-		const rows = appts.map((a) => {
-			const insuranceName =
-				a.insuranceCompany?.nickName ||
-				a.insuranceCompany?.name ||
-				a.insuranceCompany?.code ||
-				'';
+    const rows = appts.map((a) => {
+      const insuranceName =
+        a.insuranceCompany?.nickName ||
+        a.insuranceCompany?.name ||
+        a.insuranceCompany?.code ||
+        '';
 
-			const testSummary = buildTestSummary(a.tests || undefined);
+      const testSummary = buildTestSummary(a.tests || undefined);
 
-			return {
-				id: a.id,
+      return {
+        id: a.id,
+        labId: a.labId || '',
+        labNick: a.lab?.nickName || '',
+        labName: a.lab?.name || '',
+        labCode: a.lab?.labCode || '',
+        apptAt: isoOrNull(a.apptAt),
+        clientName: a.clientName || '',
+        clientRef: a.clientRef || '',
+        mobileNo: a.phone || '',
+        insuranceName,
+        testSummary,
+        location: a.location || '',
+        status: a.status || '',
+        visitType: a.visitType || '',
+        serviceType: a.serviceType || '',
+        vendorId: a.vendorId || '',
+        vendorName: a.vendor?.nickName || a.vendor?.tpaName || a.vendor?.vendorId || '',
+        addressRemark: a.addressRemark || '',
+        assignedToId: a.assignedToId || '',
+        assignedAt: isoOrNull(a.assignedAt),
+      };
+    });
 
-				labId: a.labId || '',
-				labNick: a.lab?.nickName || '',
-				labName: a.lab?.name || '',
-				labCode: a.lab?.labCode || '',
-
-				apptAt: isoOrNull(a.apptAt),
-
-				clientName: a.clientName || '',
-				clientRef: a.clientRef || '',
-				mobileNo: a.phone || '',
-
-				insuranceName,
-				testSummary,
-
-				location: a.location || '',
-				status: a.status || '',
-				visitType: a.visitType || '',
-				serviceType: a.serviceType || '',
-
-				vendorId: a.vendorId || '',
-				vendorName: a.vendor?.nickName || a.vendor?.tpaName || a.vendor?.vendorId || '',
-
-				addressRemark: a.addressRemark || '',
-				assignedToId: a.assignedToId || '',
-				assignedAt: isoOrNull(a.assignedAt),
-			};
-		});
-
-		return NextResponse.json(
-			{
-				mode: isSuperAdmin ? 'ALL_LABS' : 'SINGLE_LAB',
-				labId: effectiveLabId,
-				users,
-				rows,
-			},
-			{ status: 200 }
-		);
-	} catch (e: any) {
-		return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });
-	}
+    return NextResponse.json(
+      {
+        mode: isSuperAdmin ? 'ALL_LABS' : 'SINGLE_LAB',
+        labId: effectiveLabId,
+        users,
+        rows,
+      },
+      { status: 200 },
+    );
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });
+  }
 }
 
 /* ----------------------------------------------------------------------- */
 /* POST /api/appointments/outer-assignments
-   body: { labId?: string, items: [{ id, assignedToId, addressRemark }] }
-   updates ONLY the items sent (filtered rows)
------------------------------------------------------------------------ */
+   body: { labId?: string, items: [{ id, assignedToId, addressRemark? }] }
+   Updates only the items sent (filtered rows).
+   addressRemark is optional for staff assignment. If omitted or blank,
+   the appointment's existing addressRemark is preserved.
+*/
+/* ----------------------------------------------------------------------- */
 export async function POST(req: Request) {
-	try {
-		const session = await auth();
-		if (!session) {
-			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-		}
+  try {
+    const session = await auth();
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
-		const role = getRole(session);
-		const sessionLabId = getLabId(session);
-		const isSuperAdmin = role === 'SUPER_ADMIN';
+    const role = getRole(session);
+    const sessionLabId = getLabId(session);
+    const isSuperAdmin = role === 'SUPER_ADMIN';
 
-		const body = await req.json().catch(() => ({}));
-		const items = Array.isArray(body?.items) ? body.items : [];
+    const body = await req.json().catch(() => ({}));
+    const items = Array.isArray(body?.items) ? body.items : [];
 
-		if (!items.length) {
-			return NextResponse.json({ error: 'No items to save' }, { status: 400 });
-		}
+    if (!items.length) {
+      return NextResponse.json({ error: 'No items to save' }, { status: 400 });
+    }
 
-		for (const it of items) {
-			if (!it?.id) return NextResponse.json({ error: 'Missing appointment id' }, { status: 400 });
-			if (!it?.assignedToId) return NextResponse.json({ error: 'Missing assignedToId' }, { status: 400 });
-			if (!it?.addressRemark) return NextResponse.json({ error: 'Missing addressRemark' }, { status: 400 });
-		}
+    for (const it of items) {
+      if (!it?.id) {
+        return NextResponse.json({ error: 'Missing appointment id' }, { status: 400 });
+      }
+      // assignedToId must be present, but null/empty string is valid and means unassign.
+      if (!Object.prototype.hasOwnProperty.call(it, 'assignedToId')) {
+        return NextResponse.json({ error: 'Missing assignedToId field' }, { status: 400 });
+      }
+      if (it.assignedToId != null && typeof it.assignedToId !== 'string') {
+        return NextResponse.json({ error: 'assignedToId must be a string or null' }, { status: 400 });
+      }
+    }
 
-		const now = new Date();
+    const now = new Date();
 
-		const updates = items.map((it: any) => {
-			const where: any = { id: String(it.id), isActive: 1 };
+    const updates = items.map((it: any) => {
+      const where: any = { id: String(it.id), isActive: 1 };
 
-			if (!isSuperAdmin) {
-				where.labId = sessionLabId;
-			} else if (body?.labId) {
-				where.labId = String(body.labId);
-			}
+      if (!isSuperAdmin) {
+        if (!sessionLabId) {
+          // Do not allow a non-admin session without a lab to update appointments.
+          where.labId = '__NO_MATCHING_LAB__';
+        } else {
+          where.labId = sessionLabId;
+        }
+      } else if (body?.labId) {
+        where.labId = String(body.labId);
+      }
 
-			return prisma.appointment.updateMany({
-				where,
-				data: {
-					assignedToId: String(it.assignedToId),
-					addressRemark: String(it.addressRemark),
-					assignedAt: now,
-				},
-			});
-		});
+      const assignedToId = typeof it.assignedToId === 'string' ? it.assignedToId.trim() : '';
+      const data: any = assignedToId
+        ? {
+            assignedToId,
+            assignedAt: now,
+          }
+        : {
+            assignedToId: null,
+            assignedAt: null,
+          };
 
-		const results = await prisma.$transaction(updates);
-		const updatedCount = results.reduce((sum, r) => sum + (r?.count || 0), 0);
+      // Only change the address remark when a non-empty remark is explicitly supplied.
+      // This keeps the existing value when the staff-assignment UI omits it or sends an empty string.
+      if (typeof it.addressRemark === 'string' && it.addressRemark.trim() !== '') {
+        data.addressRemark = it.addressRemark.trim();
+      }
 
-		if (updatedCount === 0) {
-			return NextResponse.json(
-				{ error: 'No rows updated. Check lab scope or appointment ids.' },
-				{ status: 400 }
-			);
-		}
+      return prisma.appointment.updateMany({ where, data });
+    });
 
-		return NextResponse.json({ ok: true, updatedCount }, { status: 200 });
-	} catch (e: any) {
-		return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });
-	}
+    const results = await prisma.$transaction(updates);
+    const updatedCount = results.reduce((sum, result) => sum + (result?.count || 0), 0);
+
+    if (updatedCount === 0) {
+      return NextResponse.json(
+        { error: 'No rows updated. Check lab scope or appointment ids.' },
+        { status: 400 },
+      );
+    }
+
+    return NextResponse.json({ ok: true, updatedCount }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || 'Server error' }, { status: 500 });
+  }
 }
