@@ -1081,13 +1081,15 @@ export default function AppointmentsPage() {
 
 			const worksheet = workbook.addWorksheet(sanitizeWorksheetName('Appointments'));
 
-			worksheet.columns = ALL_COLS
-				.filter(c => visibleCols[c.key])
-				.map(c => ({
+			const exportCols = ALL_COLS.filter(c => visibleCols[c.key]);
+			worksheet.columns = [
+				{ header: 'Serial No', key: 'serialNo', width: 10 },
+				...exportCols.map(c => ({
 					header: c.label,
 					key: c.key,
 					width: ['client', 'location', 'tests', 'assignedStaff'].includes(c.key) ? 24 : 18,
-				}));
+				})),
+			];
 
 			worksheet.mergeCells(1, 1, 1, Math.max(worksheet.columns.length, 1));
 			worksheet.getCell('A1').value = 'Appointments (Filtered)';
@@ -1101,7 +1103,7 @@ export default function AppointmentsPage() {
 
 			const headerRowNumber = 7;
 			const headerRow = worksheet.getRow(headerRowNumber);
-			headerRow.values = ALL_COLS.filter(c => visibleCols[c.key]).map(c => c.label);
+			headerRow.values = ['Serial No', ...exportCols.map(c => c.label)];
 			headerRow.font = { bold: true };
 			headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
 			headerRow.height = 22;
@@ -1123,8 +1125,8 @@ export default function AppointmentsPage() {
 
 			let currentRow = headerRowNumber + 1;
 
-			for (const row of rowsToExport) {
-				const values = ALL_COLS.filter(c => visibleCols[c.key]).map(c => getExportCellValue(row, c.key));
+			rowsToExport.forEach((row, index) => {
+				const values = [index + 1, ...exportCols.map(c => getExportCellValue(row, c.key))];
 				const excelRow = worksheet.getRow(currentRow);
 				excelRow.values = values;
 
@@ -1140,7 +1142,7 @@ export default function AppointmentsPage() {
 				}
 
 				currentRow++;
-			}
+			});
 
 			worksheet.views = [{ state: 'frozen', ySplit: headerRowNumber }];
 
@@ -1187,8 +1189,8 @@ export default function AppointmentsPage() {
 		const cols = ALL_COLS.filter(c => visibleCols[c.key]);
 		const statusColIndex = cols.findIndex(c => c.key === 'status');
 
-		const head = [cols.map(c => c.label)];
-		const body = rowsToExport.map(a => cols.map(c => getExportCellValue(a, c.key)));
+		const head = [['Serial No', ...cols.map(c => c.label)]];
+		const body = rowsToExport.map((a, index) => [index + 1, ...cols.map(c => getExportCellValue(a, c.key))]);
 
 		autoTable(doc, {
 			startY: 155,
@@ -1216,7 +1218,7 @@ export default function AppointmentsPage() {
 				if (
 					data.section === 'body' &&
 					statusColIndex >= 0 &&
-					data.column.index === statusColIndex
+					data.column.index === statusColIndex + 1
 				) {
 					const statusTextValue = String(data.cell.raw || '').trim();
 					const style = statusPdfStyle(statusTextValue);
